@@ -1,0 +1,103 @@
+From fcbe7c0dd4a4ec1ff99cc912f563b4ba080682e5 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <gab@chx-labs.org>
+Date: Thu, 10 Sep 2026 11:52:24 +0200
+Subject: [PATCH 6/9] [Core] Per-stage KV cache budgets for heterogeneous
+ pipelines
+
+--kv-cache-memory is one absolute budget for every worker, but pipeline
+stages are heterogeneous: one stage may hold the PLE machinery and another
+the drafter, and their per-token KV costs differ. A single value has to fit
+the tightest stage and strands memory on the others. VLLM_KV_CACHE_MEMORY_RANKS
+lets each stage take its own budget; an explicit --kv-cache-memory or a
+persisted startup plan still wins.
+---
+ vllm/envs.py                 |  5 +++++
+ vllm/v1/worker/gpu_worker.py | 42 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 47 insertions(+)
+
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 6158f86f89..fc861de7d3 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -48,6 +48,7 @@ if TYPE_CHECKING:
+     VLLM_TRACE_FUNCTION: int = 0
+     VLLM_USE_FLASHINFER_SAMPLER: bool = True
+     VLLM_PP_LAYER_PARTITION: str | None = None
++    VLLM_KV_CACHE_MEMORY_RANKS: str | None = None
+     VLLM_CPU_KVCACHE_SPACE: int | None = 0
+     VLLM_CPU_OMP_THREADS_BIND: str = "auto"
+     VLLM_CPU_NUM_OF_RESERVED_CPU: int | None = None
+@@ -862,6 +863,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     ),
+     # Pipeline stage partition strategy
+     "VLLM_PP_LAYER_PARTITION": lambda: os.getenv("VLLM_PP_LAYER_PARTITION", None),
++    # Absolute KV cache budget per pipeline stage, in bytes, as a
++    # comma-separated list with one entry per pipeline rank. Only used when
++    # --kv-cache-memory is not set; see maybe_apply_per_stage_kv_budget.
++    "VLLM_KV_CACHE_MEMORY_RANKS": lambda: os.getenv("VLLM_KV_CACHE_MEMORY_RANKS", None),
+     # (CPU backend only) CPU key-value cache space.
+     # default is None and will be set as 4 GB
+     "VLLM_CPU_KVCACHE_SPACE": lambda: (
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+index 3f457b9b7b..42e1ec01bf 100644
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -179,6 +179,47 @@ class AsyncIntermediateTensors(IntermediateTensors):
+         return object.__getattribute__(self, name)
+ 
+ 
++def maybe_apply_per_stage_kv_budget(worker: "Worker") -> None:
++    """Let every pipeline stage take its own absolute KV budget.
++
++    ``--kv-cache-memory`` is one value for every worker, but pipeline stages
++    are heterogeneous -- one stage may hold the PLE machinery and another the
++    drafter -- so a single budget has to fit the tightest stage and strands
++    memory on the rest. ``VLLM_KV_CACHE_MEMORY_RANKS`` is a comma-separated
++    list of byte budgets, one per pipeline rank. An explicit
++    ``--kv-cache-memory`` (or a persisted startup plan) wins.
++    """
++    spec = envs.VLLM_KV_CACHE_MEMORY_RANKS
++    if spec is None or worker.cache_config.kv_cache_memory_bytes is not None:
++        return
++    pp_size = worker.parallel_config.pipeline_parallel_size
++    try:
++        budgets = [int(value) for value in spec.split(",")]
++    except ValueError as e:
++        raise ValueError(
++            f"VLLM_KV_CACHE_MEMORY_RANKS={spec!r} must be a comma-separated "
++            "list of integer byte budgets"
++        ) from e
++    if len(budgets) != pp_size:
++        raise ValueError(
++            f"VLLM_KV_CACHE_MEMORY_RANKS has {len(budgets)} entries but "
++            f"pipeline_parallel_size={pp_size}"
++        )
++    pp_rank = get_pp_group().rank_in_group
++    if budgets[pp_rank] <= 0:
++        raise ValueError(
++            f"VLLM_KV_CACHE_MEMORY_RANKS entry for pipeline rank {pp_rank} "
++            f"must be positive, got {budgets[pp_rank]}"
++        )
++    worker.cache_config.kv_cache_memory_bytes = budgets[pp_rank]
++    logger.info(
++        "Per-stage KV budget: pipeline rank %d takes %s GiB from "
++        "VLLM_KV_CACHE_MEMORY_RANKS",
++        pp_rank,
++        format_gib(budgets[pp_rank]),
++    )
++
++
+ class Worker(WorkerBase):
+     def __init__(
+         self,
+@@ -538,6 +579,7 @@ class Worker(WorkerBase):
+             by adjusting the `gpu_memory_utilization` parameter.
+         """
+         maybe_apply_startup_plan(self)
++        maybe_apply_per_stage_kv_budget(self)
+ 
+         if kv_cache_memory_bytes := self.cache_config.kv_cache_memory_bytes:
+             # still need a profile run which compiles the model for
+-- 
+2.55.0
+

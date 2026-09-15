@@ -1,0 +1,44 @@
+From 72f5a463332513b7be28c024ba4af8c8ee89649f Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <gab@chx-labs.org>
+Date: Thu, 10 Sep 2026 11:52:24 +0200
+Subject: [PATCH 4/9] [Bugfix][Mamba] Seed the align state column with the
+ mamba block size
+
+A resumed request seeds its running state block from
+num_computed_tokens - 1 divided by the block size, but the divisor must be
+the mamba group's block size. On hybrids where the two differ, the seed
+points past the mamba block table, and the align pre-copy then reads a
+garbage block id (vllm#53142). Fall back to the cache-config block size
+until the mamba spec is known; a fresh request seeds -1 either way.
+---
+ vllm/v1/worker/gpu/model_states/mamba_hybrid.py | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
+index 2bf0a8aa2e..2e505c7593 100644
+--- a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
++++ b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
+@@ -124,8 +124,19 @@ class MambaHybridModelState(DefaultModelState):
+         self.num_accepted_tokens_gpu[req_index].fill_(1)
+         if self._align_mode:
+             # Seed the running state block from the resumed/prefilled position.
++            # The column is counted in units of the mamba group's block size,
++            # which on hybrids differs from the CLI block size; seeding with the
++            # latter yields a column outside the mamba block table, so the align
++            # pre-copy reads a garbage block id (vllm#53142). _mamba_spec is set
++            # by the first batch's preprocess, and a resume can only follow a
++            # prior batch; a fresh request seeds -1 either way.
++            mamba_block_size = (
++                self._mamba_spec.block_size
++                if self._mamba_spec is not None
++                else self.cache_config.block_size
++            )
+             self._mamba_state_idx_gpu[req_index].fill_(
+-                (new_req_data.num_computed_tokens - 1) // self.cache_config.block_size
++                (new_req_data.num_computed_tokens - 1) // mamba_block_size
+             )
+ 
+     def _get_mamba_group_info(
+-- 
+2.55.0
+

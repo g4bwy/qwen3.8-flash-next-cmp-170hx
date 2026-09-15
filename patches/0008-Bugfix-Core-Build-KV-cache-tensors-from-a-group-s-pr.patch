@@ -1,0 +1,147 @@
+From d0d162b1922825eb0587ce4f9d1610d591eabbe5 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <gab@chx-labs.org>
+Date: Thu, 10 Sep 2026 22:12:29 +0200
+Subject: [PATCH 8/9] [Bugfix][Core] Build KV cache tensors from a group's
+ projected layers
+
+A pipeline stage that owns none of a KV cache group's layers keeps that
+group's global UniformTypeKVCacheSpecs: the projection narrows the layer
+names, not the spec, so the group keeps its identity and its index in the
+list. The tensor builder iterated the spec map instead of the layer names,
+so such a stage was handed tensors naming layers that live on another
+stage, and allocate_kv_cache -- which resolves a tensor's group through
+tensor.layers[0] -- aborted with a bare StopIteration. Qwen4-Exp under
+PP=3 hit it on every rank but the first, where the PLE n-gram layer's
+group projects to nothing.
+
+Take each layer's spec from the group instead, which is what the
+bytes-per-block accounting already does, so a group contributes tensors
+only for the layers it actually holds on this stage.
+---
+ tests/v1/core/test_kv_cache_utils.py | 84 ++++++++++++++++++++++++++++
+ vllm/v1/core/kv_cache_utils.py       | 11 ++--
+ 2 files changed, 89 insertions(+), 6 deletions(-)
+
+diff --git a/tests/v1/core/test_kv_cache_utils.py b/tests/v1/core/test_kv_cache_utils.py
+index c6354cdc0f..083468b0e1 100644
+--- a/tests/v1/core/test_kv_cache_utils.py
++++ b/tests/v1/core/test_kv_cache_utils.py
+@@ -1518,6 +1518,90 @@ def test_project_kv_cache_groups_to_worker():
+     assert set(proj_spec.kv_cache_specs.keys()) == {"layer1", "layer3"}
+ 
+ 
++def test_get_kv_cache_config_pp_projection_tensors_stay_local(monkeypatch):
++    """A stage that owns no layer of a group must get no tensor of that group.
++
++    Projection keeps a group's spec even when the stage owns none of its layers,
++    so tensors built from the spec rather than from ``layer_names`` name layers
++    living on another stage. ``allocate_kv_cache`` resolves each tensor's group
++    through ``tensor.layers[0]`` and raises ``StopIteration`` on such a layer.
++    """
++    from vllm.config import ParallelConfig
++    from vllm.distributed.utils import get_pp_indices
++
++    total_layers = 40
++    monkeypatch.setattr(
++        ModelConfig, "get_total_num_hidden_layers", lambda self: total_layers
++    )
++    cache_config = CacheConfig()
++    cache_config.kv_cache_layout = "BLNHC"
++    vllm_config = VllmConfig(
++        model_config=ModelConfig(max_model_len=8192),
++        parallel_config=ParallelConfig(pipeline_parallel_size=3),
++        cache_config=cache_config,
++    )
++
++    # Three page sizes, so layers are packed into uniform-type groups.
++    attn_spec = FullAttentionSpec(
++        block_size=16, num_kv_heads=2, head_size=64, dtype=torch.bfloat16
++    )
++    gdn_spec = MambaSpec(
++        block_size=16,
++        shapes=((4, 64, 64),),
++        dtypes=(torch.bfloat16,),
++        mamba_cache_mode="align",
++    )
++    # A replicated short-conv state only the first stage holds, as for a PLE
++    # n-gram layer.
++    ple_spec = MambaSpec(
++        block_size=16,
++        shapes=((8, 64, 64),),
++        dtypes=(torch.bfloat16,),
++        mamba_cache_mode="align",
++        tp_replicated=True,
++    )
++    assert len({s.page_size_bytes for s in (attn_spec, gdn_spec, ple_spec)}) == 3
++
++    kv_cache_spec: dict[str, Any] = {"layers.0.ple": ple_spec}
++    for i in range(total_layers):
++        if (i + 1) % 4 == 0:
++            kv_cache_spec[f"layers.{i}.attn"] = attn_spec
++        else:
++            kv_cache_spec[f"layers.{i}.linear_attn"] = gdn_spec
++
++    groups = get_kv_cache_groups(vllm_config, kv_cache_spec)
++    assert any(
++        isinstance(group.kv_cache_spec, UniformTypeKVCacheSpecs) for group in groups
++    )
++
++    for rank in range(3):
++        start, end = get_pp_indices(total_layers, rank, 3)
++        worker_spec = {
++            name: spec
++            for name, spec in kv_cache_spec.items()
++            if name == "layers.0.ple" or start <= int(name.split(".")[1]) < end
++        }
++        projected = kv_cache_utils._project_kv_cache_groups_to_worker(
++            groups, worker_spec
++        )
++        assert sum(len(group.layer_names) for group in projected) == len(worker_spec)
++
++        bytes_per_block = kv_cache_utils._pool_bytes_per_block(projected)
++        kv_cache_config = kv_cache_utils.get_kv_cache_config_from_groups(
++            vllm_config, projected, bytes_per_block * 32
++        )
++        layer_to_group = {
++            layer_name: group
++            for group in kv_cache_config.kv_cache_groups
++            for layer_name in group.layer_names
++        }
++        assert set(layer_to_group) == set(worker_spec)
++        for tensor in kv_cache_config.kv_cache_tensors:
++            group = layer_to_group.get(tensor.layers[0])
++            assert group is not None, f"rank {rank}: orphan layer {tensor.layers[0]}"
++            assert set(tensor.layers) <= set(group.layer_names)
++
++
+ def test_dcp_world_size_for_kv_cache_spec_shards_full_attention_only():
+     dcp = 8
+     full = FullAttentionSpec(
+diff --git a/vllm/v1/core/kv_cache_utils.py b/vllm/v1/core/kv_cache_utils.py
+index 28478b69f5..e2db7db8ce 100644
+--- a/vllm/v1/core/kv_cache_utils.py
++++ b/vllm/v1/core/kv_cache_utils.py
+@@ -1762,15 +1762,14 @@ def get_kv_cache_config_from_groups(
+     # group 0: | A [ blk 0 | blk 1 | ... ] | B [ blk 0 | blk 1 | ... ] |
+     # group 1: | C [ blk 0 | blk 1 | ... ] | D [ blk 0 | blk 1 | ... ] |
+ 
++    # Tensors are keyed off the group's own layers: under pipeline parallelism a
++    # group projected onto a stage that owns none of its layers keeps the global
++    # UniformTypeKVCacheSpecs, whose layers would be handed to the wrong worker.
+     kv_cache_tensors = []
+     for group in kv_cache_groups:
+-        group_spec = group.kv_cache_spec
+         layers_by_spec: defaultdict[KVCacheSpec, list[str]] = defaultdict(list)
+-        if isinstance(group_spec, UniformTypeKVCacheSpecs):
+-            for layer_name, spec in group_spec.kv_cache_specs.items():
+-                layers_by_spec[spec].append(layer_name)
+-        elif group.layer_names:
+-            layers_by_spec[group_spec].extend(group.layer_names)
++        for layer_name in group.layer_names:
++            layers_by_spec[_get_per_layer_spec(group, layer_name)].append(layer_name)
+ 
+         byte_offset = 0
+         for spec, layer_names in layers_by_spec.items():
+-- 
+2.55.0
+

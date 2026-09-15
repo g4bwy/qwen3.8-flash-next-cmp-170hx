@@ -1,0 +1,37 @@
+From e55efbcd3313585acc7db3c086a61f07fd15b7f4 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <gab@chx-labs.org>
+Date: Thu, 10 Sep 2026 11:52:24 +0200
+Subject: [PATCH 5/9] [Bugfix][Mamba] Honor drop_eagle_block in MambaManager
+
+MambaManager.find_longest_cache_hit takes drop_eagle_block and ignores it,
+so an EAGLE/MTP prefix-cache hit resumes from the last matched block whose
+recurrent-state snapshot may cover draft tokens that verification rejected.
+Bound the search by one mamba block instead of one hash unit, which also
+covers the fine-grained partial-unit branch (vllm#48375).
+---
+ vllm/v1/core/single_type_kv_cache_manager.py | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/vllm/v1/core/single_type_kv_cache_manager.py b/vllm/v1/core/single_type_kv_cache_manager.py
+index d4e68d8adc..04cda12aac 100644
+--- a/vllm/v1/core/single_type_kv_cache_manager.py
++++ b/vllm/v1/core/single_type_kv_cache_manager.py
+@@ -1501,6 +1501,15 @@ class MambaManager(SingleTypeKVCacheManager):
+         )
+         assert dcp_world_size == 1, "DCP not support mamba now."
+         assert pcp_world_size == 1, "PCP not support mamba now."
++        if drop_eagle_block:
++            # The recurrent-state snapshot of the last matched block may cover
++            # draft tokens that verification later rejects, so resuming from it
++            # seeds the state with rejected tokens. Dropping one block from the
++            # search bound is the mamba form of the eagle block drop: for the
++            # coarse search below (x - b) // b == x // b - 1, and unlike
++            # lowering max_num_blocks it also bounds the fine-grained
++            # partial-unit branch (vllm#48375).
++            max_length = max(0, max_length - kv_cache_spec.block_size)
+         block_hashes = resolve_block_hashes(
+             block_hashes,
+             block_pool.hash_block_size,
+-- 
+2.55.0
+
