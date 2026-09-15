@@ -1,0 +1,75 @@
+{
+  "label": "1M (YaRN 4.0)",
+  "rows": [
+    {
+      "fill_pct": 5.0,
+      "prompt_tokens": 49391,
+      "ttft_s": 5.384336709976196,
+      "total_s": 6.240245819091797,
+      "prefill_tps": 9173.089028493976,
+      "decode_tps": 148.38024113474782,
+      "mean_acceptance_length": 3.4864864864864864,
+      "drafts": 37.0
+    },
+    {
+      "fill_pct": 10.0,
+      "prompt_tokens": 99165,
+      "ttft_s": 10.746472597122192,
+      "total_s": 11.643431425094604,
+      "prefill_tps": 9227.679045732224,
+      "decode_tps": 141.58955354404088,
+      "mean_acceptance_length": 3.25,
+      "drafts": 40.0
+    },
+    {
+      "fill_pct": 25.0,
+      "prompt_tokens": 247489,
+      "ttft_s": 27.19828748703003,
+      "total_s": 27.980887413024902,
+      "prefill_tps": 9099.43319475608,
+      "decode_tps": 162.27959622990304,
+      "mean_acceptance_length": 3.4594594594594597,
+      "drafts": 37.0
+    },
+    {
+      "fill_pct": 50.0,
+      "prompt_tokens": 495062,
+      "ttft_s": 56.180840730667114,
+      "total_s": 56.85970902442932,
+      "prefill_tps": 8811.93648157286,
+      "decode_tps": 187.07605166855143,
+      "mean_acceptance_length": 3.657142857142857,
+      "drafts": 35.0
+    },
+    {
+      "fill_pct": 75.0,
+      "prompt_tokens": 742381,
+      "ttft_s": 86.87858700752258,
+      "total_s": 87.5296425819397,
+      "prefill_tps": 8545.039987076669,
+      "decode_tps": 195.06783290151884,
+      "mean_acceptance_length": 3.5833333333333335,
+      "drafts": 36.0
+    },
+    {
+      "fill_pct": 90.0,
+      "prompt_tokens": 890613,
+      "ttft_s": 106.20783233642578,
+      "total_s": 106.69753861427307,
+      "prefill_tps": 8385.567998213905,
+      "decode_tps": 259.33912989288586,
+      "mean_acceptance_length": 3.4324324324324325,
+      "drafts": 37.0
+    },
+    {
+      "fill_pct": 100.0,
+      "prompt_tokens": 988951,
+      "ttft_s": 119.06421232223511,
+      "total_s": 119.60115480422974,
+      "prefill_tps": 8306.030676316956,
+      "decode_tps": 236.52440300164292,
+      "mean_acceptance_length": 3.25,
+      "drafts": 40.0
+    }
+  ]
+}
