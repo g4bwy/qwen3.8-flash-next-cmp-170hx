@@ -1,0 +1,58 @@
+From fc9b25eba423164dad0475e258cbf14a62fd0cd8 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <gab@chx-labs.org>
+Date: Thu, 10 Sep 2026 21:30:33 +0200
+Subject: [PATCH 7/9] [Bugfix][Qwen4Exp] Gather pinned PLE rows as raw bytes
+
+The UVA lookup kernel only moves bytes, but it was instantiated on the
+weight's own element type, so an FP8 PLE table compiled a kernel over
+fp8e4nv. Triton rejects that element type wherever hardware FP8 is absent
+("supported fp8 dtypes are fp8e4b15, fp8e5"), so Engram CPU offload died
+at the first lookup on pre-Ada GPUs while the device-resident path served
+the same checkpoint through torch ops, which cast in software.
+
+View the source and destination as int8 for FP8 tables. The elements are
+one byte wide either way, dequantization still happens in
+Qwen4ExpPLEFp8EmbeddingMethod.dequantize, and _reduce_etp_embeddings
+already reduces FP8 rows as raw bytes.
+---
+ vllm/models/qwen4_exp/nvidia/ngram_embedding.py | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/vllm/models/qwen4_exp/nvidia/ngram_embedding.py b/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
+index 84c4e7c5e1..c99d532116 100644
+--- a/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
++++ b/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
+@@ -375,7 +375,7 @@ def _lookup_ple_embedding_from_pinned_kernel(
+     values = tl.load(
+         weight_ptr + local_idx * embedding_dim + offsets,
+         mask=load_mask,
+-        other=0.0,
++        other=0,
+     )
+     tl.store(
+         output_ptr + row_id * embedding_dim + offsets,
+@@ -467,10 +467,19 @@ class Qwen4ExpPLEPinnedHostEmbedding(Qwen4ExpPLEEmbedding):
+ 
+         flat_ids = input_ids.reshape(-1).long()
+         if flat_ids.numel():
++            # The kernel only moves bytes, but instantiating it on an FP8 element
++            # type makes Triton require hardware fp8e4nv, which pre-Ada
++            # architectures lack. FP8 rows are one byte wide either way, and
++            # _reduce_etp_embeddings already reduces them as raw bytes.
++            weight = self._uva_weight
++            gather_output = output
++            if weight.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
++                weight = weight.view(torch.int8)
++                gather_output = gather_output.view(torch.int8)
+             _lookup_ple_embedding_from_pinned_kernel[(flat_ids.numel(),)](
+-                self._uva_weight,
++                weight,
+                 flat_ids,
+-                output,
++                gather_output,
+                 self.embedding_dim,
+                 self.shard_indices.org_vocab_start_index,
+                 self.shard_indices.org_vocab_end_index,
+-- 
+2.55.0
+

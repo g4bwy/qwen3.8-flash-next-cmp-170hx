@@ -1,0 +1,354 @@
+From 1a129fa92b3d1b509d074e0d633dc89cc1861b99 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <gab@chx-labs.org>
+Date: Fri, 11 Sep 2026 00:18:16 +0200
+Subject: [PATCH 9/9] [Bugfix][Spec Decode] Let --hf-overrides RoPE scaling
+ reach the MTP drafter
+
+Dict hf_overrides were withheld from the draft ModelConfig on the grounds that
+they patch one checkpoint's keys. That is right for a draft from another repo
+and wrong for the common MTP case, where the draft config is built from the
+target's own config.json: the target got the patch and the drafter read the
+unpatched checkpoint. With RoPE scaling the drafter then built an unscaled
+rotary embedding while the target used the scaled one, so the two disagreed on
+every position past the original window, by 0.07 in max cos/sin difference at
+position 1000, 1.36 at 100000 and 2.04 at 262143, and acceptance decayed
+exactly where speculative decoding is supposed to help. All that showed in the
+log was a second "Using max model len" line carrying the smaller number.
+
+Forward dict overrides only when the draft model resolves to the target's own
+checkpoint, and apply them before the architecture mapping, since that mapping
+may hand back a nested sub-config that the keys no longer address.
+
+That also lets RoPE standardization run against the Qwen4Exp wrapper, which
+aliases text_config.rope_parameters and so counts as a RoPE-bearing config to
+transformers: once the aliased dict declares a scaling type it reads the
+trained window off the same object, and the wrapper never had one. Mirror the
+text config's max_position_embeddings onto it.
+---
+ .../test_speculative_draft_hf_overrides.py    | 106 +++++++++++++++++-
+ tests/models/qwen4_exp/test_config.py         |  29 +++++
+ vllm/config/model.py                          |   8 +-
+ vllm/config/speculative.py                    |  44 ++++++--
+ vllm/models/qwen4_exp/config.py               |   7 ++
+ 5 files changed, 177 insertions(+), 17 deletions(-)
+
+diff --git a/tests/config/test_speculative_draft_hf_overrides.py b/tests/config/test_speculative_draft_hf_overrides.py
+index 8505172da3..a50404a948 100644
+--- a/tests/config/test_speculative_draft_hf_overrides.py
++++ b/tests/config/test_speculative_draft_hf_overrides.py
+@@ -12,6 +12,7 @@ when the target itself is shrunk — which is what kept spec-decode archs like
+ """
+ 
+ import functools
++import pickle
+ from unittest.mock import MagicMock, patch
+ 
+ import pytest
+@@ -32,15 +33,55 @@ def _make_hf_config(**kwargs) -> PretrainedConfig:
+ 
+ 
+ @pytest.mark.cpu_test
+-def test_dict_overrides_are_not_forwarded_to_draft():
+-    """Dict overrides are target-specific key patches; the draft must get
+-    only the architecture-mapping override."""
++def test_dict_overrides_are_not_forwarded_to_a_foreign_draft():
++    """Dict overrides patch one checkpoint's keys, so a draft from another
++    repo must get only the architecture-mapping override."""
+     composed = SpeculativeConfig.compose_draft_hf_overrides(
+         {"max_position_embeddings": 1234}
+     )
+     assert composed is SpeculativeConfig.hf_config_override
+ 
+ 
++@pytest.mark.cpu_test
++def test_dict_overrides_reach_a_same_checkpoint_draft():
++    """An MTP self-draft loads the target's own config.json, so it must see the
++    target's dict overrides too. RoPE scaling is the key case: a drafter that
++    reads an unpatched rope_parameters builds a rotary embedding that disagrees
++    with the target's, and its acceptance decays with position."""
++    rope = {
++        "rope_type": "yarn",
++        "factor": 2.0,
++        "original_max_position_embeddings": 2048,
++    }
++    composed = SpeculativeConfig.compose_draft_hf_overrides(
++        {"text_config": {"rope_parameters": rope}}, draft_is_same_checkpoint=True
++    )
++    assert composed is not SpeculativeConfig.hf_config_override
++
++    text_config = _make_hf_config(
++        rope_parameters={"mrope_section": [11, 11, 10], "rope_type": "default"}
++    )
++    config = _make_hf_config(text_config=text_config)
++    out = composed(config)
++
++    assert out is config
++    # The nested dict is merged, not replaced, so unrelated keys survive.
++    assert text_config.rope_parameters == {
++        "mrope_section": [11, 11, 10],
++        "rope_type": "yarn",
++        "factor": 2.0,
++        "original_max_position_embeddings": 2048,
++    }
++
++
++@pytest.mark.cpu_test
++def test_composed_dict_override_is_picklable():
++    composed = SpeculativeConfig.compose_draft_hf_overrides({"a": 1}, True)
++
++    assert isinstance(composed, functools.partial)
++    assert pickle.loads(pickle.dumps(composed))(_make_hf_config()).a == 1
++
++
+ @pytest.mark.cpu_test
+ def test_none_overrides_fall_back_to_arch_mapping():
+     composed = SpeculativeConfig.compose_draft_hf_overrides(None)
+@@ -185,3 +226,62 @@ def test_mtp_index_share_override(
+         speculative_config.draft_model_config.hf_config.index_share_for_mtp_iteration
+         is expected
+     )
++
++
++def _draft_hf_overrides_kwarg(
++    draft_model: str,
++    target_model: str,
++    target_hf_overrides: dict,
++) -> object:
++    """Build an mtp SpeculativeConfig and return the ``hf_overrides`` that was
++    handed to the draft ``ModelConfig``. Guards the call-site gate, which the
++    direct ``compose_draft_hf_overrides`` tests cannot reach."""
++    captured: dict = {}
++
++    def fake_model_config(**kwargs) -> MagicMock:
++        captured.update(kwargs)
++        hf_config = _make_hf_config(
++            architectures=["Qwen4ExpMTP"], model_type="qwen4_exp_mtp", n_predict=1
++        )
++        return MagicMock(
++            model=draft_model,
++            hf_config=hf_config,
++            architectures=hf_config.architectures,
++            max_model_len=128,
++        )
++
++    target_model_config = MagicMock(
++        model=target_model,
++        model_weights=None,
++        max_model_len=128,
++        quantization=None,
++        hf_overrides=target_hf_overrides,
++    )
++    with patch("vllm.config.speculative.ModelConfig", side_effect=fake_model_config):
++        SpeculativeConfig(
++            model=draft_model,
++            method="mtp",
++            num_speculative_tokens=1,
++            target_model_config=target_model_config,
++            target_parallel_config=ParallelConfig(),
++        )
++    return captured["hf_overrides"]
++
++
++@pytest.mark.cpu_test
++def test_same_checkpoint_draft_is_handed_the_target_dict_overrides():
++    rope = {"text_config": {"rope_parameters": {"rope_type": "yarn", "factor": 2.0}}}
++    composed = _draft_hf_overrides_kwarg("ckpt", "ckpt", rope)
++    assert isinstance(composed, functools.partial)
++
++    text_config = _make_hf_config(rope_parameters={"mrope_section": [11, 11, 10]})
++    composed(_make_hf_config(text_config=text_config))
++    assert text_config.rope_parameters["rope_type"] == "yarn"
++    assert text_config.rope_parameters["mrope_section"] == [11, 11, 10]
++
++
++@pytest.mark.cpu_test
++def test_foreign_draft_is_not_handed_the_target_dict_overrides():
++    rope = {"text_config": {"rope_parameters": {"rope_type": "yarn"}}}
++    composed = _draft_hf_overrides_kwarg("other-ckpt", "ckpt", rope)
++    assert composed is SpeculativeConfig.hf_config_override
+diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
+index 8be877bb9c..2ec2d17409 100644
+--- a/tests/models/qwen4_exp/test_config.py
++++ b/tests/models/qwen4_exp/test_config.py
+@@ -258,3 +258,32 @@ def test_qwen4_exp_model_state_prepares_stable_dummy_ngram_inputs() -> None:
+     )
+     assert second["query_start_loc"].data_ptr() == query_start_loc_ptr
+     assert second["ngram_context"].data_ptr() == ngram_context_ptr
++
++
++@pytest.mark.cpu_test
++def test_qwen4_exp_wrapper_standardizes_scaled_rope() -> None:
++    """The wrapper aliases the text config's rope_parameters, so transformers'
++    RoPE standardization treats the wrapper as a RoPE-bearing config and reads
++    the trained window off it as soon as that dict declares a scaling type.
++    Static YaRN arriving through --hf-overrides is enough to trip it."""
++    from vllm.transformers_utils.config import patch_rope_parameters
++
++    text_config = _text_config(
++        rope_parameters={
++            "mrope_interleaved": True,
++            "mrope_section": [1, 1, 2],
++            "rope_theta": 10000,
++            "rope_type": "default",
++        }
++    )
++    config = Qwen4ExpConfig(text_config=text_config)
++    # What --hf-overrides does to the shared dict before the config is used.
++    text_config.rope_parameters.update(
++        {"rope_type": "yarn", "factor": 2.0, "original_max_position_embeddings": 1024}
++    )
++
++    patch_rope_parameters(config)
++
++    assert text_config.rope_parameters["rope_type"] == "yarn"
++    assert text_config.rope_parameters["mrope_section"] == [1, 1, 2]
++    assert text_config.rope_parameters["original_max_position_embeddings"] == 1024
+diff --git a/vllm/config/model.py b/vllm/config/model.py
+index 89978c35d0..be9dffaa93 100644
+--- a/vllm/config/model.py
++++ b/vllm/config/model.py
+@@ -477,8 +477,8 @@ class ModelConfig:
+             factors["language_model_only"] = self.multimodal_config.language_model_only
+         return hash_factors(factors)
+ 
++    @staticmethod
+     def _update_nested(
+-        self,
+         target: PretrainedConfig | dict[str, Any],
+         updates: dict[str, Any],
+     ) -> None:
+@@ -496,7 +496,7 @@ class ModelConfig:
+                     isinstance(nested_target, dict)
+                     or hasattr(nested_target, "__dict__")
+                 ):
+-                    self._update_nested(nested_target, value)
++                    ModelConfig._update_nested(nested_target, value)
+                     continue
+ 
+             # Set the value (base case)
+@@ -505,8 +505,8 @@ class ModelConfig:
+             else:
+                 setattr(target, key, value)
+ 
++    @staticmethod
+     def _apply_dict_overrides(
+-        self,
+         config: PretrainedConfig,
+         overrides: dict[str, Any],
+     ) -> None:
+@@ -517,7 +517,7 @@ class ModelConfig:
+             attr = getattr(config, key, None)
+             if attr is not None and isinstance(attr, PretrainedConfig):
+                 # It's a nested config - recursively update it
+-                self._update_nested(attr, value)
++                ModelConfig._update_nested(attr, value)
+             else:
+                 # It's a dict-valued parameter - set it directly
+                 setattr(config, key, value)
+diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
+index 1861266820..7719c020a0 100644
+--- a/vllm/config/speculative.py
++++ b/vllm/config/speculative.py
+@@ -1054,15 +1054,24 @@ class SpeculativeConfig:
+ 
+     @staticmethod
+     def _apply_composed_hf_override(
+-        target_hf_overrides: Callable[[PretrainedConfig], PretrainedConfig],
++        target_hf_overrides: HfOverrides,
+         hf_config: PretrainedConfig,
+     ) -> PretrainedConfig:
++        if isinstance(target_hf_overrides, dict):
++            # Only reachable for a draft built from the target's own
++            # checkpoint, so the same key patches apply. Apply them before the
++            # architecture mapping, which may hand back a nested sub-config
++            # that the override keys no longer resolve against.
++            ModelConfig._apply_dict_overrides(hf_config, target_hf_overrides)
++            return SpeculativeConfig.hf_config_override(hf_config)
++
+         hf_config = SpeculativeConfig.hf_config_override(hf_config)
+         return target_hf_overrides(hf_config)
+ 
+     @staticmethod
+     def compose_draft_hf_overrides(
+         target_hf_overrides: HfOverrides | None,
++        draft_is_same_checkpoint: bool = False,
+     ) -> Callable[[PretrainedConfig], PretrainedConfig]:
+         """Build the ``hf_overrides`` for the draft ``ModelConfig``.
+ 
+@@ -1070,8 +1079,15 @@ class SpeculativeConfig:
+         (e.g. test harnesses shrinking ``num_hidden_layers``) and must also
+         reach the draft config — otherwise a draft belonging to a large
+         target is instantiated at full size even when the target is shrunk.
+-        Dict overrides are target-specific key patches and are not applied
+-        to the draft.
++
++        Dict overrides patch keys of one checkpoint, so they only carry over
++        when the draft config is built from that same checkpoint, as an MTP
++        self-draft is. A drafter that reads a patched key straight from the
++        checkpoint otherwise disagrees with the target; RoPE scaling is the
++        important case, since the draft then builds an unscaled rotary
++        embedding and its acceptance collapses as positions grow. When the
++        draft is a different repo the patch says nothing about it, so it is
++        dropped.
+ 
+         The composed override must stay picklable: the draft ``ModelConfig``
+         is sent to spawned engine-core processes, so a local closure would
+@@ -1079,12 +1095,14 @@ class SpeculativeConfig:
+         target via ``functools.partial`` over a module-referenceable static
+         method instead.
+         """
+-        if not callable(target_hf_overrides):
+-            return SpeculativeConfig.hf_config_override
++        if callable(target_hf_overrides) or (
++            draft_is_same_checkpoint and isinstance(target_hf_overrides, dict)
++        ):
++            return functools.partial(
++                SpeculativeConfig._apply_composed_hf_override, target_hf_overrides
++            )
+ 
+-        return functools.partial(
+-            SpeculativeConfig._apply_composed_hf_override, target_hf_overrides
+-        )
++        return SpeculativeConfig.hf_config_override
+ 
+     @staticmethod
+     def _is_custom_proposer_path(model: str | None) -> bool:
+@@ -1262,9 +1280,15 @@ class SpeculativeConfig:
+                 else:
+                     # Compose any callable hf_overrides set on the target so the
+                     # draft config receives the same transform (e.g. the test
+-                    # shrink). Dict overrides stay target-only.
++                    # shrink). Dict overrides stay target-only unless the draft
++                    # is built from the target's own checkpoint.
++                    draft_is_same_checkpoint = self.model == (
++                        self.target_model_config.model_weights
++                        or self.target_model_config.model
++                    )
+                     draft_hf_overrides = SpeculativeConfig.compose_draft_hf_overrides(
+-                        self.target_model_config.hf_overrides
++                        self.target_model_config.hf_overrides,
++                        draft_is_same_checkpoint,
+                     )
+                 self.draft_model_config = ModelConfig(
+                     model=self.model,
+diff --git a/vllm/models/qwen4_exp/config.py b/vllm/models/qwen4_exp/config.py
+index a8eedab83f..5ef7c39814 100644
+--- a/vllm/models/qwen4_exp/config.py
++++ b/vllm/models/qwen4_exp/config.py
+@@ -242,6 +242,13 @@ class Qwen4ExpConfig(PretrainedConfig):
+         self.rope_parameters = rope_parameters or getattr(
+             self.text_config, "rope_parameters", {}
+         )
++        # Aliasing the text config's RoPE parameters also makes this wrapper
++        # look like a RoPE-bearing config to transformers, which reads the
++        # trained window off the same object as soon as that dict declares a
++        # scaling type. Mirror the field so RoPE standardization can run here.
++        text_max_position = getattr(self.text_config, "max_position_embeddings", None)
++        if text_max_position is not None:
++            self.max_position_embeddings = text_max_position
+         super().__init__(**kwargs, tie_word_embeddings=tie_word_embeddings)
+ 
+ 
+-- 
+2.55.0
+

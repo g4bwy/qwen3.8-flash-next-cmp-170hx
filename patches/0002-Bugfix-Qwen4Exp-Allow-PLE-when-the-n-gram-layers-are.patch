@@ -1,0 +1,146 @@
+From 679c435c96478e0414f873bc391904bbd9443136 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <gab@chx-labs.org>
+Date: Thu, 10 Sep 2026 11:52:11 +0200
+Subject: [PATCH 2/9] [Bugfix][Qwen4Exp] Allow PLE when the n-gram layers are
+ on rank 0
+
+Only the first pipeline rank receives raw input_ids, which the n-gram PLE
+lookup needs, so both the model config check and the model state rejected
+PP outright. The invariant that matters is where the PLE layers live: the
+n-gram table is the largest weight in the model, so a memory-balanced split
+puts it alone on the first stage (VLLM_PP_LAYER_PARTITION=2,23,23), and
+there the "inject on the first rank only" behaviour is already correct.
+
+Share one predicate between the two refusal sites so config validation and
+the worker cannot diverge.
+---
+ tests/models/qwen4_exp/test_config.py       | 13 +++++---
+ vllm/model_executor/models/config.py        | 35 +++++++++++++++++++--
+ vllm/models/qwen4_exp/nvidia/model_state.py | 15 ++++++---
+ 3 files changed, 51 insertions(+), 12 deletions(-)
+
+diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
+index f0cca639bb..8be877bb9c 100644
+--- a/tests/models/qwen4_exp/test_config.py
++++ b/tests/models/qwen4_exp/test_config.py
+@@ -147,11 +147,16 @@ def test_qwen4_exp_mtp_override_sets_draft_config(
+     assert draft_config.n_predict == 1
+ 
+ 
+-@pytest.mark.parametrize("ple_layer_ids", [[1], []])
+-def test_qwen4_exp_rejects_pipeline_parallel_only_with_ple(ple_layer_ids) -> None:
++@pytest.mark.parametrize(
++    "ple_layer_ids,confined", [([1], True), ([2], False), ([], True)]
++)
++def test_qwen4_exp_allows_pipeline_parallel_only_with_rank0_ple(
++    ple_layer_ids, confined
++) -> None:
+     """PLE needs raw input_ids, which non-first pipeline ranks never see. The
+     rest of the architecture is PP-capable, so the refusal must be conditional
+-    -- and must land before the engine spends time loading weights."""
++    -- it is safe exactly when every PLE layer sits on rank 0 -- and must land
++    before the engine spends time loading weights."""
+     vllm_config = SimpleNamespace(
+         model_config=SimpleNamespace(
+             hf_text_config=_text_config(ple_layer_ids=ple_layer_ids),
+@@ -165,7 +170,7 @@ def test_qwen4_exp_rejects_pipeline_parallel_only_with_ple(ple_layer_ids) -> Non
+     with patch.object(
+         Qwen3_5ForConditionalGenerationConfig, "verify_and_update_config"
+     ):
+-        if ple_layer_ids:
++        if ple_layer_ids and not confined:
+             with pytest.raises(NotImplementedError, match="pipeline_parallel_size=1"):
+                 Qwen4ExpForConditionalGenerationConfig.verify_and_update_config(
+                     vllm_config
+diff --git a/vllm/model_executor/models/config.py b/vllm/model_executor/models/config.py
+index bbbe98bc8d..75d52e2ebe 100644
+--- a/vllm/model_executor/models/config.py
++++ b/vllm/model_executor/models/config.py
+@@ -855,6 +855,29 @@ def _strip_qwen4_exp_mrope(model_config: "ModelConfig") -> None:
+             rope_parameters.pop("mrope_interleaved", None)
+ 
+ 
++def ple_confined_to_first_pp_rank(vllm_config: "VllmConfig") -> bool:
++    """Whether every PLE n-gram layer lives on the first pipeline rank.
++
++    The n-gram lookup consumes raw input_ids, which only the first pipeline
++    rank receives, so PLE off the first rank cannot run. Confining it there is
++    also the only layout that fits: the n-gram table is by far the largest
++    weight in the model, so a memory-balanced split puts it on stage 0 anyway
++    (for example VLLM_PP_LAYER_PARTITION=2,23,23).
++    """
++    from vllm.distributed.utils import get_pp_indices
++
++    text_config = vllm_config.model_config.hf_text_config
++    ple_layer_ids = {int(i) for i in getattr(text_config, "ple_layer_ids", None) or ()}
++    pp_size = vllm_config.parallel_config.pipeline_parallel_size
++    if not ple_layer_ids or pp_size <= 1:
++        return True
++
++    # PLE attaches to the layer where "(layer_idx + 1) in ple_layer_ids", so the
++    # 1-based ids are one ahead of the 0-based layer index.
++    _, first_rank_end = get_pp_indices(int(text_config.num_hidden_layers), 0, pp_size)
++    return all(0 <= layer_id - 1 < first_rank_end for layer_id in ple_layer_ids)
++
++
+ class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConfig):
+     """Apply the Qwen3.5 hybrid-cache contract to Qwen4Exp."""
+ 
+@@ -876,11 +899,17 @@ class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConf
+             )
+         # Checked again in Qwen4ExpModelState; rejecting it here keeps the
+         # engine from loading weights first.
+-        if text_config.ple_layer_ids and parallel_config.pipeline_parallel_size > 1:
++        if (
++            text_config.ple_layer_ids
++            and parallel_config.pipeline_parallel_size > 1
++            and not ple_confined_to_first_pp_rank(vllm_config)
++        ):
+             raise NotImplementedError(
+                 "Qwen4Exp N-gram PLE embedding requires pipeline_parallel_size=1 "
+-                "because non-first pipeline ranks do not receive the raw input_ids "
+-                "it needs. Please run with PP=1."
++                "unless every PLE layer sits on the first pipeline rank, because "
++                "only that rank receives the raw input_ids it needs. Pin the "
++                "split with VLLM_PP_LAYER_PARTITION so the PLE layers land on "
++                "rank 0, or run with PP=1."
+             )
+         multimodal_config = vllm_config.model_config.multimodal_config
+         if multimodal_config is not None and multimodal_config.language_model_only:
+diff --git a/vllm/models/qwen4_exp/nvidia/model_state.py b/vllm/models/qwen4_exp/nvidia/model_state.py
+index 246168509b..61fa5c36ab 100644
+--- a/vllm/models/qwen4_exp/nvidia/model_state.py
++++ b/vllm/models/qwen4_exp/nvidia/model_state.py
+@@ -8,6 +8,7 @@ import torch
+ import torch.nn as nn
+ 
+ from vllm.config import VllmConfig
++from vllm.model_executor.models.config import ple_confined_to_first_pp_rank
+ from vllm.v1.worker.gpu.input_batch import InputBatch
+ from vllm.v1.worker.gpu.mm.encoder_cache import EncoderCache
+ from vllm.v1.worker.gpu.model_states.mamba_hybrid import MambaHybridModelState
+@@ -32,12 +33,16 @@ class Qwen4ExpModelState(MambaHybridModelState):
+             self.ngram_eos_token_id = 0
+             return
+ 
+-        if vllm_config.parallel_config.pipeline_parallel_size > 1:
++        if (
++            vllm_config.parallel_config.pipeline_parallel_size > 1
++            and not ple_confined_to_first_pp_rank(vllm_config)
++        ):
+             raise RuntimeError(
+-                "N-gram PLE embedding currently requires "
+-                "pipeline_parallel_size=1 because non-first pipeline ranks do "
+-                "not receive the raw input_ids required by PLE. Please run "
+-                "with PP=1."
++                "N-gram PLE embedding requires pipeline_parallel_size=1 unless "
++                "every PLE layer sits on the first pipeline rank, because only "
++                "that rank receives the raw input_ids PLE needs. Pin the split "
++                "with VLLM_PP_LAYER_PARTITION so that the PLE layers land on "
++                "the first pipeline rank."
+             )
+ 
+         self.ngram_context_len = int(config.ngram_size) - 1
+-- 
+2.55.0
+

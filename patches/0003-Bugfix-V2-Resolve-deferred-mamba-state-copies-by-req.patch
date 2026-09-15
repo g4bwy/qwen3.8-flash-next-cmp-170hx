@@ -1,0 +1,266 @@
+From aaaa68c7aa3883f17df2fdad8faf0b6f1492ef0f Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <gab@chx-labs.org>
+Date: Thu, 10 Sep 2026 11:52:11 +0200
+Subject: [PATCH 3/9] [Bugfix][V2] Resolve deferred mamba state copies by
+ request slot
+
+Under pipeline parallelism the sampled outputs of step T are consumed by
+step T + pp_size, so the mamba align postprocess runs for a batch whose
+rows are no longer the ones the gathered block tables describe: it indexed
+the persistent input_block_tables by batch row with a stale idx_mapping,
+copying recurrent state through other requests' freed or reallocated block
+ids (silent NaN corruption, or an illegal memory access where the read
+lands unmapped).
+
+Capture the request-indexed block tables for the state copies and index
+their rows by request slot. Those tables are staged per request and only
+grow while a request lives, and freed slots are already filtered out of the
+deferred idx_mapping, so the copy resolves the same block ids it would have
+seen at its own step. Everything else keeps using the batch-ordered gather.
+---
+ vllm/v1/worker/gpu/block_table.py             | 11 +++++
+ vllm/v1/worker/gpu/model_runner.py            |  4 ++
+ vllm/v1/worker/gpu/model_states/interface.py  |  7 +++
+ .../worker/gpu/model_states/mamba_hybrid.py   | 14 +++++-
+ vllm/v1/worker/mamba_utils.py                 | 49 ++++++++++++++++---
+ 5 files changed, 77 insertions(+), 8 deletions(-)
+
+diff --git a/vllm/v1/worker/gpu/block_table.py b/vllm/v1/worker/gpu/block_table.py
+index c01895e635..dcc9ac1c82 100644
+--- a/vllm/v1/worker/gpu/block_table.py
++++ b/vllm/v1/worker/gpu/block_table.py
+@@ -110,6 +110,17 @@ class BlockTables:
+         )
+         self.input_block_table_ptrs = self._make_ptr_tensor(self.input_block_tables)
+ 
++    @property
++    def req_block_tables(self) -> tuple[torch.Tensor, ...]:
++        """Block tables whose rows are request state slots, not batch rows.
++
++        These are the tables the scheduler stages into, so a row only grows
++        while its request lives. Consumers that outlive the step which gathered
++        ``input_block_tables`` (mamba state copies deferred under pipeline
++        parallelism) resolve block ids here instead of by batch row.
++        """
++        return tuple(b.gpu for b in self.block_tables)
++
+     def append_block_ids(
+         self,
+         req_index: int,
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+index 4b1520f276..e3e4ec67f2 100644
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -675,6 +675,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+             cp_rank=self.dcp_rank,
+             cp_interleave=self.cp_interleave,
+         )
++        # Mamba state copies can be issued by a later step than the one which
++        # scheduled the request, so they resolve block ids by request state
++        # slot rather than by the batch rows of the current gather.
++        self.model_state.set_req_block_tables(self.block_tables.req_block_tables)
+         self.pcp_manager = pcp.maybe_build_pcp_manager(
+             self.vllm_config,
+             self.device,
+diff --git a/vllm/v1/worker/gpu/model_states/interface.py b/vllm/v1/worker/gpu/model_states/interface.py
+index a5c8d6f4cf..582d09e023 100644
+--- a/vllm/v1/worker/gpu/model_states/interface.py
++++ b/vllm/v1/worker/gpu/model_states/interface.py
+@@ -147,6 +147,13 @@ class ModelState(ABC):
+         across block boundaries. No-op by default."""
+         return None
+ 
++    def set_req_block_tables(self, req_block_tables: tuple[torch.Tensor, ...]) -> None:
++        """Hand over the persistent block tables indexed by request state slot
++        (row = request index) instead of batch row. No-op by default; needed by
++        state copies that can run after the step which scheduled the request has
++        re-gathered the batch-ordered tables."""
++        return None
++
+     def postprocess_state(
+         self,
+         idx_mapping: torch.Tensor,
+diff --git a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
+index 0ac3f2f63b..2bf0a8aa2e 100644
+--- a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
++++ b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
+@@ -111,6 +111,12 @@ class MambaHybridModelState(DefaultModelState):
+             self._mamba_group_ids: list[int] = []
+             self._mamba_spec: MambaSpec | None = None
+             self._mamba_state_copy_funcs: MambaStateCopyFuncsByType | None = None
++            self._req_block_tables: tuple[torch.Tensor, ...] | None = None
++
++    def set_req_block_tables(self, req_block_tables: tuple[torch.Tensor, ...]) -> None:
++        # The state copies of the align path must resolve block ids by request
++        # state slot; see MambaSpecDecodeGPUContext.copy_block_table_ptrs.
++        self._req_block_tables = req_block_tables
+ 
+     def add_request(self, req_index: int, new_req_data: NewRequestData) -> None:
+         super().add_request(req_index, new_req_data)
+@@ -171,12 +177,18 @@ class MambaHybridModelState(DefaultModelState):
+             forward_context = self.vllm_config.compilation_config.static_forward_context
+             # block_tables are batch-order slices of the persistent
+             # input_block_tables (stable data_ptr), so the metadata is captured
+-            # once here and reused across steps.
++            # once here and reused across steps. The state copies are captured
++            # from the request-indexed tables instead: a copy issued by a later
++            # step would otherwise walk another request's block ids.
++            req_block_tables = self._req_block_tables
+             ctx.initialize_from_forward_context(
+                 kv_cache_config,
+                 forward_context,
+                 copy_funcs,
+                 [block_tables[gid] for gid in mamba_group_ids],
++                None
++                if req_block_tables is None
++                else [req_block_tables[gid] for gid in mamba_group_ids],
+             )
+         return ctx
+ 
+diff --git a/vllm/v1/worker/mamba_utils.py b/vllm/v1/worker/mamba_utils.py
+index 724c714057..1ccf408998 100644
+--- a/vllm/v1/worker/mamba_utils.py
++++ b/vllm/v1/worker/mamba_utils.py
+@@ -393,8 +393,9 @@ def postprocess_mamba_fused_kernel(
+     # Output: num_accepted_tokens update (for src==dst case)
+     num_accepted_tokens_out_ptr,
+     # Optional: batch_idx -> req_idx mapping (V2 model runner / PP). The
+-    # per-request decision arrays are in req-state-slot order; the block table
+-    # is in batch order, so HAS_IDX_MAPPING splits the two indexings.
++    # per-request decision arrays and the state-copy block table are both in
++    # req-state-slot order; HAS_IDX_MAPPING only resolves the grid's batch row
++    # into that indexing.
+     idx_mapping_ptr,
+     # Runtime parameter (varies per batch - NOT constexpr to avoid recompilation)
+     num_reqs,
+@@ -478,7 +479,10 @@ def postprocess_mamba_fused_kernel(
+     if src_block_idx == dest_block_idx and accept_token_bias == 0:
+         return
+ 
+-    bt_row_idx = batch_idx if HAS_IDX_MAPPING else req_idx
++    # The copy block tables are indexed by request state slot, not by batch
++    # row: under pipeline parallelism this postprocess runs for a batch whose
++    # rows are no longer the ones the gathered tables describe.
++    bt_row_idx = req_idx
+     _copy_mamba_state_block(
+         state_idx,
+         bt_row_idx,
+@@ -612,7 +616,7 @@ def precopy_mamba_align_fused_kernel(
+     token_bias = tl.load(token_bias_ptr + req_idx)
+     _copy_mamba_state_block(
+         state_idx,
+-        batch_idx,
++        req_idx,
+         src_col,
+         dst_col,
+         token_bias,
+@@ -811,6 +815,13 @@ class MambaSpecDecodeGPUContext:
+     # initialize_from_forward_context from the persistent per-group block
+     # table tensors (whose data_ptr is stable across steps).
+     block_table_ptrs: torch.Tensor
++    # Per-group block-table base addresses for the state-copy kernels. Same
++    # order as `block_table_ptrs`, but they address the per-request-slot tables
++    # (row = request index) when the runner exposes them. The copies are not
++    # always issued by the step that scheduled the request -- under pipeline
++    # parallelism the postprocess runs several steps late -- and the gathered
++    # `input_block_tables` rows only describe the batch of the current step.
++    copy_block_table_ptrs: torch.Tensor | None = None
+     block_table_stride_req: int = 0
+ 
+     # persistent output for the once-per-step, all-group aligned-index launch.
+@@ -903,6 +914,9 @@ class MambaSpecDecodeGPUContext:
+             block_table_ptrs=torch.zeros(
+                 len(mamba_group_ids), dtype=torch.int64, device=device
+             ),
++            copy_block_table_ptrs=torch.zeros(
++                len(mamba_group_ids), dtype=torch.int64, device=device
++            ),
+             aligned_state_indices=torch.empty(
+                 (
+                     len(mamba_group_ids),
+@@ -927,6 +941,7 @@ class MambaSpecDecodeGPUContext:
+         forward_context: dict[str, Any],
+         mamba_state_copy_funcs: MambaStateCopyFuncsByType,
+         block_tables: list[torch.Tensor],
++        req_block_tables: list[torch.Tensor] | None = None,
+     ) -> None:
+         """
+         Extract and cache memory layout metadata from Mamba state tensors.
+@@ -961,6 +976,9 @@ class MambaSpecDecodeGPUContext:
+             block_tables: per-mamba-group persistent block-table tensors, in
+                 the same order as `mamba_group_ids`. Their `data_ptr()` /
+                 `stride(0)` are captured once for the kernel to index into.
++            req_block_tables: optional per-mamba-group block-table tensors
++                indexed by request state slot instead of batch row, used by the
++                state-copy kernels. Defaults to `block_tables`.
+         """
+         if self.is_initialized:
+             return
+@@ -971,6 +989,7 @@ class MambaSpecDecodeGPUContext:
+                 forward_context,
+                 mamba_state_copy_funcs,
+                 block_tables,
++                req_block_tables,
+             )
+ 
+     def _populate_metadata(
+@@ -979,6 +998,7 @@ class MambaSpecDecodeGPUContext:
+         forward_context: dict[str, Any],
+         mamba_state_copy_funcs: MambaStateCopyFuncsByType,
+         block_tables: list[torch.Tensor],
++        req_block_tables: list[torch.Tensor] | None = None,
+     ) -> None:
+         idx = 0
+         for group_local_idx, mamba_group_id in enumerate(self.mamba_group_ids):
+@@ -1090,6 +1110,21 @@ class MambaSpecDecodeGPUContext:
+         for i, bt in enumerate(block_tables):
+             self.block_table_ptrs[i] = _reinterpret_u64_as_i64(bt.data_ptr())
+ 
++        assert self.copy_block_table_ptrs is not None
++        copy_tables = block_tables if req_block_tables is None else req_block_tables
++        if len(copy_tables) != self.num_groups:
++            raise ValueError(
++                f"expected {self.num_groups} copy block tables, got {len(copy_tables)}"
++            )
++        copy_strides = {bt.stride(0) for bt in copy_tables}
++        if copy_strides != strides:
++            raise ValueError(
++                "request-indexed mamba block tables must share stride(0) with "
++                f"the gathered ones, got {copy_strides} vs {strides}"
++            )
++        for i, bt in enumerate(copy_tables):
++            self.copy_block_table_ptrs[i] = _reinterpret_u64_as_i64(bt.data_ptr())
++
+         self.is_initialized = True
+ 
+     def compute_aligned_state_indices(
+@@ -1169,7 +1204,7 @@ class MambaSpecDecodeGPUContext:
+             num_scheduled_tokens_gpu,
+             num_computed_tokens_gpu,
+             num_draft_tokens_gpu,
+-            self.block_table_ptrs,
++            self.copy_block_table_ptrs,
+             self.block_table_stride_req,
+             self.state_base_addrs,
+             self.state_block_strides,
+@@ -1215,7 +1250,7 @@ class MambaSpecDecodeGPUContext:
+             state_idx_gpu,
+             src_col_gpu,
+             token_bias_gpu,
+-            self.block_table_ptrs,
++            self.copy_block_table_ptrs,
+             self.block_table_stride_req,
+             self.state_base_addrs,
+             self.state_block_strides,
+@@ -1267,7 +1302,7 @@ class MambaSpecDecodeGPUContext:
+             None,  # num_scheduled: unused under PRECOMPUTED_NEW_COMPUTED
+             new_num_computed_tokens_gpu,
+             None,  # num_draft: unused under PRECOMPUTED_NEW_COMPUTED
+-            self.block_table_ptrs,
++            self.copy_block_table_ptrs,
+             self.block_table_stride_req,
+             self.state_base_addrs,
+             self.state_block_strides,
+-- 
+2.55.0
+

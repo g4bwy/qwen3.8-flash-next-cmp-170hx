@@ -1,0 +1,416 @@
+(APIServer pid=10256) INFO 09-15 10:45:25 [api_utils.py:347] 
+(APIServer pid=10256) INFO 09-15 10:45:25 [api_utils.py:347]        █     █     █▄   ▄█
+(APIServer pid=10256) INFO 09-15 10:45:25 [api_utils.py:347]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.29.1rc1.dev101+gff598f480
+(APIServer pid=10256) INFO 09-15 10:45:25 [api_utils.py:347]   █▄█▀ █     █     █     █  model   /ssd/ai/models/Qwen/Qwen3.8-Flash-Next-FP8
+(APIServer pid=10256) INFO 09-15 10:45:25 [api_utils.py:347]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+(APIServer pid=10256) INFO 09-15 10:45:25 [api_utils.py:347] 
+(APIServer pid=10256) INFO 09-15 10:45:25 [api_utils.py:286] non-default args: {'model_tag': '/ssd/ai/models/Qwen/Qwen3.8-Flash-Next-FP8', 'enable_auto_tool_choice': True, 'tool_call_parser': 'qwen3_xml', 'model': '/ssd/ai/models/Qwen/Qwen3.8-Flash-Next-FP8', 'max_model_len': 1000000, 'served_model_name': ['qwen3.8-flash-next-fp8'], 'hf_overrides': {'text_config': {'max_position_embeddings': 1000000, 'rope_parameters': {'rope_type': 'yarn', 'factor': 4.0, 'original_max_position_embeddings': 262144}}}, 'reasoning_parser': 'qwen3', 'pipeline_parallel_size': 3, 'gpu_memory_utilization': 0.94, 'enable_prefix_caching': True, 'mamba_ssm_cache_dtype': 'float32', 'max_num_seqs': 8, 'enable_flashinfer_autotune': False, 'moe_backend': 'humming', 'speculative_config': {'method': 'mtp', 'num_speculative_tokens': 3}, 'compilation_config': {'mode': None, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': [], 'ir_enable_torch_wrap': None, 'splitting_ops': None, 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': None, 'compile_ranges_endpoints': None, 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': None, 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': None, 'pass_config': {}, 'max_cudagraph_capture_size': None, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': None, 'static_all_moe_layers': []}, 'engram_config': EngramConfig(cpu_offload=True, embedding_across_dp=False, dp_shared_memory=False)}
+(APIServer pid=10256) WARNING 09-15 10:45:25 [system_utils.py:299] Found ulimit of 1024 and failed to automatically increase with error current limit exceeds maximum limit. This can cause fd limit errors like `OSError: [Errno 24] Too many open files`. Consider increasing with ulimit -n
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) INFO 09-15 10:45:25 [model.py:692] Resolved architecture: Qwen4ExpForConditionalGeneration
+(APIServer pid=10256) INFO 09-15 10:45:25 [model.py:2030] Using max model len 1000000
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='yarn': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='yarn': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] The explicitly set RoPE scaling factor (config.rope_parameters['factor'] = 4.0) does not match the ratio implicitly set by other parameters (implicit factor = post-yarn context length / pre-yarn context length = config.max_position_embeddings / config.rope_parameters['original_max_position_embeddings'] = 3.814697265625). Using the explicit factor (4.0) in YaRN. This may cause unexpected behaviour in model usage, please correct the 'original_max_position_embeddings' fields in the model config.
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='yarn': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) INFO 09-15 10:45:27 [model.py:692] Resolved architecture: Qwen4ExpMTP
+(APIServer pid=10256) INFO 09-15 10:45:27 [model.py:2030] Using max model len 1000000
+(APIServer pid=10256) WARNING 09-15 10:45:27 [speculative.py:1385] Enabling num_speculative_tokens > 1 will run multiple times of forward on same MTP layer,which may result in lower acceptance rate
+(APIServer pid=10256) INFO 09-15 10:45:27 [config.py:625] Mamba cache mode is set to 'align' for Qwen4ExpForConditionalGeneration by default when prefix caching is enabled
+(APIServer pid=10256) INFO 09-15 10:45:27 [vllm.py:1252] Resolved Engram configuration: EngramConfig(cpu_offload=True, embedding_across_dp=False, dp_shared_memory=False)
+(APIServer pid=10256) INFO 09-15 10:45:27 [vllm.py:762] Auto-enabling VLLM_USE_BREAKABLE_CUDAGRAPH=1. Set VLLM_USE_BREAKABLE_CUDAGRAPH=0 to opt out.
+(APIServer pid=10256) INFO 09-15 10:45:27 [kernel.py:407] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(APIServer pid=10256) WARNING 09-15 10:45:27 [vllm.py:2128] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional draft token slots, or decrease num_speculative_tokens.
+(APIServer pid=10256) INFO 09-15 10:45:27 [compilation.py:336] Enabled custom fusions: norm_quant, act_quant
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] The `use_fast` parameter is deprecated and will be removed in a future version. Use `backend="torchvision"` instead of `use_fast=True`, or `backend="pil"` instead of `use_fast=False`.
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(EngineCore pid=10556) INFO 09-15 10:45:44 [core.py:123] Initializing a V1 LLM engine (v0.29.1rc1.dev101+gff598f480) with config: model='/ssd/ai/models/Qwen/Qwen3.8-Flash-Next-FP8', speculative_config=SpeculativeConfig(method='mtp', model='/ssd/ai/models/Qwen/Qwen3.8-Flash-Next-FP8', num_spec_tokens=3), tokenizer='/ssd/ai/models/Qwen/Qwen3.8-Flash-Next-FP8', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=1000000, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=3, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=fp8, quantization_config=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='qwen3', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, per_request_spec_decode_metrics='none', kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=qwen3.8-flash-next-fp8, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['+quant_fp8', 'all', '+quant_fp8'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 64, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native']), enable_flashinfer_autotune=False, enable_cutedsl_warmup=True, enable_jit_warmup=True, moe_backend='humming', sparse_indexer_topk_backend='auto', linear_backend='auto')
+(EngineCore pid=10556) INFO 09-15 10:45:44 [multiproc_executor.py:153] DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, mq_connect_ip=192.168.42.168 (local), world_size=3, local_world_size=3
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(Worker pid=10697) INFO 09-15 10:45:53 [parallel_state.py:1827] world_size=3 rank=0 local_rank=0 distributed_init_method=file:///tmp/vllm_dist_28e8005e92aa462da2036ce638181904 backend=nccl
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(Worker pid=10818) INFO 09-15 10:46:00 [parallel_state.py:1827] world_size=3 rank=1 local_rank=1 distributed_init_method=file:///tmp/vllm_dist_28e8005e92aa462da2036ce638181904 backend=nccl
+(APIServer pid=10256) [transformers] Qwen3VL video processing does not apply the per-frame pixel cap the reference implementation (qwen-vl-utils) applies, so some videos cost far more tokens than they would there. In v5.22 the capped behavior will become the default and `cap_pixels_per_frame` will be removed. Pass `cap_pixels_per_frame=True` to adopt the reference behavior now, or `False` to keep the current behavior and silence this warning.
+(APIServer pid=10256) INFO 09-15 10:46:02 [base.py:261] Multi-modal warmup completed in 18.044s
+(APIServer pid=10256) INFO 09-15 10:46:03 [base.py:261] Readonly multi-modal warmup completed in 0.811s
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(Worker pid=10946) INFO 09-15 10:46:06 [parallel_state.py:1827] world_size=3 rank=2 local_rank=2 distributed_init_method=file:///tmp/vllm_dist_28e8005e92aa462da2036ce638181904 backend=nccl
+(Worker pid=10697) INFO 09-15 10:46:07 [pynccl.py:148] vLLM is using nccl==2.29.7
+(Worker pid=10697) INFO 09-15 10:46:08 [cuda_communicator.py:318] Using ['PYNCCL'] all-reduce backends (in dispatch order) for group 'pp:0' out of potential backends: ['FLASHINFER_PCIE_IPC', 'FLASHINFER', 'NCCL_SYMM_MEM', 'QUICK_REDUCE', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'].
+(Worker pid=10697) INFO 09-15 10:46:08 [parallel_state.py:2267] rank 0 in world size 3 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, ETP rank 0, EP rank 0, EPLB rank N/A
+(Worker pid=10697) INFO 09-15 10:46:08 [gpu_worker.py:482] Using V2 Model Runner
+(Worker_PP0 pid=10697) INFO 09-15 10:46:09 [model_runner.py:399] Loading model from scratch...
+(Worker_PP0 pid=10697) INFO 09-15 10:46:09 [cuda.py:595] Using backend AttentionBackendEnum.FLASH_ATTN for vit attention
+(Worker_PP0 pid=10697) INFO 09-15 10:46:09 [mm_encoder_attention.py:372] Using AttentionBackendEnum.FLASH_ATTN for MMEncoderAttention.
+(Worker_PP0 pid=10697) INFO 09-15 10:46:09 [qwen_gdn_linear_attn.py:176] Using Triton/FLA GDN prefill kernel (requested=auto, head_k_dim=128).
+(Worker_PP0 pid=10697) INFO 09-15 10:46:09 [qwen_gdn_linear_attn.py:528] GDN decode kernel: cuda
+(Worker_PP0 pid=10697) INFO 09-15 10:46:09 [fused_humming_moe.py:116] Using indexed gemm for humming moe
+(Worker_PP0 pid=10697) INFO 09-15 10:46:09 [fp8.py:359] Using HUMMING Fp8 MoE backend out of potential backends: ['AITER', 'FLASHINFER_TRTLLM', 'FLASHINFER_CUTLASS', 'DEEPGEMM', 'VLLM_CUTLASS', 'TRITON', 'MARLIN', 'HUMMING', 'BATCHED_DEEPGEMM', 'BATCHED_VLLM_CUTLASS', 'BATCHED_TRITON', 'XPU', 'CPU', 'HPC'].
+(Worker_PP0 pid=10697) INFO 09-15 10:46:27 [ngram_embedding.py:729] Initialized PLE embedding language_model.model.layers.1.ple.ple_embedding.ngram_embedding: quantization_method=Qwen4ExpPLEFp8EmbeddingMethod, weight_dtype=torch.float8_e4m3fn, weight_device=cpu, pinned=True
+(Worker_PP0 pid=10697) INFO 09-15 10:46:27 [flash_attn.py:1116] Using FlashAttention version 2
+(Worker_PP0 pid=10697) WARNING 09-15 10:46:28 [compilation.py:1361] Op 'quant_fp8' not present in model, enabling with '+quant_fp8' has no effect
+(Worker_PP0 pid=10697) INFO 09-15 10:46:28 [weight_utils.py:895] Filesystem type for checkpoints: EXT4. Checkpoint size: 172.78 GiB. Available RAM: 109.69 GiB.
+(Worker_PP0 pid=10697) INFO 09-15 10:46:28 [weight_utils.py:925] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre) and the checkpoint size (172.78 GiB) exceeds 90% of available RAM (109.69 GiB).
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   0% Completed | 0/131 [00:00<?, ?it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   1% Completed | 1/131 [00:00<01:30,  1.43it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   2% Completed | 2/131 [00:03<03:33,  1.65s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   2% Completed | 3/131 [00:04<03:09,  1.48s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   3% Completed | 4/131 [00:06<03:51,  1.82s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   4% Completed | 5/131 [00:08<03:35,  1.71s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   5% Completed | 6/131 [00:08<02:43,  1.31s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   5% Completed | 7/131 [00:09<02:11,  1.06s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   6% Completed | 8/131 [00:09<01:50,  1.11it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   7% Completed | 9/131 [00:10<01:36,  1.27it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   8% Completed | 10/131 [00:10<01:26,  1.40it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   8% Completed | 11/131 [00:11<01:19,  1.51it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:   9% Completed | 12/131 [00:11<01:14,  1.59it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  10% Completed | 13/131 [00:12<01:11,  1.65it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  11% Completed | 14/131 [00:13<01:08,  1.71it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  11% Completed | 15/131 [00:13<01:06,  1.75it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  12% Completed | 16/131 [00:14<01:04,  1.78it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  13% Completed | 17/131 [00:14<01:03,  1.80it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  14% Completed | 18/131 [00:15<01:02,  1.81it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  15% Completed | 19/131 [00:15<01:01,  1.82it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  15% Completed | 20/131 [00:16<01:00,  1.83it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  16% Completed | 21/131 [00:16<00:59,  1.83it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  17% Completed | 22/131 [00:17<00:59,  1.84it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  18% Completed | 23/131 [00:17<00:59,  1.83it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  18% Completed | 24/131 [00:18<00:59,  1.81it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  19% Completed | 25/131 [00:19<00:58,  1.83it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  20% Completed | 26/131 [00:19<00:57,  1.83it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  21% Completed | 27/131 [00:20<00:56,  1.84it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  21% Completed | 28/131 [00:20<00:56,  1.83it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  22% Completed | 29/131 [00:21<00:55,  1.83it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  23% Completed | 30/131 [00:21<00:54,  1.84it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  24% Completed | 31/131 [00:22<00:54,  1.84it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  24% Completed | 32/131 [00:22<00:53,  1.84it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  25% Completed | 33/131 [00:23<00:53,  1.85it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  26% Completed | 34/131 [00:23<00:52,  1.85it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  27% Completed | 35/131 [00:24<00:51,  1.85it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  27% Completed | 36/131 [00:24<00:51,  1.85it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  28% Completed | 37/131 [00:25<00:46,  2.01it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  29% Completed | 38/131 [00:27<01:40,  1.08s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  30% Completed | 39/131 [00:29<01:51,  1.21s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  31% Completed | 40/131 [00:32<02:50,  1.87s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  31% Completed | 41/131 [00:34<02:32,  1.69s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  32% Completed | 42/131 [00:36<02:45,  1.85s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  33% Completed | 43/131 [00:37<02:26,  1.66s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  34% Completed | 44/131 [00:39<02:39,  1.83s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  34% Completed | 45/131 [00:40<02:21,  1.65s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  35% Completed | 46/131 [00:43<02:35,  1.83s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  36% Completed | 47/131 [00:44<02:15,  1.62s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  37% Completed | 48/131 [00:46<02:28,  1.79s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  37% Completed | 49/131 [00:47<02:12,  1.61s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  38% Completed | 50/131 [00:48<01:40,  1.24s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  39% Completed | 51/131 [00:48<01:14,  1.08it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  40% Completed | 52/131 [00:48<01:00,  1.30it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  40% Completed | 53/131 [00:48<00:46,  1.68it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  41% Completed | 54/131 [00:49<00:40,  1.88it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  42% Completed | 55/131 [00:49<00:32,  2.32it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  43% Completed | 56/131 [00:49<00:31,  2.40it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  44% Completed | 57/131 [00:50<00:27,  2.66it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  44% Completed | 58/131 [00:52<01:07,  1.08it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  45% Completed | 59/131 [00:53<01:11,  1.01it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  46% Completed | 60/131 [00:53<00:56,  1.27it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  47% Completed | 61/131 [00:54<00:46,  1.50it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  47% Completed | 62/131 [00:54<00:40,  1.71it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  48% Completed | 63/131 [00:54<00:35,  1.90it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  49% Completed | 64/131 [00:55<00:28,  2.33it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  50% Completed | 65/131 [00:55<00:27,  2.37it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  50% Completed | 66/131 [00:55<00:23,  2.78it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  51% Completed | 67/131 [00:56<00:22,  2.85it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  52% Completed | 68/131 [00:56<00:18,  3.38it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  53% Completed | 69/131 [00:56<00:19,  3.15it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  53% Completed | 70/131 [00:56<00:16,  3.62it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  54% Completed | 71/131 [00:57<00:17,  3.41it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  55% Completed | 72/131 [00:57<00:14,  4.05it/s]
+[rank2]:[W915 10:47:25.556304128 CUDACachingAllocator.cpp:508] expandable_segments: memory mapping failed with OOM on device 2 while trying to map 20971520 bytes (free: 3473408, total: 68064444416).
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  56% Completed | 74/131 [00:57<00:09,  6.01it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  58% Completed | 76/131 [00:57<00:07,  7.68it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  60% Completed | 78/131 [00:57<00:05,  9.08it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  61% Completed | 80/131 [00:57<00:05, 10.03it/s]
+[rank2]:[W915 10:47:26.088241222 CUDACachingAllocator.cpp:508] expandable_segments: memory mapping failed with OOM on device 2 while trying to map 20971520 bytes (free: 3473408, total: 68064444416).
+(Worker_PP2 pid=10946) INFO 09-15 10:47:26 [kernel.py:407] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  63% Completed | 82/131 [01:01<00:31,  1.54it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  63% Completed | 83/131 [01:01<00:26,  1.83it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  65% Completed | 85/131 [01:01<00:17,  2.62it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  66% Completed | 87/131 [01:01<00:12,  3.59it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  68% Completed | 89/131 [01:01<00:08,  4.69it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  69% Completed | 91/131 [01:02<00:06,  5.88it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  71% Completed | 93/131 [01:02<00:05,  7.11it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  73% Completed | 95/131 [01:02<00:04,  8.28it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  74% Completed | 97/131 [01:02<00:03,  9.34it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  76% Completed | 99/131 [01:02<00:03, 10.25it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  77% Completed | 101/131 [01:02<00:02, 11.00it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  79% Completed | 103/131 [01:05<00:11,  2.36it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  79% Completed | 104/131 [01:06<00:14,  1.82it/s]
+[rank1]:[W915 10:47:34.667509810 CUDACachingAllocator.cpp:508] expandable_segments: memory mapping failed with OOM on device 1 while trying to map 20971520 bytes (free: 22347776, total: 68064444416).
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  80% Completed | 105/131 [01:06<00:11,  2.17it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  82% Completed | 107/131 [01:06<00:07,  3.12it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  83% Completed | 109/131 [01:06<00:05,  4.22it/s]
+[rank1]:[W915 10:47:35.104393201 CUDACachingAllocator.cpp:508] expandable_segments: memory mapping failed with OOM on device 1 while trying to map 20971520 bytes (free: 22347776, total: 68064444416).
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  85% Completed | 111/131 [01:06<00:03,  5.43it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  86% Completed | 113/131 [01:07<00:02,  6.66it/s]
+[rank1]:[W915 10:47:35.474107934 CUDACachingAllocator.cpp:508] expandable_segments: memory mapping failed with OOM on device 1 while trying to map 20971520 bytes (free: 22347776, total: 68064444416).
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  88% Completed | 115/131 [01:07<00:02,  7.87it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  89% Completed | 117/131 [01:07<00:01,  8.97it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  91% Completed | 119/131 [01:07<00:01,  9.92it/s]
+(Worker_PP1 pid=10818) INFO 09-15 10:47:36 [model_runner.py:431] Model loading took 46.64 GiB memory and 88.062367 seconds
+(Worker_PP1 pid=10818) INFO 09-15 10:47:36 [interface.py:933] Setting attention block size to 1600 tokens to ensure that attention page size is >= mamba page size.
+(Worker_PP1 pid=10818) INFO 09-15 10:47:36 [interface.py:957] Padding mamba page size by 0.25% to ensure that mamba page size and attention page size are exactly equal.
+(Worker_PP2 pid=10946) INFO 09-15 10:47:37 [model_runner.py:431] Model loading took 45.39 GiB memory and 88.450122 seconds
+(Worker_PP2 pid=10946) INFO 09-15 10:47:37 [interface.py:933] Setting attention block size to 1600 tokens to ensure that attention page size is >= mamba page size.
+(Worker_PP2 pid=10946) INFO 09-15 10:47:37 [interface.py:957] Padding mamba page size by 0.25% to ensure that mamba page size and attention page size are exactly equal.
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  92% Completed | 121/131 [01:09<00:04,  2.31it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  93% Completed | 122/131 [01:11<00:05,  1.74it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  94% Completed | 123/131 [01:13<00:07,  1.10it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  95% Completed | 124/131 [01:14<00:06,  1.04it/s]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  95% Completed | 125/131 [01:16<00:07,  1.27s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  96% Completed | 126/131 [01:18<00:06,  1.28s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  97% Completed | 127/131 [01:20<00:06,  1.53s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  98% Completed | 128/131 [01:21<00:04,  1.45s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  98% Completed | 129/131 [01:23<00:03,  1.67s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards:  99% Completed | 130/131 [01:25<00:01,  1.74s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards: 100% Completed | 131/131 [01:26<00:00,  1.46s/it]
+(Worker_PP0 pid=10697) Loading safetensors checkpoint shards: 100% Completed | 131/131 [01:26<00:00,  1.51it/s]
+(Worker_PP0 pid=10697) 
+(Worker_PP0 pid=10697) INFO 09-15 10:47:54 [default_loader.py:430] Loading weights took 86.48 seconds
+(Worker_PP0 pid=10697) INFO 09-15 10:47:54 [fp8.py:740] Using MoEPrepareAndFinalizeNoDPEPModular
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:132] Attempting to override humming GEMM config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (16, 64, 256), 'warp_shape': (16, 64, 32), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 67, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': [16, 64, 128], 'warp_shape': (16, 64, 32), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 67, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (16, 64, 256), 'warp_shape': (16, 64, 32), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': [16, 64, 128], 'warp_shape': (16, 64, 32), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (16, 128, 128), 'warp_shape': (16, 64, 32), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (16, 128, 128), 'warp_shape': (16, 64, 32), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (16, 256, 64), 'warp_shape': (16, 64, 32), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (16, 256, 64), 'warp_shape': (16, 64, 32), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (16, 256, 128), 'warp_shape': (16, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 4, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (16, 256, 128), 'warp_shape': (16, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 4, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (32, 256, 64), 'warp_shape': (16, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (32, 256, 64), 'warp_shape': (16, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (48, 256, 128), 'warp_shape': (48, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 3, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (48, 256, 128), 'warp_shape': (48, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 3, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (64, 256, 64), 'warp_shape': (32, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (64, 256, 64), 'warp_shape': (32, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (96, 256, 64), 'warp_shape': (48, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (96, 256, 64), 'warp_shape': (48, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (128, 256, 64), 'warp_shape': (64, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 4, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (128, 256, 64), 'warp_shape': (64, 64, 64), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 4, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (16, 64, 128), 'warp_shape': (16, 64, 32), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 67, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (16, 64, 128), 'warp_shape': (16, 64, 32), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 67, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (16, 128, 128), 'warp_shape': (16, 64, 32), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 67, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (16, 128, 128), 'warp_shape': (16, 64, 32), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 67, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (16, 256, 64), 'warp_shape': (16, 64, 32), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (16, 256, 64), 'warp_shape': (16, 64, 32), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (16, 256, 128), 'warp_shape': (16, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 4, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (16, 256, 128), 'warp_shape': (16, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 4, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (32, 256, 64), 'warp_shape': (16, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (32, 256, 64), 'warp_shape': (16, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (48, 256, 128), 'warp_shape': (48, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 3, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (48, 256, 128), 'warp_shape': (48, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 3, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (64, 256, 64), 'warp_shape': (32, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (64, 256, 64), 'warp_shape': (32, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (96, 256, 64), 'warp_shape': (48, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (96, 256, 64), 'warp_shape': (48, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': (128, 256, 64), 'warp_shape': (64, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 4, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] Overridden humming GEMM config. Current config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:148] : {'block_shape': (128, 256, 64), 'warp_shape': (64, 64, 64), 'use_stream_k': False, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 4, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': [16, 64, 128], 'warp_shape': (16, 64, 32), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 67, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] Overriding humming GEMM config. Previous config
+(Worker_PP0 pid=10697) INFO 09-15 10:47:56 [fused_humming_moe.py:140] : {'block_shape': [16, 64, 128], 'warp_shape': (16, 64, 32), 'use_stream_k': True, 'use_f16_accum': False, 'num_sms': 70, 'num_stages': 5, 'num_ctas_per_sm': 1, 'num_write_splits': 1}
+[rank0]:[W915 10:47:56.182098726 CUDACachingAllocator.cpp:508] expandable_segments: memory mapping failed with OOM on device 0 while trying to map 20971520 bytes (free: 13959168, total: 68064444416).
+[rank0]:[W915 10:47:56.633754366 CUDACachingAllocator.cpp:508] expandable_segments: memory mapping failed with OOM on device 0 while trying to map 20971520 bytes (free: 13959168, total: 68064444416).
+(Worker_PP0 pid=10697) INFO 09-15 10:47:57 [model_runner.py:431] Model loading took 44.19 GiB memory and 109.295851 seconds
+(Worker_PP0 pid=10697) INFO 09-15 10:47:58 [interface.py:933] Setting attention block size to 1600 tokens to ensure that attention page size is >= mamba page size.
+(Worker_PP0 pid=10697) INFO 09-15 10:47:58 [interface.py:957] Padding mamba page size by 0.25% to ensure that mamba page size and attention page size are exactly equal.
+(EngineCore pid=10556) INFO 09-15 10:47:58 [torch_utils.py:287] Reducing Torch threads from 10 to 1 for serving. Set OMP_NUM_THREADS in the external environment to override.
+(EngineCore pid=10556) INFO 09-15 10:47:58 [utils.py:320] Using BLNHC KV cache layout.
+(Worker_PP0 pid=10697) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(Worker_PP0 pid=10697) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(Worker_PP1 pid=10818) WARNING 09-15 10:48:01 [kv_cache_utils.py:2205] Speculative decoding (method=mtp) is enabled but no KV cache group could be identified as the draft model's.
+(Worker_PP0 pid=10697) [transformers] The `use_fast` parameter is deprecated and will be removed in a future version. Use `backend="torchvision"` instead of `use_fast=True`, or `backend="pil"` instead of `use_fast=False`.
+(Worker_PP2 pid=10946) WARNING 09-15 10:48:01 [kv_cache_utils.py:2205] Speculative decoding (method=mtp) is enabled but no KV cache group could be identified as the draft model's.
+(Worker_PP0 pid=10697) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(Worker_PP0 pid=10697) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(Worker_PP2 pid=10946) INFO 09-15 10:48:02 [speculator.py:151] Capturing model for speculator...
+(Worker_PP1 pid=10818) INFO 09-15 10:48:03 [model_runner.py:1073] Graph capturing finished in 2 secs, took 0.18 GiB
+(Worker_PP1 pid=10818) INFO 09-15 10:48:03 [gpu_worker.py:697] CUDA graph memory profiling is enabled (default since v0.21.0). The current --gpu-memory-utilization=0.9400 is equivalent to --gpu-memory-utilization=0.9368 without CUDA graph memory profiling. To maintain the same effective KV cache size as before, increase --gpu-memory-utilization to 0.9432. To disable, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0.
+(Worker_PP2 pid=10946) INFO 09-15 10:48:03 [model_runner.py:1073] Graph capturing finished in 2 secs, took 0.28 GiB
+(Worker_PP2 pid=10946) INFO 09-15 10:48:03 [gpu_worker.py:697] CUDA graph memory profiling is enabled (default since v0.21.0). The current --gpu-memory-utilization=0.9400 is equivalent to --gpu-memory-utilization=0.9352 without CUDA graph memory profiling. To maintain the same effective KV cache size as before, increase --gpu-memory-utilization to 0.9448. To disable, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0.
+(Worker_PP0 pid=10697) INFO 09-15 10:48:05 [encoder_runner.py:131] Encoder cache will be initialized with a budget of 16384 tokens, and profiled with 1 image items of the maximum feature size.
+(Worker_PP0 pid=10697) WARNING 09-15 10:48:14 [kv_cache_utils.py:2205] Speculative decoding (method=mtp) is enabled but no KV cache group could be identified as the draft model's.
+(Worker_PP0 pid=10697) INFO 09-15 10:48:14 [breakable_cudagraph.py:293] Breakable CUDA graph enabled
+(Worker_PP0 pid=10697) Capturing CUDA graphs (PIECEWISE):   0%|          | 0/11 [00:00<?, ?it/s]Capturing CUDA graphs (PIECEWISE):   9%|▉         | 1/11 [00:00<00:02,  4.18it/s]Capturing CUDA graphs (PIECEWISE):  27%|██▋       | 3/11 [00:00<00:01,  7.34it/s]Capturing CUDA graphs (PIECEWISE):  45%|████▌     | 5/11 [00:00<00:00,  8.60it/s]Capturing CUDA graphs (PIECEWISE):  64%|██████▎   | 7/11 [00:00<00:00,  9.21it/s]Capturing CUDA graphs (PIECEWISE):  73%|███████▎  | 8/11 [00:00<00:00,  9.34it/s]Capturing CUDA graphs (PIECEWISE):  91%|█████████ | 10/11 [00:01<00:00, 10.53it/s]Capturing CUDA graphs (PIECEWISE): 100%|██████████| 11/11 [00:01<00:00,  9.42it/s]
+(Worker_PP0 pid=10697) Capturing CUDA graphs (FULL):   0%|          | 0/2 [00:00<?, ?it/s]Capturing CUDA graphs (FULL):  50%|█████     | 1/2 [00:00<00:00,  9.38it/s]Capturing CUDA graphs (FULL): 100%|██████████| 2/2 [00:00<00:00, 11.11it/s]
+(Worker_PP0 pid=10697) INFO 09-15 10:48:16 [model_runner.py:1073] Graph capturing finished in 2 secs, took 0.19 GiB
+(Worker_PP0 pid=10697) INFO 09-15 10:48:16 [gpu_worker.py:682] Available KV cache memory: 12.76 GiB
+(Worker_PP0 pid=10697) INFO 09-15 10:48:16 [gpu_worker.py:697] CUDA graph memory profiling is enabled (default since v0.21.0). The current --gpu-memory-utilization=0.9400 is equivalent to --gpu-memory-utilization=0.9367 without CUDA graph memory profiling. To maintain the same effective KV cache size as before, increase --gpu-memory-utilization to 0.9433. To disable, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0.
+(EngineCore pid=10556) WARNING 09-15 10:48:16 [kv_cache_utils.py:2205] Speculative decoding (method=mtp) is enabled but no KV cache group could be identified as the draft model's.
+(EngineCore pid=10556) INFO 09-15 10:48:16 [kv_cache_utils.py:2394] GPU KV cache size: 1,208,978 tokens, Maximum concurrency for 1,000,000 tokens per request: 1.21x
+(Worker_PP2 pid=10946) INFO 09-15 10:48:16 [kernel_warmup.py:172] JIT kernel warmup starting.
+(Worker_PP2 pid=10946) INFO 09-15 10:48:16 [kernel_warmup.py:185] JIT kernel warmup finished in 0.00s.
+(Worker_PP1 pid=10818) INFO 09-15 10:48:16 [kernel_warmup.py:172] JIT kernel warmup starting.
+(Worker_PP0 pid=10697) INFO 09-15 10:48:16 [kernel_warmup.py:172] JIT kernel warmup starting.
+(Worker_PP1 pid=10818) INFO 09-15 10:48:16 [kernel_warmup.py:185] JIT kernel warmup finished in 0.00s.
+(Worker_PP0 pid=10697) INFO 09-15 10:48:16 [kernel_warmup.py:185] JIT kernel warmup finished in 0.00s.
+(Worker_PP0 pid=10697) INFO 09-15 10:48:16 [qwen_vl_triton_warmup.py:57] Warmed position embedding and vision rotary kernels on grids=[(1, 16, 16), (1, 16, 2), (1, 2, 16), (1, 2, 2)].
+(Worker_PP2 pid=10946) INFO 09-15 10:48:16 [qwen_vl_triton_warmup.py:57] Warmed position embedding and vision rotary kernels on grids=[(1, 16, 16), (1, 16, 2), (1, 2, 16), (1, 2, 2)].
+(Worker_PP1 pid=10818) INFO 09-15 10:48:16 [qwen_vl_triton_warmup.py:57] Warmed position embedding and vision rotary kernels on grids=[(1, 16, 16), (1, 16, 2), (1, 2, 16), (1, 2, 2)].
+(Worker_PP2 pid=10946) INFO 09-15 10:48:16 [qwen_vl_triton_warmup.py:98] Warmed M-RoPE Triton kernels.
+(Worker_PP0 pid=10697) INFO 09-15 10:48:16 [qwen_vl_triton_warmup.py:98] Warmed M-RoPE Triton kernels.
+(Worker_PP1 pid=10818) INFO 09-15 10:48:16 [qwen_vl_triton_warmup.py:98] Warmed M-RoPE Triton kernels.
+(Worker_PP0 pid=10697) INFO 09-15 10:48:16 [mamba_triton_warmup.py:42] Warmed Mamba batch_memcpy_kernel.
+(Worker_PP2 pid=10946) INFO 09-15 10:48:16 [mamba_triton_warmup.py:42] Warmed Mamba batch_memcpy_kernel.
+(Worker_PP1 pid=10818) INFO 09-15 10:48:16 [mamba_triton_warmup.py:42] Warmed Mamba batch_memcpy_kernel.
+(Worker_PP2 pid=10946) INFO 09-15 10:48:17 [qwen4_exp_qsa_warmup.py:72] Warmed up Qwen4Exp QSA decode kernels: ((1, 1), (1, 5), (2, 1), (2, 5), (3, 1), (3, 5), (4, 1), (4, 5)).
+(Worker_PP2 pid=10946) INFO 09-15 10:48:17 [qwen4_exp_qsa_warmup.py:86] Warmed up Qwen4Exp QSA sparse attention kernels: ((32, 1, 1), (32, 4, 1), (32, 8, 1), (32, 16, 1), (32, 64, 4), (64, 1, 2), (64, 4, 2)).
+(Worker_PP0 pid=10697) INFO 09-15 10:48:17 [qwen4_exp_qsa_warmup.py:72] Warmed up Qwen4Exp QSA decode kernels: ((1, 1), (1, 5), (2, 1), (2, 5), (3, 1), (3, 5), (4, 1), (4, 5)).
+(Worker_PP1 pid=10818) INFO 09-15 10:48:17 [qwen4_exp_qsa_warmup.py:72] Warmed up Qwen4Exp QSA decode kernels: ((1, 1), (1, 5), (2, 1), (2, 5), (3, 1), (3, 5), (4, 1), (4, 5)).
+(Worker_PP0 pid=10697) INFO 09-15 10:48:17 [qwen4_exp_qsa_warmup.py:86] Warmed up Qwen4Exp QSA sparse attention kernels: ((32, 1, 1), (32, 4, 1), (32, 8, 1), (32, 16, 1), (32, 64, 4), (64, 1, 2), (64, 4, 2)).
+(Worker_PP1 pid=10818) INFO 09-15 10:48:17 [qwen4_exp_qsa_warmup.py:86] Warmed up Qwen4Exp QSA sparse attention kernels: ((32, 1, 1), (32, 4, 1), (32, 8, 1), (32, 16, 1), (32, 64, 4), (64, 1, 2), (64, 4, 2)).
+(Worker_PP0 pid=10697) INFO 09-15 10:48:17 [kernel_warmup.py:255] Skipping FlashInfer autotune because it is disabled.
+(Worker_PP0 pid=10697) /opt/ai/vllm/qwen38-flashnext-pp/vllm/distributed/parallel_state.py:955: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_new.cpp:1556.)
+(Worker_PP0 pid=10697)   object_tensor = torch.frombuffer(pickle.dumps(obj), dtype=torch.uint8)
+[rank0]:[W915 10:48:17.421338888 ProcessGroupNCCL.cpp:4173] Warning: An unbatched P2P op (send/recv) was called on this ProcessGroup with size 3.  In lazy initialization mode, this will result in a new 2-rank NCCL communicator to be created. (function operator())
+[rank1]:[W915 10:48:17.421341914 ProcessGroupNCCL.cpp:4173] Warning: An unbatched P2P op (send/recv) was called on this ProcessGroup with size 3.  In lazy initialization mode, this will result in a new 2-rank NCCL communicator to be created. (function operator())
+(Worker_PP1 pid=10818) /opt/ai/vllm/qwen38-flashnext-pp/vllm/distributed/parallel_state.py:955: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_new.cpp:1556.)
+(Worker_PP1 pid=10818)   object_tensor = torch.frombuffer(pickle.dumps(obj), dtype=torch.uint8)
+[rank1]:[W915 10:48:17.556731549 ProcessGroupNCCL.cpp:4173] Warning: An unbatched P2P op (send/recv) was called on this ProcessGroup with size 3.  In lazy initialization mode, this will result in a new 2-rank NCCL communicator to be created. (function operator())
+[rank2]:[W915 10:48:17.557634832 ProcessGroupNCCL.cpp:4173] Warning: An unbatched P2P op (send/recv) was called on this ProcessGroup with size 3.  In lazy initialization mode, this will result in a new 2-rank NCCL communicator to be created. (function operator())
+(Worker_PP0 pid=10697) Capturing CUDA graphs (PIECEWISE):   0%|          | 0/11 [00:00<?, ?it/s]Capturing CUDA graphs (PIECEWISE):  18%|█▊        | 2/11 [00:00<00:00, 10.68it/s]Capturing CUDA graphs (PIECEWISE):  36%|███▋      | 4/11 [00:00<00:00, 10.72it/s]Capturing CUDA graphs (PIECEWISE):  55%|█████▍    | 6/11 [00:00<00:00, 10.65it/s]Capturing CUDA graphs (PIECEWISE):  73%|███████▎  | 8/11 [00:00<00:00, 11.11it/s]Capturing CUDA graphs (PIECEWISE):  91%|█████████ | 10/11 [00:00<00:00, 11.90it/s]Capturing CUDA graphs (PIECEWISE): 100%|██████████| 11/11 [00:00<00:00, 11.56it/s]
+(Worker_PP0 pid=10697) Capturing CUDA graphs (FULL):   0%|          | 0/5 [00:00<?, ?it/s]Capturing CUDA graphs (FULL):  40%|████      | 2/5 [00:00<00:00, 13.87it/s](Worker_PP2 pid=10946) INFO 09-15 10:48:20 [speculator.py:151] Capturing model for speculator...
+Capturing CUDA graphs (FULL):  80%|████████  | 4/5 [00:00<00:00, 13.76it/s]Capturing CUDA graphs (FULL): 100%|██████████| 5/5 [00:00<00:00, 13.81it/s]
+(Worker_PP0 pid=10697) INFO 09-15 10:48:21 [model_runner.py:1073] Graph capturing finished in 2 secs, took 0.09 GiB
+(Worker_PP0 pid=10697) INFO 09-15 10:48:21 [gpu_worker.py:867] CUDA graph pool memory: 0.09 GiB (actual), 0.21 GiB (estimated), difference: 0.12 GiB (127.7%).
+(Worker_PP0 pid=10697) INFO 09-15 10:48:21 [gpu_worker.py:930] Free memory on device (62.93/63.39 GiB) on startup. Desired GPU memory utilization is (0.94, 59.59 GiB). Actual usage is 44.86 GiB for consumed memory (weights + non-torch), 1.97 GiB for peak activation, and 0.09 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=13443426776` (12.52 GiB) to fit into requested memory, or `--kv-cache-memory=17034462720` (15.86 GiB) to fully utilize gpu memory. Current kv cache memory in use is 12.76 GiB.
+(Worker_PP1 pid=10818) INFO 09-15 10:48:21 [model_runner.py:1073] Graph capturing finished in 2 secs, took 0.09 GiB
+(Worker_PP1 pid=10818) INFO 09-15 10:48:21 [gpu_worker.py:867] CUDA graph pool memory: 0.09 GiB (actual), 0.21 GiB (estimated), difference: 0.12 GiB (128.3%).
+(Worker_PP1 pid=10818) INFO 09-15 10:48:21 [gpu_worker.py:930] Free memory on device (62.93/63.39 GiB) on startup. Desired GPU memory utilization is (0.94, 59.59 GiB). Actual usage is 47.21 GiB for consumed memory (weights + non-torch), 0.44 GiB for peak activation, and 0.09 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=12557165528` (11.69 GiB) to fit into requested memory, or `--kv-cache-memory=16148201472` (15.04 GiB) to fully utilize gpu memory. Current kv cache memory in use is 11.93 GiB.
+(Worker_PP2 pid=10946) INFO 09-15 10:48:21 [model_runner.py:1073] Graph capturing finished in 2 secs, took 0.19 GiB
+(Worker_PP2 pid=10946) INFO 09-15 10:48:21 [gpu_worker.py:867] CUDA graph pool memory: 0.19 GiB (actual), 0.3 GiB (estimated), difference: 0.11 GiB (57.6%).
+(Worker_PP2 pid=10946) INFO 09-15 10:48:21 [gpu_worker.py:930] Free memory on device (62.93/63.39 GiB) on startup. Desired GPU memory utilization is (0.94, 59.59 GiB). Actual usage is 45.98 GiB for consumed memory (weights + non-torch), 0.55 GiB for peak activation, and 0.19 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=13655299032` (12.72 GiB) to fit into requested memory, or `--kv-cache-memory=17246334976` (16.06 GiB) to fully utilize gpu memory. Current kv cache memory in use is 13.06 GiB.
+(Worker_PP0 pid=10697) INFO 09-15 10:48:22 [jit_monitor.py:85] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_PP2 pid=10946) INFO 09-15 10:48:22 [jit_monitor.py:85] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_PP1 pid=10818) INFO 09-15 10:48:22 [jit_monitor.py:85] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_PP0 pid=10697) INFO 09-15 10:48:22 [torch_utils.py:287] Reducing Torch threads from 10 to 1 for serving. Set OMP_NUM_THREADS in the external environment to override.
+(EngineCore pid=10556) INFO 09-15 10:48:22 [core.py:379] init engine (profile, create kv cache, warmup model) took 24.37 s
+(EngineCore pid=10556) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(EngineCore pid=10556) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(EngineCore pid=10556) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(EngineCore pid=10556) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(EngineCore pid=10556) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(EngineCore pid=10556) INFO 09-15 10:48:23 [kv_cache_utils.py:748] kv cache group sizes [1600, 1600, 1600, 1600, 8, 1600]
+(EngineCore pid=10556) INFO 09-15 10:48:23 [kv_cache_utils.py:749] kv lcm block sizes 1600
+(EngineCore pid=10556) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(EngineCore pid=10556) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(EngineCore pid=10556) [transformers] The `use_fast` parameter is deprecated and will be removed in a future version. Use `backend="torchvision"` instead of `use_fast=True`, or `backend="pil"` instead of `use_fast=False`.
+(EngineCore pid=10556) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(EngineCore pid=10556) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_section', 'mrope_interleaved'}
+(EngineCore pid=10556) INFO 09-15 10:48:30 [vllm.py:1252] Resolved Engram configuration: EngramConfig(cpu_offload=True, embedding_across_dp=False, dp_shared_memory=False)
+(EngineCore pid=10556) INFO 09-15 10:48:30 [kernel.py:407] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(EngineCore pid=10556) WARNING 09-15 10:48:30 [vllm.py:2128] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional draft token slots, or decrease num_speculative_tokens.
+(EngineCore pid=10556) INFO 09-15 10:48:30 [compilation.py:336] Enabled custom fusions: norm_quant, act_quant
+(APIServer pid=10256) INFO 09-15 10:48:30 [entry.py:135] Supported tasks: ['generate']
+(APIServer pid=10256) INFO 09-15 10:48:30 [factories.py:76] Scale-out endpoints are disabled. Set --enable-scale-out to enable them.
+(APIServer pid=10256) INFO 09-15 10:48:30 [parser_manager.py:36] "auto" tool choice has been enabled.
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) [transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='default': {'mrope_interleaved', 'mrope_section'}
+(APIServer pid=10256) INFO 09-15 10:48:30 [hf.py:642] Detected the chat template content format to be 'openai'. You can set `--chat-template-content-format` to override this.
+(APIServer pid=10256) WARNING 09-15 10:48:30 [model.py:1772] Default vLLM sampling parameters have been overridden by the model's `generation_config.json`: `{'temperature': 1.0, 'top_k': 20, 'top_p': 0.95}`. If this is not intended, please relaunch vLLM instance with `--generation-config vllm`.
+(APIServer pid=10256) INFO 09-15 10:48:31 [entry.py:139] Starting vLLM server on http://0.0.0.0:8000
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:61] Available routes are:
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /openapi.json, Methods: GET, HEAD
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /docs, Methods: GET, HEAD
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /docs/oauth2-redirect, Methods: GET, HEAD
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /redoc, Methods: GET, HEAD
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /load, Methods: GET
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /version, Methods: GET
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /health, Methods: GET
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /metrics, Methods: GET
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /tokenize, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /detokenize, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /v1/models, Methods: GET
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /ping, Methods: GET
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /ping, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /invocations, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /v1/chat/completions, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /v1/chat/completions/batch, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /v1/responses, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /v1/responses/{response_id}, Methods: GET
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /v1/responses/{response_id}/cancel, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /v1/completions, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /v1/messages, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /v1/messages/count_tokens, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /generative_scoring, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /scale_elastic_ep, Methods: POST
+(APIServer pid=10256) INFO 09-15 10:48:31 [launcher.py:70] Route: /is_scaling_elastic_ep, Methods: POST
+(APIServer pid=10256) INFO:     Started server process [10256]
+(APIServer pid=10256) INFO:     Waiting for application startup.
+(APIServer pid=10256) INFO:     Application startup complete.
