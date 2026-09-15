@@ -81,7 +81,8 @@ The cards are CMP 170HX (GA100) running unlocked. The
 [amoghmunikote/cmpunlocker](https://github.com/amoghmunikote/cmpunlocker)
 patched nvidia-open kernel module restores what the CMP firmware restricts:
 full SM compute, the full HBM2e geometry (the 64 GB per card this setup
-depends on), PCIe Gen 2 speed, and full BAR1. There is no other tuning or
+depends on), PCIe Gen 2 speed (x4 link width on this board, ~2 GB/s per
+direction per card), and full BAR1. There is no other tuning or
 overclocking. Each card is power-capped at 200 W (`nvidia-smi -pl 200`,
 re-apply after reboot), so every tok/s number below is at 200 W, not at the
 silicon ceiling.
