@@ -1,4 +1,4 @@
-From 1a129fa92b3d1b509d074e0d633dc89cc1861b99 Mon Sep 17 00:00:00 2001
+From e10d462d2a8927a0c087e1fe04964f6f85eced59 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Fri, 11 Sep 2026 00:18:16 +0200
 Subject: [PATCH 9/9] [Bugfix][Spec Decode] Let --hf-overrides RoPE scaling
@@ -204,10 +204,10 @@ index 8be877bb9c..2ec2d17409 100644
 +    assert text_config.rope_parameters["mrope_section"] == [1, 1, 2]
 +    assert text_config.rope_parameters["original_max_position_embeddings"] == 1024
 diff --git a/vllm/config/model.py b/vllm/config/model.py
-index 89978c35d0..be9dffaa93 100644
+index 9ee35069da..9b397ed72c 100644
 --- a/vllm/config/model.py
 +++ b/vllm/config/model.py
-@@ -477,8 +477,8 @@ class ModelConfig:
+@@ -476,8 +476,8 @@ class ModelConfig:
              factors["language_model_only"] = self.multimodal_config.language_model_only
          return hash_factors(factors)
  
@@ -217,7 +217,7 @@ index 89978c35d0..be9dffaa93 100644
          target: PretrainedConfig | dict[str, Any],
          updates: dict[str, Any],
      ) -> None:
-@@ -496,7 +496,7 @@ class ModelConfig:
+@@ -495,7 +495,7 @@ class ModelConfig:
                      isinstance(nested_target, dict)
                      or hasattr(nested_target, "__dict__")
                  ):
@@ -226,7 +226,7 @@ index 89978c35d0..be9dffaa93 100644
                      continue
  
              # Set the value (base case)
-@@ -505,8 +505,8 @@ class ModelConfig:
+@@ -504,8 +504,8 @@ class ModelConfig:
              else:
                  setattr(target, key, value)
  
@@ -236,7 +236,7 @@ index 89978c35d0..be9dffaa93 100644
          config: PretrainedConfig,
          overrides: dict[str, Any],
      ) -> None:
-@@ -517,7 +517,7 @@ class ModelConfig:
+@@ -516,7 +516,7 @@ class ModelConfig:
              attr = getattr(config, key, None)
              if attr is not None and isinstance(attr, PretrainedConfig):
                  # It's a nested config - recursively update it
@@ -246,10 +246,10 @@ index 89978c35d0..be9dffaa93 100644
                  # It's a dict-valued parameter - set it directly
                  setattr(config, key, value)
 diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
-index 1861266820..7719c020a0 100644
+index 63f729a832..bd01a6a762 100644
 --- a/vllm/config/speculative.py
 +++ b/vllm/config/speculative.py
-@@ -1054,15 +1054,24 @@ class SpeculativeConfig:
+@@ -1053,15 +1053,24 @@ class SpeculativeConfig:
  
      @staticmethod
      def _apply_composed_hf_override(
@@ -275,7 +275,7 @@ index 1861266820..7719c020a0 100644
      ) -> Callable[[PretrainedConfig], PretrainedConfig]:
          """Build the ``hf_overrides`` for the draft ``ModelConfig``.
  
-@@ -1070,8 +1079,15 @@ class SpeculativeConfig:
+@@ -1069,8 +1078,15 @@ class SpeculativeConfig:
          (e.g. test harnesses shrinking ``num_hidden_layers``) and must also
          reach the draft config — otherwise a draft belonging to a large
          target is instantiated at full size even when the target is shrunk.
@@ -293,7 +293,7 @@ index 1861266820..7719c020a0 100644
  
          The composed override must stay picklable: the draft ``ModelConfig``
          is sent to spawned engine-core processes, so a local closure would
-@@ -1079,12 +1095,14 @@ class SpeculativeConfig:
+@@ -1078,12 +1094,14 @@ class SpeculativeConfig:
          target via ``functools.partial`` over a module-referenceable static
          method instead.
          """
@@ -313,7 +313,7 @@ index 1861266820..7719c020a0 100644
  
      @staticmethod
      def _is_custom_proposer_path(model: str | None) -> bool:
-@@ -1262,9 +1280,15 @@ class SpeculativeConfig:
+@@ -1261,9 +1279,15 @@ class SpeculativeConfig:
                  else:
                      # Compose any callable hf_overrides set on the target so the
                      # draft config receives the same transform (e.g. the test
@@ -332,10 +332,10 @@ index 1861266820..7719c020a0 100644
                  self.draft_model_config = ModelConfig(
                      model=self.model,
 diff --git a/vllm/models/qwen4_exp/config.py b/vllm/models/qwen4_exp/config.py
-index a8eedab83f..5ef7c39814 100644
+index 341ddb4d3c..1a74d67997 100644
 --- a/vllm/models/qwen4_exp/config.py
 +++ b/vllm/models/qwen4_exp/config.py
-@@ -242,6 +242,13 @@ class Qwen4ExpConfig(PretrainedConfig):
+@@ -253,6 +253,13 @@ class Qwen4ExpConfig(PretrainedConfig):
          self.rope_parameters = rope_parameters or getattr(
              self.text_config, "rope_parameters", {}
          )

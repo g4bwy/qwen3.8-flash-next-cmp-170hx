@@ -1,4 +1,4 @@
-From 679c435c96478e0414f873bc391904bbd9443136 Mon Sep 17 00:00:00 2001
+From 273c7c76efadb4576be707628ea2cb96e3064817 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:11 +0200
 Subject: [PATCH 2/9] [Bugfix][Qwen4Exp] Allow PLE when the n-gram layers are
@@ -53,7 +53,7 @@ index f0cca639bb..8be877bb9c 100644
                  Qwen4ExpForConditionalGenerationConfig.verify_and_update_config(
                      vllm_config
 diff --git a/vllm/model_executor/models/config.py b/vllm/model_executor/models/config.py
-index bbbe98bc8d..75d52e2ebe 100644
+index 8288eab236..cd554074a1 100644
 --- a/vllm/model_executor/models/config.py
 +++ b/vllm/model_executor/models/config.py
 @@ -855,6 +855,29 @@ def _strip_qwen4_exp_mrope(model_config: "ModelConfig") -> None:

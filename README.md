@@ -4,9 +4,9 @@ Patches over vLLM mainline, running with uv venv.
 No bullshit slop-wall-of-text, no docker, no opaque scripts, no nonsense.
 
 - Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`.
-- Base commit: `995e8581f462a13e32f30cfba946c63d48cf31d7` (vllm-project/vllm main, 2026-09-14)
+- Base commit: `fc8132a5e523294ea69decb5e7cbf50e9d3e135e` (vllm-project/vllm main, 2026-09-16).
 - 9 patches. After applying them, `git rev-parse HEAD^{tree}` must print
-  `d694519b6d8b12499286f788941d6a1e15c645fa`. If it does not, you applied
+  `5f8ab42c52c2e5dd94b47ab64b1f5867120274c4`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
@@ -17,13 +17,13 @@ No bullshit slop-wall-of-text, no docker, no opaque scripts, no nonsense.
 ```bash
 git clone https://github.com/vllm-project/vllm
 cd vllm
-git checkout 995e8581f462a13e32f30cfba946c63d48cf31d7
+git checkout fc8132a5e523294ea69decb5e7cbf50e9d3e135e
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # d694519b6d8b12499286f788941d6a1e15c645fa
+git rev-parse 'HEAD^{tree}'   # 5f8ab42c52c2e5dd94b47ab64b1f5867120274c4
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
-995e8581f4`), then re-run the `git am`.
+fc8132a5e5`), then re-run the `git am`.
 
 ## Build
 
@@ -87,7 +87,8 @@ overclocking. Each card is power-capped at 200 W (`nvidia-smi -pl 200`,
 re-apply after reboot), so every tok/s number below is at 200 W, not at the
 silicon ceiling.
 
-Startup facts, all three configs on base 995e8581f4 + this 9-patch series
+Startup facts, all three configs measured on the previous base 995e8581f4 +
+this 9-patch series; the series content is unchanged by the 2026-09-16 rebase
 (boot logs `logs/boot-256k.log`, `logs/boot-512k.log`, `logs/boot-1m.log`, 2026-09-15):
 
 | config | KV pool tokens | concurrency | available KV/rank | model load PP0/PP1/PP2 |
@@ -162,10 +163,10 @@ steady decode).
 - The PLE table is pinned in host RAM as fp8 (startup log lines
   `float8_e4m3fn`, `pinned=True`). It is several GB, so measure it on your box
   before sizing other host workloads.
-- The serve scripts are base-sensitive. The `--hf-overrides` lines match
-  995e8581f4, where the YaRN limit rule is `max_position_embeddings` itself
-  (#56446). On earlier bases drop that key, because the old rule computed
-  `original x factor`.
+- The serve scripts are base-sensitive. The `--hf-overrides` lines use the
+  YaRN rule from #56446, current at fc8132a5e5: the limit is
+  `max_position_embeddings` itself. On earlier bases drop that key, because
+  the old rule computed `original x factor`.
 - `--hf-overrides` for RoPE must nest under `text_config`. The flat form the
   model card shows writes an attribute nothing reads on this multimodal
   checkpoint, and the server runs long with unscaled RoPE. Nesting merges per

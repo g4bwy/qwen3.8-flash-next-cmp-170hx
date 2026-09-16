@@ -1,4 +1,4 @@
-From aaaa68c7aa3883f17df2fdad8faf0b6f1492ef0f Mon Sep 17 00:00:00 2001
+From bbd9534563e848921b9357897e6e5234fb9a7b69 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:11 +0200
 Subject: [PATCH 3/9] [Bugfix][V2] Resolve deferred mamba state copies by
@@ -48,10 +48,10 @@ index c01895e635..dcc9ac1c82 100644
          self,
          req_index: int,
 diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
-index 4b1520f276..e3e4ec67f2 100644
+index 97571df8a9..c2b6802b56 100644
 --- a/vllm/v1/worker/gpu/model_runner.py
 +++ b/vllm/v1/worker/gpu/model_runner.py
-@@ -675,6 +675,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+@@ -663,6 +663,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
              cp_rank=self.dcp_rank,
              cp_interleave=self.cp_interleave,
          )
@@ -118,10 +118,10 @@ index 0ac3f2f63b..2bf0a8aa2e 100644
          return ctx
  
 diff --git a/vllm/v1/worker/mamba_utils.py b/vllm/v1/worker/mamba_utils.py
-index 724c714057..1ccf408998 100644
+index c2e0120e46..72752e93b6 100644
 --- a/vllm/v1/worker/mamba_utils.py
 +++ b/vllm/v1/worker/mamba_utils.py
-@@ -393,8 +393,9 @@ def postprocess_mamba_fused_kernel(
+@@ -392,8 +392,9 @@ def postprocess_mamba_fused_kernel(
      # Output: num_accepted_tokens update (for src==dst case)
      num_accepted_tokens_out_ptr,
      # Optional: batch_idx -> req_idx mapping (V2 model runner / PP). The
@@ -133,7 +133,7 @@ index 724c714057..1ccf408998 100644
      idx_mapping_ptr,
      # Runtime parameter (varies per batch - NOT constexpr to avoid recompilation)
      num_reqs,
-@@ -478,7 +479,10 @@ def postprocess_mamba_fused_kernel(
+@@ -476,7 +477,10 @@ def postprocess_mamba_fused_kernel(
      if src_block_idx == dest_block_idx and accept_token_bias == 0:
          return
  
@@ -145,7 +145,7 @@ index 724c714057..1ccf408998 100644
      _copy_mamba_state_block(
          state_idx,
          bt_row_idx,
-@@ -612,7 +616,7 @@ def precopy_mamba_align_fused_kernel(
+@@ -610,7 +614,7 @@ def precopy_mamba_align_fused_kernel(
      token_bias = tl.load(token_bias_ptr + req_idx)
      _copy_mamba_state_block(
          state_idx,
@@ -154,7 +154,7 @@ index 724c714057..1ccf408998 100644
          src_col,
          dst_col,
          token_bias,
-@@ -811,6 +815,13 @@ class MambaSpecDecodeGPUContext:
+@@ -808,6 +812,13 @@ class MambaSpecDecodeGPUContext:
      # initialize_from_forward_context from the persistent per-group block
      # table tensors (whose data_ptr is stable across steps).
      block_table_ptrs: torch.Tensor
@@ -168,7 +168,7 @@ index 724c714057..1ccf408998 100644
      block_table_stride_req: int = 0
  
      # persistent output for the once-per-step, all-group aligned-index launch.
-@@ -903,6 +914,9 @@ class MambaSpecDecodeGPUContext:
+@@ -900,6 +911,9 @@ class MambaSpecDecodeGPUContext:
              block_table_ptrs=torch.zeros(
                  len(mamba_group_ids), dtype=torch.int64, device=device
              ),
@@ -178,25 +178,25 @@ index 724c714057..1ccf408998 100644
              aligned_state_indices=torch.empty(
                  (
                      len(mamba_group_ids),
-@@ -927,6 +941,7 @@ class MambaSpecDecodeGPUContext:
+@@ -924,6 +938,7 @@ class MambaSpecDecodeGPUContext:
          forward_context: dict[str, Any],
          mamba_state_copy_funcs: MambaStateCopyFuncsByType,
          block_tables: list[torch.Tensor],
 +        req_block_tables: list[torch.Tensor] | None = None,
      ) -> None:
-         """
-         Extract and cache memory layout metadata from Mamba state tensors.
-@@ -961,6 +976,9 @@ class MambaSpecDecodeGPUContext:
+         """Extract and cache memory layout metadata from Mamba state tensors.
+ 
+@@ -957,6 +972,9 @@ class MambaSpecDecodeGPUContext:
              block_tables: per-mamba-group persistent block-table tensors, in
                  the same order as `mamba_group_ids`. Their `data_ptr()` /
                  `stride(0)` are captured once for the kernel to index into.
 +            req_block_tables: optional per-mamba-group block-table tensors
 +                indexed by request state slot instead of batch row, used by the
 +                state-copy kernels. Defaults to `block_tables`.
+ 
          """
          if self.is_initialized:
-             return
-@@ -971,6 +989,7 @@ class MambaSpecDecodeGPUContext:
+@@ -968,6 +986,7 @@ class MambaSpecDecodeGPUContext:
                  forward_context,
                  mamba_state_copy_funcs,
                  block_tables,
@@ -204,7 +204,7 @@ index 724c714057..1ccf408998 100644
              )
  
      def _populate_metadata(
-@@ -979,6 +998,7 @@ class MambaSpecDecodeGPUContext:
+@@ -976,6 +995,7 @@ class MambaSpecDecodeGPUContext:
          forward_context: dict[str, Any],
          mamba_state_copy_funcs: MambaStateCopyFuncsByType,
          block_tables: list[torch.Tensor],
@@ -212,7 +212,7 @@ index 724c714057..1ccf408998 100644
      ) -> None:
          idx = 0
          for group_local_idx, mamba_group_id in enumerate(self.mamba_group_ids):
-@@ -1090,6 +1110,21 @@ class MambaSpecDecodeGPUContext:
+@@ -1087,6 +1107,21 @@ class MambaSpecDecodeGPUContext:
          for i, bt in enumerate(block_tables):
              self.block_table_ptrs[i] = _reinterpret_u64_as_i64(bt.data_ptr())
  
@@ -234,7 +234,7 @@ index 724c714057..1ccf408998 100644
          self.is_initialized = True
  
      def compute_aligned_state_indices(
-@@ -1169,7 +1204,7 @@ class MambaSpecDecodeGPUContext:
+@@ -1166,7 +1201,7 @@ class MambaSpecDecodeGPUContext:
              num_scheduled_tokens_gpu,
              num_computed_tokens_gpu,
              num_draft_tokens_gpu,
@@ -243,7 +243,7 @@ index 724c714057..1ccf408998 100644
              self.block_table_stride_req,
              self.state_base_addrs,
              self.state_block_strides,
-@@ -1215,7 +1250,7 @@ class MambaSpecDecodeGPUContext:
+@@ -1213,7 +1248,7 @@ class MambaSpecDecodeGPUContext:
              state_idx_gpu,
              src_col_gpu,
              token_bias_gpu,
@@ -252,7 +252,7 @@ index 724c714057..1ccf408998 100644
              self.block_table_stride_req,
              self.state_base_addrs,
              self.state_block_strides,
-@@ -1267,7 +1302,7 @@ class MambaSpecDecodeGPUContext:
+@@ -1265,7 +1300,7 @@ class MambaSpecDecodeGPUContext:
              None,  # num_scheduled: unused under PRECOMPUTED_NEW_COMPUTED
              new_num_computed_tokens_gpu,
              None,  # num_draft: unused under PRECOMPUTED_NEW_COMPUTED

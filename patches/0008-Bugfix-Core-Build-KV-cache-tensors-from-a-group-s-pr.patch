@@ -1,4 +1,4 @@
-From d0d162b1922825eb0587ce4f9d1610d591eabbe5 Mon Sep 17 00:00:00 2001
+From 1ee123fc218ea838363a3cc30f08f96f238a82f8 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 22:12:29 +0200
 Subject: [PATCH 8/9] [Bugfix][Core] Build KV cache tensors from a group's
@@ -23,10 +23,10 @@ only for the layers it actually holds on this stage.
  2 files changed, 89 insertions(+), 6 deletions(-)
 
 diff --git a/tests/v1/core/test_kv_cache_utils.py b/tests/v1/core/test_kv_cache_utils.py
-index c6354cdc0f..083468b0e1 100644
+index 3c82180474..9028359383 100644
 --- a/tests/v1/core/test_kv_cache_utils.py
 +++ b/tests/v1/core/test_kv_cache_utils.py
-@@ -1518,6 +1518,90 @@ def test_project_kv_cache_groups_to_worker():
+@@ -1552,6 +1552,90 @@ def test_project_kv_cache_groups_to_worker():
      assert set(proj_spec.kv_cache_specs.keys()) == {"layer1", "layer3"}
  
  
@@ -118,10 +118,10 @@ index c6354cdc0f..083468b0e1 100644
      dcp = 8
      full = FullAttentionSpec(
 diff --git a/vllm/v1/core/kv_cache_utils.py b/vllm/v1/core/kv_cache_utils.py
-index 28478b69f5..e2db7db8ce 100644
+index 656765c896..54ec3ffe64 100644
 --- a/vllm/v1/core/kv_cache_utils.py
 +++ b/vllm/v1/core/kv_cache_utils.py
-@@ -1762,15 +1762,14 @@ def get_kv_cache_config_from_groups(
+@@ -1774,15 +1774,14 @@ def get_kv_cache_config_from_groups(
      # group 0: | A [ blk 0 | blk 1 | ... ] | B [ blk 0 | blk 1 | ... ] |
      # group 1: | C [ blk 0 | blk 1 | ... ] | D [ blk 0 | blk 1 | ... ] |
  
