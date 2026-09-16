@@ -32,7 +32,8 @@ Python 3.12, `uv` on PATH ([install](https://docs.astral.sh/uv/)).
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-VLLM_USE_PRECOMPILED=1 uv pip install -e . --torch-backend=auto
+VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=fc8132a5e523294ea69decb5e7cbf50e9d3e135e \
+  uv pip install -e . --torch-backend=auto
 ```
 
 The patches are pure Python. Re-applying an updated series onto the same base
