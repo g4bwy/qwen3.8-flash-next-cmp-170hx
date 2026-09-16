@@ -1,4 +1,4 @@
-From fc9b25eba423164dad0475e258cbf14a62fd0cd8 Mon Sep 17 00:00:00 2001
+From 6c343ff93bc1ad283ef80367e6e5ab1c0943d9dd Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 21:30:33 +0200
 Subject: [PATCH 7/9] [Bugfix][Qwen4Exp] Gather pinned PLE rows as raw bytes
@@ -19,7 +19,7 @@ already reduces FP8 rows as raw bytes.
  1 file changed, 12 insertions(+), 3 deletions(-)
 
 diff --git a/vllm/models/qwen4_exp/nvidia/ngram_embedding.py b/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
-index 84c4e7c5e1..c99d532116 100644
+index c26fd87cff..92998d4aa4 100644
 --- a/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
 +++ b/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
 @@ -375,7 +375,7 @@ def _lookup_ple_embedding_from_pinned_kernel(

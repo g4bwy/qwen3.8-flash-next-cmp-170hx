@@ -1,4 +1,4 @@
-From fcbe7c0dd4a4ec1ff99cc912f563b4ba080682e5 Mon Sep 17 00:00:00 2001
+From 6e96d02f9b1eb0cf22c7d9a58b0df035d6d158d3 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:24 +0200
 Subject: [PATCH 6/9] [Core] Per-stage KV cache budgets for heterogeneous
@@ -16,7 +16,7 @@ persisted startup plan still wins.
  2 files changed, 47 insertions(+)
 
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 6158f86f89..fc861de7d3 100755
+index 0a3f6d3c67..b0e9f4adc7 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -48,6 +48,7 @@ if TYPE_CHECKING:
@@ -27,7 +27,7 @@ index 6158f86f89..fc861de7d3 100755
      VLLM_CPU_KVCACHE_SPACE: int | None = 0
      VLLM_CPU_OMP_THREADS_BIND: str = "auto"
      VLLM_CPU_NUM_OF_RESERVED_CPU: int | None = None
-@@ -862,6 +863,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -861,6 +862,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
      ),
      # Pipeline stage partition strategy
      "VLLM_PP_LAYER_PARTITION": lambda: os.getenv("VLLM_PP_LAYER_PARTITION", None),
@@ -39,7 +39,7 @@ index 6158f86f89..fc861de7d3 100755
      # default is None and will be set as 4 GB
      "VLLM_CPU_KVCACHE_SPACE": lambda: (
 diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
-index 3f457b9b7b..42e1ec01bf 100644
+index acba1d9b67..86b0ed8b98 100644
 --- a/vllm/v1/worker/gpu_worker.py
 +++ b/vllm/v1/worker/gpu_worker.py
 @@ -179,6 +179,47 @@ class AsyncIntermediateTensors(IntermediateTensors):
@@ -90,8 +90,8 @@ index 3f457b9b7b..42e1ec01bf 100644
  class Worker(WorkerBase):
      def __init__(
          self,
-@@ -538,6 +579,7 @@ class Worker(WorkerBase):
-             by adjusting the `gpu_memory_utilization` parameter.
+@@ -539,6 +580,7 @@ class Worker(WorkerBase):
+ 
          """
          maybe_apply_startup_plan(self)
 +        maybe_apply_per_stage_kv_budget(self)
