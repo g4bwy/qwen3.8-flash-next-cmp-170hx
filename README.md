@@ -4,26 +4,29 @@ Patches over vLLM mainline, running with uv venv.
 No bullshit slop-wall-of-text, no docker, no opaque scripts, no nonsense.
 
 - Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`.
-- Base commit: `fc8132a5e523294ea69decb5e7cbf50e9d3e135e` (vllm-project/vllm main, 2026-09-16).
+- Base commit: `15859bb3a1d81a709b64eff2a1d1f38a958a362b` (vllm-project/vllm main, 2026-09-21).
 - 9 patches. After applying them, `git rev-parse HEAD^{tree}` must print
-  `5f8ab42c52c2e5dd94b47ab64b1f5867120274c4`. If it does not, you applied
+  `d9dbc9743071da65419c9c18f969db58a1117bd9`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
   ranks, KV allocation dies with a bare `StopIteration`).
+- Current base status: both 1M lanes boot clean and serve requests, at the
+  pools the tables below list. The 256k and 512k lanes, and every tok/s number
+  here, come from an earlier base.
 
 ## Apply
 
 ```bash
 git clone https://github.com/vllm-project/vllm
 cd vllm
-git checkout fc8132a5e523294ea69decb5e7cbf50e9d3e135e
+git checkout 15859bb3a1d81a709b64eff2a1d1f38a958a362b
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # 5f8ab42c52c2e5dd94b47ab64b1f5867120274c4
+git rev-parse 'HEAD^{tree}'   # d9dbc9743071da65419c9c18f969db58a1117bd9
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
-fc8132a5e5`), then re-run the `git am`.
+15859bb3a1`), then re-run the `git am`.
 
 ## Build
 
@@ -32,13 +35,30 @@ Python 3.12, `uv` on PATH ([install](https://docs.astral.sh/uv/)).
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=fc8132a5e523294ea69decb5e7cbf50e9d3e135e \
+VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=15859bb3a1d81a709b64eff2a1d1f38a958a362b \
   uv pip install -e . --torch-backend=auto
 ```
 
-The patches are pure Python. Re-applying an updated series onto the same base
-commit needs no rebuild. When you move to a different base commit, re-run the
-install line, because the precompiled wheel is pinned to a commit.
+The patches are pure Python, so re-applying an updated series onto the same base
+needs no rebuild. A new base does, because the wheel is pinned to a commit, and
+that commit must satisfy two rules:
+
+1. The base commit must have a published wheel. The install fetches
+   `https://wheels.vllm.ai/<sha>/cu130/vllm/metadata.json` and stops on 404, and
+   wheel CI lags main by hours, so main's tip usually has nothing yet. Pick the
+   newest commit that answers 200.
+2. Pass that 40-hex sha in `VLLM_PRECOMPILED_WHEEL_COMMIT`. If you leave it out
+   on a detached checkout, the install falls back to the moving `nightly` alias,
+   and the compiled code then comes from a commit you did not choose.
+
+The boot banner proves neither of these, because the install writes
+`vllm/_version.py` from your local tree, so a patched tree prints its own head.
+To see which wheel supplied the `.so` files, read the install line
+`Using precompiled wheel commit <sha> with variant cu130`, or look in the cache:
+
+```bash
+find ~/.cache/uv -name "vllm-*.whl" 2>/dev/null | head -3
+```
 
 Sanity check the tree vLLM actually imports:
 
@@ -94,11 +114,8 @@ overclocking. Each card is power-capped at 200 W (`nvidia-smi -pl 200`,
 re-apply after reboot), so every tok/s number below is at 200 W, not at the
 silicon ceiling.
 
-Startup facts, the three contexts on the 3-card set, measured on the
-previous base 995e8581f4 + this 9-patch series; the series content is
-unchanged by the 2026-09-16 rebase (boot logs `logs/boot-256k.log`,
-`logs/boot-512k.log`, `logs/boot-1m.log`, 2026-09-15; a 262k rerun on 2026-09-21,
-`boot-3x-256k.log`, reproduced the pool and the 4.39x exactly):
+Startup facts, the three contexts on the 3-card set (boot logs
+`logs/boot-*.log`, `boot-3x-256k.log`, `boot-3x-1m.log`):
 
 | config | KV pool tokens | concurrency | available KV/rank | model load PP0/PP1/PP2 |
 |---|---:|---:|---:|---|
@@ -114,8 +131,8 @@ unchanged by the 2026-09-16 rebase (boot logs `logs/boot-256k.log`,
 - At 1M, one full-context request fits with ~200k tokens of pool slack. A
   second one does not.
 
-4-card set, PP=4, tree at base fc8132a5e5 (boot logs `boot-4x-1m.log`
-2026-09-19, `boot-4x-512k.log` and `boot-4x-256k.log` 2026-09-21):
+4-card set, PP=4 (boot logs `boot-4x-256k.log`, `boot-4x-512k.log`,
+`boot-4x-1m.log`):
 
 | config | partition | KV pool tokens | concurrency | per-rank KV PP0..PP3 | per-rank load PP0..PP3 |
 |---|---|---:|---:|---|---|
@@ -136,9 +153,6 @@ unchanged by the 2026-09-16 rebase (boot logs `logs/boot-256k.log`,
   were not captured. Pool and loads are complete.
 - The draft printed `Using max model len 1000000` next to the target's:
   patch 9 holds at PP=4.
-- This boot's banner still shows the nightly wheel (`+gdc6954d14`, base+9).
-  Until the reinstall uses `VLLM_PRECOMPILED_WHEEL_COMMIT=fc8132a5e5...`,
-  compiled artifacts run one lineage ahead of the patched Python tree.
 - The `no KV cache group could be identified as the draft model's` and
   `max_num_scheduled_tokens is set to 2048` warnings are pre-existing on
   the 3-card base (they appear in `logs/boot-*.log` too), not PP=4 issues.
@@ -231,15 +245,21 @@ streams and 468 at 4, where residency was never the limit.
 - The PLE table is pinned in host RAM as fp8 (startup log lines
   `float8_e4m3fn`, `pinned=True`). It is several GB, so measure it on your box
   before sizing other host workloads.
-- The serve scripts are base-sensitive. The `--hf-overrides` lines use the
-  YaRN rule from #56446, current at fc8132a5e5: the limit is
-  `max_position_embeddings` itself. On earlier bases drop that key, because
-  the old rule computed `original x factor`.
+- The serve scripts are base-sensitive. The `--hf-overrides` lines use the YaRN
+  rule from #56446: the limit is `max_position_embeddings` itself. On a base
+  before #56446, drop that key, because the old rule computed
+  `original x factor`.
 - `--hf-overrides` for RoPE must nest under `text_config`. The flat form the
   model card shows writes an attribute nothing reads on this multimodal
   checkpoint, and the server runs long with unscaled RoPE. Nesting merges per
   key, so `mrope_section` survives and vLLM builds `MRotaryEmbedding` with
   yarn scaling instead of a plain YaRN module.
+- On 1M, transformers warns that the explicit YaRN factor 4.0 does not match
+  the implicit ratio 3.81. Nothing is wrong, since 1,000,000 is not
+  4 x 262,144 (1,048,576) and the explicit factor wins. The 512k lane stays
+  quiet, because 524,288 = 2 x 262,144 exactly.
+- The first MTP decode step compiles `_fill_num_accepted_kernel` and stalls. If
+  you measure throughput, drop the first cell of a sweep.
 - One 1M request nearly exhausts the pool (1.21x). A second long request
   queues behind it, and if both grow past the pool the scheduler preempts
   one, which replays its whole prompt under Mamba align mode, ~2 min. Run 1M
