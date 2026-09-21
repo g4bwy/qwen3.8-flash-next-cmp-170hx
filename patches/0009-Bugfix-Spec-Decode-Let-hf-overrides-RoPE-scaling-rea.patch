@@ -1,4 +1,4 @@
-From e10d462d2a8927a0c087e1fe04964f6f85eced59 Mon Sep 17 00:00:00 2001
+From 5cc7492e551f33b8a977407827967b5b4b5f6fd5 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Fri, 11 Sep 2026 00:18:16 +0200
 Subject: [PATCH 9/9] [Bugfix][Spec Decode] Let --hf-overrides RoPE scaling
@@ -204,10 +204,10 @@ index 8be877bb9c..2ec2d17409 100644
 +    assert text_config.rope_parameters["mrope_section"] == [1, 1, 2]
 +    assert text_config.rope_parameters["original_max_position_embeddings"] == 1024
 diff --git a/vllm/config/model.py b/vllm/config/model.py
-index 9ee35069da..9b397ed72c 100644
+index 145814a268..9da78edd08 100644
 --- a/vllm/config/model.py
 +++ b/vllm/config/model.py
-@@ -476,8 +476,8 @@ class ModelConfig:
+@@ -474,8 +474,8 @@ class ModelConfig:
              factors["language_model_only"] = self.multimodal_config.language_model_only
          return hash_factors(factors)
  
@@ -217,7 +217,7 @@ index 9ee35069da..9b397ed72c 100644
          target: PretrainedConfig | dict[str, Any],
          updates: dict[str, Any],
      ) -> None:
-@@ -495,7 +495,7 @@ class ModelConfig:
+@@ -493,7 +493,7 @@ class ModelConfig:
                      isinstance(nested_target, dict)
                      or hasattr(nested_target, "__dict__")
                  ):
@@ -226,7 +226,7 @@ index 9ee35069da..9b397ed72c 100644
                      continue
  
              # Set the value (base case)
-@@ -504,8 +504,8 @@ class ModelConfig:
+@@ -502,8 +502,8 @@ class ModelConfig:
              else:
                  setattr(target, key, value)
  
@@ -236,7 +236,7 @@ index 9ee35069da..9b397ed72c 100644
          config: PretrainedConfig,
          overrides: dict[str, Any],
      ) -> None:
-@@ -516,7 +516,7 @@ class ModelConfig:
+@@ -514,7 +514,7 @@ class ModelConfig:
              attr = getattr(config, key, None)
              if attr is not None and isinstance(attr, PretrainedConfig):
                  # It's a nested config - recursively update it
@@ -246,7 +246,7 @@ index 9ee35069da..9b397ed72c 100644
                  # It's a dict-valued parameter - set it directly
                  setattr(config, key, value)
 diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
-index 63f729a832..bd01a6a762 100644
+index ef9a16f903..39da025686 100644
 --- a/vllm/config/speculative.py
 +++ b/vllm/config/speculative.py
 @@ -1053,15 +1053,24 @@ class SpeculativeConfig:

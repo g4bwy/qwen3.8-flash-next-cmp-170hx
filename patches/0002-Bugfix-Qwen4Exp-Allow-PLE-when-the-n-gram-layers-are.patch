@@ -1,4 +1,4 @@
-From 273c7c76efadb4576be707628ea2cb96e3064817 Mon Sep 17 00:00:00 2001
+From 5842b2d5125d4007933d57f6ec5c7eb9db1945e7 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:11 +0200
 Subject: [PATCH 2/9] [Bugfix][Qwen4Exp] Allow PLE when the n-gram layers are

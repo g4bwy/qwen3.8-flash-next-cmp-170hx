@@ -1,4 +1,4 @@
-From bbd9534563e848921b9357897e6e5234fb9a7b69 Mon Sep 17 00:00:00 2001
+From df48eaf57a5e133ce9eea696ba58ba02e7549991 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:11 +0200
 Subject: [PATCH 3/9] [Bugfix][V2] Resolve deferred mamba state copies by
@@ -26,7 +26,7 @@ seen at its own step. Everything else keeps using the batch-ordered gather.
  5 files changed, 77 insertions(+), 8 deletions(-)
 
 diff --git a/vllm/v1/worker/gpu/block_table.py b/vllm/v1/worker/gpu/block_table.py
-index c01895e635..dcc9ac1c82 100644
+index 6563e30c34..cbfbc3f6e6 100644
 --- a/vllm/v1/worker/gpu/block_table.py
 +++ b/vllm/v1/worker/gpu/block_table.py
 @@ -110,6 +110,17 @@ class BlockTables:
@@ -48,10 +48,10 @@ index c01895e635..dcc9ac1c82 100644
          self,
          req_index: int,
 diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
-index 97571df8a9..c2b6802b56 100644
+index 1ba40c5fda..b40f40695c 100644
 --- a/vllm/v1/worker/gpu/model_runner.py
 +++ b/vllm/v1/worker/gpu/model_runner.py
-@@ -663,6 +663,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+@@ -659,6 +659,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
              cp_rank=self.dcp_rank,
              cp_interleave=self.cp_interleave,
          )
@@ -81,7 +81,7 @@ index a5c8d6f4cf..582d09e023 100644
          self,
          idx_mapping: torch.Tensor,
 diff --git a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
-index 0ac3f2f63b..2bf0a8aa2e 100644
+index bfad8a1b73..9f12cf1c0f 100644
 --- a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
 +++ b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
 @@ -111,6 +111,12 @@ class MambaHybridModelState(DefaultModelState):
