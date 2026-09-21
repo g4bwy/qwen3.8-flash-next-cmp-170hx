@@ -1,0 +1,30 @@
+{
+  "label": "ctx 261,120",
+  "ctx": 261120,
+  "decode": 1024,
+  "rows": [
+    {
+      "concurrency": 4,
+      "prompt_tokens_each": 257458,
+      "ttft_mean_s": 72.42622709274292,
+      "ttft_p95_s": 113.88329902887344,
+      "ttft_max_s": 118.58797979354858,
+      "wall_s": 126.65018439292908,
+      "in_tps": 8131.326495388001,
+      "out_tps": 32.341050426679686,
+      "win_avg_tps_per_req": 44.922263689634974,
+      "sustained_agg_tps": 451.14870826007837,
+      "mean_acceptance_length": 3.9177820267686423,
+      "preemptions": 0.0,
+      "total_prompt_tokens": 1029834,
+      "total_completion_tokens": 4096,
+      "ttfts_s": [
+        27.520965337753296,
+        56.37252187728882,
+        87.22344136238098,
+        118.58797979354858
+      ],
+      "fill_pct": 100.0
+    }
+  ]
+}
