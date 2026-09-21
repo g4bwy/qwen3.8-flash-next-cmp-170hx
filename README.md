@@ -71,14 +71,21 @@ python -c "import vllm; print(vllm.__file__)"   # must be your checkout, not a s
 Six launch scripts: three context sizes, two GPU sets. Same tree, same port,
 one at a time:
 
-| script | gpus | context | RoPE | notes |
+| script | gpus | context | RoPE | pool headroom |
 |---|---|---|---|---|
-| `serve-3x.sh` | 3 | 262,144 | none, native window | the safe one |
-| `serve-3x-512k.sh` | 3 | 524,288 | static YaRN 2.0 | needs patch 9 (RoPE forwarding) |
-| `serve-3x-1m.sh` | 3 | 1,000,000 | static YaRN 4.0 | vendor recipe |
-| `serve-4x.sh` | 4 | 262,144 | none, native window | booted + benched, see 4-card tables |
-| `serve-4x-512k.sh` | 4 | 524,288 | static YaRN 2.0 | booted + benched, see 4-card tables |
-| `serve-4x-1m.sh` | 4 | 1,000,000 | static YaRN 4.0 | booted + benched, see 4-card tables |
+| `serve-3x.sh` | 3 | 262,144 | none, native window | 4.39x, best multi-stream decode |
+| `serve-3x-512k.sh` | 3 | 524,288 | static YaRN 2.0 | 2.30x |
+| `serve-3x-1m.sh` | 3 | 1,000,000 | static YaRN 4.0 | 1.21x, one request fits |
+| `serve-4x.sh` | 4 | 262,144 | none, native window | 9.03x, best prefill and TTFT |
+| `serve-4x-512k.sh` | 4 | 524,288 | static YaRN 2.0 | 4.76x |
+| `serve-4x-1m.sh` | 4 | 1,000,000 | static YaRN 4.0 | 2.54x |
+
+Headroom is the measured KV pool divided by one full-context request, so it
+counts how many such requests fit at once. `--max-num-seqs 8` limits admission
+below it on the 4x 262k row. Choose PP=3 when streams decode side by side. It
+pays one fewer hop per step and holds 457 against 405 tok/s at four streams on
+262k. Choose PP=4 for long prompts, where prefill reaches 9.9k against 9.3k
+tok/s and time to first token drops from 28.5 s to 22.1 s.
 
 ```bash
 ./serve-3x-512k.sh       # MODEL=/local/path overrides the checkpoint tag
@@ -88,10 +95,12 @@ All six: MTP-3 spec decode, PLE n-gram table offloaded to pinned host RAM
 (`--engram-config '{"cpu_offload": true}'`), prefix caching on, NCCL P2P/IB
 off (this box has no P2P between the cards).
 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` kills allocator-OOM
-retries. vLLM only forbids it with KV connectors, and we run none. The 3x
-set runs PP=3 with `VLLM_PP_LAYER_PARTITION=16,17,15`. The 4x set runs
-PP=4 with `16,12,11,9`: rank 0 keeps the proven 16-layer PLE prefix, and
-the last rank stays lightest because the MTP drafter lives on it.
+retries. vLLM only forbids it with KV connectors, and we run none. The 3x set
+runs PP=3 with `VLLM_PP_LAYER_PARTITION=16,17,15`, the split every 3-card
+number here was measured with. The 4x set runs PP=4 with `12,12,12,12`, which
+measures 62% more pool tokens than the `16,12,11,9` split it replaced. The
+reason is in the 4-card notes: this model has one PLE layer, so rank 0 needs
+two layers, not sixteen.
 
 Startup checks for the YaRN lanes:
 
