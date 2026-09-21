@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
-# 512k context variant of serve.sh. The checkpoint is native to 262144
-# positions, so this adds static YaRN factor 2.0.
+# 1M context variant of serve-3x.sh. YaRN factor 4.0, the vendor's own recipe.
+# The override rules and the patch 9 startup check are in serve-3x-512k.sh.
+# Expect "Using max model len 1000000" twice at startup.
 # Apply the patch series first: git am --keep-non-patch patches/00*.patch
 # Details and measured numbers: README.md.
 #
-# Three rules for the --hf-overrides below (why: README Gotchas):
-# 1. rope_parameters must nest under text_config. The flat form from the
-#    model card is a silent no-op on this checkpoint.
-# 2. max_position_embeddings rises to 524288 in the same override. Since
-#    vLLM #56446 the yarn limit is max_position_embeddings itself, and
-#    original_max_position_embeddings stays mandatory.
-# 3. Patch 9 forwards the override to the MTP drafter. The startup log must
-#    print "Using max model len 524288" twice, target then draft. A second
-#    262144 there means the drafter runs unscaled RoPE.
+# This is the box ceiling. Measured concurrency is 1.21x: one 1M request at a
+# time. A second long request preempts the first, and Mamba align mode makes
+# the preempted request replay its whole prompt, about 2 min. Keep other
+# traffic short.
 #
-# The KV pool does not grow with the context. Worst-case concurrency is 2.30x
-# on this box. More than about two long requests in flight preempt and
-# re-prefill.
+# YaRN costs VRAM before the pool is sized. The cos/sin cache is 1 GiB per
+# rank at factor 4.0, and it comes out of the KV pool. Two failure modes
+# point opposite ways:
+#   "To serve at least one request with the model's max seq len (1000000)"
+#     -> the pool is too small. Raise --gpu-memory-utilization, or use 768k
+#        (about 1.6x) instead.
+#   OOM retries repeating during inference
+#     -> transient peaks have nowhere to go. Lower
+#        --gpu-memory-utilization, or drop --speculative-config.
+# 0.94 sits between the two. expandable_segments is the first defense against
+# the second mode.
 set -euo pipefail
 
 export CUDA_VISIBLE_DEVICES=0,1,2
@@ -39,8 +43,8 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --moe-backend humming \
     --enable-prefix-caching \
     --gpu-memory-utilization 0.94 \
-    --max-model-len 524288 \
-    --hf-overrides '{"text_config":{"max_position_embeddings":524288,"rope_parameters":{"rope_type":"yarn","factor":2.0,"original_max_position_embeddings":262144}}}' \
+    --max-model-len 1000000 \
+    --hf-overrides '{"text_config":{"max_position_embeddings":1000000,"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":262144}}}' \
     --max-num-seqs 8 \
     --speculative-config '{"method":"mtp","num_speculative_tokens":3}' \
     -cc.cudagraph_mode=FULL_AND_PIECEWISE \
