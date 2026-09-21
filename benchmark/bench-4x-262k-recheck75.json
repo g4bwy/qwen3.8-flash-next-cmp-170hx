@@ -1,0 +1,71 @@
+{
+  "label": "ctx 261,120",
+  "ctx": 261120,
+  "decode": 1024,
+  "rows": [
+    {
+      "concurrency": 1,
+      "prompt_tokens_each": 193057,
+      "ttft_mean_s": 16.529767751693726,
+      "ttft_p95_s": 16.529767751693726,
+      "ttft_max_s": 16.529767751693726,
+      "wall_s": 22.883500576019287,
+      "in_tps": 8436.51518082481,
+      "out_tps": 44.748398375425936,
+      "win_avg_tps_per_req": 161.00771440741053,
+      "sustained_agg_tps": 168.82482877081983,
+      "mean_acceptance_length": 3.842696629213483,
+      "preemptions": 0.0,
+      "total_prompt_tokens": 193057,
+      "total_completion_tokens": 1024,
+      "ttfts_s": [
+        16.529767751693726
+      ],
+      "fill_pct": 75.0
+    },
+    {
+      "concurrency": 2,
+      "prompt_tokens_each": 193075,
+      "ttft_mean_s": 25.175196409225464,
+      "ttft_p95_s": 32.86711826324463,
+      "ttft_max_s": 33.721776247024536,
+      "wall_s": 40.41107940673828,
+      "in_tps": 9555.547777217058,
+      "out_tps": 50.67917091218577,
+      "win_avg_tps_per_req": 98.72180590171101,
+      "sustained_agg_tps": 309.393231664241,
+      "mean_acceptance_length": 3.9461538461538463,
+      "preemptions": 0.0,
+      "total_prompt_tokens": 386150,
+      "total_completion_tokens": 2048,
+      "ttfts_s": [
+        16.62861657142639,
+        33.721776247024536
+      ],
+      "fill_pct": 75.0
+    },
+    {
+      "concurrency": 4,
+      "prompt_tokens_each": 192972,
+      "ttft_mean_s": 43.34919875860214,
+      "ttft_p95_s": 68.09809923171997,
+      "ttft_max_s": 70.91360688209534,
+      "wall_s": 80.17128038406372,
+      "in_tps": 9627.973961526428,
+      "out_tps": 51.090614748547715,
+      "win_avg_tps_per_req": 46.95953268658632,
+      "sustained_agg_tps": 404.6820828196594,
+      "mean_acceptance_length": 3.9205741626794257,
+      "preemptions": 0.0,
+      "total_prompt_tokens": 771887,
+      "total_completion_tokens": 4096,
+      "ttfts_s": [
+        16.59596562385559,
+        33.743666648864746,
+        52.143555879592896,
+        70.91360688209534
+      ],
+      "fill_pct": 75.0
+    }
+  ]
+}

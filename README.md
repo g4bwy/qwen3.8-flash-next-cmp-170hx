@@ -1,4 +1,4 @@
-# Qwen3.8-Flash-Next-FP8 (official checkpoint) on 3x CMP170HX / PP=3 / MTP-3
+# Qwen3.8-Flash-Next-FP8 (official checkpoint) on 3x or 4x CMP170HX / PP=3 or PP=4 / MTP-3
 
 Patches over vLLM mainline, running with uv venv.
 No bullshit slop-wall-of-text, no docker, no opaque scripts, no nonsense.
@@ -48,24 +48,30 @@ python -c "import vllm; print(vllm.__file__)"   # must be your checkout, not a s
 
 ## Run
 
-Three servers, same tree, same port (one at a time):
+Six launch scripts: three context sizes, two GPU sets. Same tree, same port,
+one at a time:
 
-| script | context | RoPE | notes |
-|---|---|---|---|
-| `serve.sh` | 262,144 | none, native window | the safe one |
-| `serve-512k.sh` | 524,288 | static YaRN 2.0 | needs patch 9 (RoPE forwarding) |
-| `serve-1m.sh` | 1,000,000 | static YaRN 4.0 | vendor recipe |
+| script | gpus | context | RoPE | notes |
+|---|---|---|---|---|
+| `serve-3x.sh` | 3 | 262,144 | none, native window | the safe one |
+| `serve-3x-512k.sh` | 3 | 524,288 | static YaRN 2.0 | needs patch 9 (RoPE forwarding) |
+| `serve-3x-1m.sh` | 3 | 1,000,000 | static YaRN 4.0 | vendor recipe |
+| `serve-4x.sh` | 4 | 262,144 | none, native window | booted + benched, see 4-card tables |
+| `serve-4x-512k.sh` | 4 | 524,288 | static YaRN 2.0 | booted + benched, see 4-card tables |
+| `serve-4x-1m.sh` | 4 | 1,000,000 | static YaRN 4.0 | booted + benched, see 4-card tables |
 
 ```bash
-./serve-512k.sh          # MODEL=/local/path overrides the checkpoint tag
+./serve-3x-512k.sh       # MODEL=/local/path overrides the checkpoint tag
 ```
 
-All three: PP3 (`VLLM_PP_LAYER_PARTITION=16,17,15`), MTP-3 spec decode, PLE
-n-gram table offloaded to pinned host RAM (`--engram-config
-'{"cpu_offload": true}'`), prefix caching on, NCCL P2P/IB off (this box has no
-P2P between the cards). `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
-kills allocator-OOM retries. vLLM only forbids it with KV connectors, and we
-run none.
+All six: MTP-3 spec decode, PLE n-gram table offloaded to pinned host RAM
+(`--engram-config '{"cpu_offload": true}'`), prefix caching on, NCCL P2P/IB
+off (this box has no P2P between the cards).
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` kills allocator-OOM
+retries. vLLM only forbids it with KV connectors, and we run none. The 3x
+set runs PP=3 with `VLLM_PP_LAYER_PARTITION=16,17,15`. The 4x set runs
+PP=4 with `16,12,11,9`: rank 0 keeps the proven 16-layer PLE prefix, and
+the last rank stays lightest because the MTP drafter lives on it.
 
 Startup checks for the YaRN lanes:
 
@@ -88,9 +94,11 @@ overclocking. Each card is power-capped at 200 W (`nvidia-smi -pl 200`,
 re-apply after reboot), so every tok/s number below is at 200 W, not at the
 silicon ceiling.
 
-Startup facts, all three configs measured on the previous base 995e8581f4 +
-this 9-patch series; the series content is unchanged by the 2026-09-16 rebase
-(boot logs `logs/boot-256k.log`, `logs/boot-512k.log`, `logs/boot-1m.log`, 2026-09-15):
+Startup facts, the three contexts on the 3-card set, measured on the
+previous base 995e8581f4 + this 9-patch series; the series content is
+unchanged by the 2026-09-16 rebase (boot logs `logs/boot-256k.log`,
+`logs/boot-512k.log`, `logs/boot-1m.log`, 2026-09-15; a 262k rerun on 2026-09-21,
+`boot-3x-256k.log`, reproduced the pool and the 4.39x exactly):
 
 | config | KV pool tokens | concurrency | available KV/rank | model load PP0/PP1/PP2 |
 |---|---:|---:|---:|---|
@@ -106,29 +114,88 @@ this 9-patch series; the series content is unchanged by the 2026-09-16 rebase
 - At 1M, one full-context request fits with ~200k tokens of pool slack. A
   second one does not.
 
+4-card set, PP=4, tree at base fc8132a5e5 (boot logs `boot-4x-1m.log`
+2026-09-19, `boot-4x-512k.log` and `boot-4x-256k.log` 2026-09-21):
+
+| config | partition | KV pool tokens | concurrency | per-rank KV PP0..PP3 | per-rank load PP0..PP3 |
+|---|---|---:|---:|---|---|
+| 1,000,000 (YaRN 4.0) | 16,12,11,9 | 1,568,111 | 1.57x | 12.76 / 24.52 / 27.04 / 28.13 GiB | 44.19 / 34.02 / 31.49 / 30.24 GiB |
+| 1,000,000 (YaRN 4.0) | 12,12,12,12 | 2,541,795 | 2.54x | 22.88 / 24.31 / 24.31 / 22.29 GiB | 34.08 / 34.02 / 34.02 / 37.82 GiB |
+| 524,288 (YaRN 2.0) | 12,12,12,12 | 2,496,752 | 4.76x | 23.14 / 24.72 / 24.72 / 20.79 GiB | 33.83 / 33.77 / 33.77 / 37.57 GiB |
+| 262,144 (native) | 12,12,12,12 | 2,367,797 | 9.03x | 23.23 / n/r / n/r / n/r | 33.71 / 33.64 / 33.64 / 37.44 GiB |
+
+- The model has exactly one PLE layer, at decoder index 1. Rank 0 does not
+  need 16 layers, and that stranded budget (0.80 GiB per layer against 2.04
+  on the mid ranks) capped the pool. The equal `12,12,12,12` split measures
+  +62% pool tokens (2.54x concurrency at 1M, against 1.21x on 3 cards). The
+  current cap is rank 3: 12 layers plus the MTP drafter's +3.74 GiB of
+  weights. Handing it a layer costs the donor rank more than it gains, so
+  the equal split is at its practical optimum. The 3-card split predates
+  that finding and stays as measured.
+- The 262k boot log starts mid-boot, so the per-rank KV figures for PP1..PP3
+  were not captured. Pool and loads are complete.
+- The draft printed `Using max model len 1000000` next to the target's:
+  patch 9 holds at PP=4.
+- This boot's banner still shows the nightly wheel (`+gdc6954d14`, base+9).
+  Until the reinstall uses `VLLM_PRECOMPILED_WHEEL_COMMIT=fc8132a5e5...`,
+  compiled artifacts run one lineage ahead of the patched Python tree.
+- The `no KV cache group could be identified as the draft model's` and
+  `max_num_scheduled_tokens is set to 2048` warnings are pre-existing on
+  the 3-card base (they appear in `logs/boot-*.log` too), not PP=4 issues.
+
 ### Headline results
 
 Full tables, methodology and reproduce commands:
 [benchmark/results.md](benchmark/results.md).
-All measured 2026-09-15 at the 200 W cap, repetition-task prompts, decode
-1024 for the decode numbers (short windows measure drafter warmup, not
-steady decode).
+All measured at the 200 W cap, repetition-task prompts, decode 1024 (short
+windows measure drafter warmup, not steady decode). Measured 2026-09-15 on
+the 3-card box, 2026-09-19 and 2026-09-21 on the 4-card box.
 
-- Prefill: 9.2-9.3k tok/s peak on all three context configs. The decay
-  tracks prompt depth, not RoPE scaling: 9.1k at 259k tokens, 8.8k at 519k,
-  8.3k at 989k. Full-window TTFT: 28.5 / 58.9 / 119.1 s.
-- Single-stream decode: flat 163-166 tok/s from 26k to 989k prompt depth.
-- MTP acceptance: 3.9-4.0 of the 4.0 ceiling at every depth and stream
-  count, including full 1M positions. This is the column that rots with
-  depth when patch 9 is missing.
-- Batched decode: 314 tok/s at 2 streams and 468 at 4 on shallow prompts
-  (1.8x and 2.7x aggregate). At deep prompts the KV pool decides: effective
-  concurrent decoding streams = pool tokens / per-stream tokens. At 1M
-  (pool 1.209M) two streams share the box only below ~60% fill, and four
-  only at 25% fill.
-- Oversubscription never preempts on this build: the scheduler gates
-  admission, extra streams queue, TTFT grows linearly, zero preemptions in
-  all 33 measured concurrency cells.
+4-card set, PP=4, layer partition 12,12,12,12:
+
+| metric | 262k native | 524k YaRN 2.0 | 1M YaRN 4.0 |
+|---|---:|---:|---:|
+| KV pool (tokens / x per context) | 2,367,797 / 9.03x | 2,496,752 / 4.76x | 2,541,795 / 2.54x |
+| single-stream TTFT, full window | 22.1 s | 46.0 s | 92.2 s |
+| prefill peak | 9.9k tok/s | 10.5k tok/s | 10.3k tok/s |
+| single-stream decode | 151-165 tok/s | 163-168 tok/s | 161-169 tok/s |
+| 4-stream sustained agg, full fill | 405 tok/s (4 at once) | 367 tok/s (4 at once) | 296 tok/s (2-3 at once) |
+| resident streams at full fill | 4 of 4 | 4 of 4 | 2-3 of 4 |
+
+3-card box, PP=3, layer partition 16,17,15 (where patches 1-9 were
+published):
+
+| metric | 262k native | 524k YaRN 2.0 | 1M YaRN 4.0 |
+|---|---:|---:|---:|
+| KV pool (tokens / x per context) | 1,150,599 / 4.39x | 1,204,810 / 2.30x | 1,208,978 / 1.21x |
+| single-stream TTFT, full window | 28.5 s | 58.9 s | 119.1 s |
+| prefill peak | 9.3k tok/s | 9.2k tok/s | 9.2k tok/s |
+| single-stream decode | 163-167 tok/s | 163-166 tok/s | 161-165 tok/s |
+| 4-stream sustained agg, full fill | 457 tok/s (4 at once) | ~304 tok/s (2 at a time, rest queue) | 163-164 tok/s (1 at a time) |
+| resident streams at full fill | 4 of 4 | 2 of 4 | 1 of 4 |
+
+Full-fill 4-stream 524k never batches: the pool holds two of the four
+streams, so the extras queue and TTFT lands in serial multiples (see
+results.md). On shallow 8k prompts the 3-card box reached 314 agg at 2
+streams and 468 at 4, where residency was never the limit.
+
+- Pool decides batch capacity: resident decoding streams = pool tokens /
+  per-stream tokens. At 262k that is nine full streams on 4 cards against
+  four on 3, at 1M it is 2.54x against 1.21x.
+- Prefill under PP paces at the heaviest stage, not the sum, so four even
+  12-layer stages run ~20% faster than the 16/17/15 split. Single-stream
+  decode is unchanged between the two widths: the 200 W cap binds. Batched
+  decode pays for the longer pipeline: full-fill 4-stream decode at 262k
+  drops from 457 (PP=3) to 405 (PP=4) aggregate, 8-11% across warm repeats
+  of three methods (bench cells, deep plateau 452 vs 405, shallow plateau
+  468 vs 431); at 524k the 2-stream cell repeats 304 vs 265.
+- MTP acceptance: 3.7-4.0 of the 4.0 ceiling in every single-stream cell at
+  any depth, including full 1M positions. A few short-window 2-stream cells
+  read 3.25-3.3 because the window still holds drafter warmup. Acceptance
+  decaying with depth is the symptom of a missing patch 9.
+- Oversubscription never preempts on this build at either pipeline width:
+  the scheduler gates admission, extra streams queue, TTFT grows linearly,
+  and preemptions stayed 0 in every 3-card and 4-card concurrency cell.
 
 ## Bench scripts
 
@@ -193,8 +260,11 @@ patchset-qwen38-pp/
   benchmark/sustained_decode.py          batched-decode capacity -> table
   benchmark/mtp_ab_probe.py              acceptance A/B + shared library
   benchmark/*.json                       raw results behind the tables in results.md
-  serve.sh                               262,144 native
-  serve-512k.sh                          524,288, YaRN 2.0
-  serve-1m.sh                            1,000,000, YaRN 4.0
+  serve-3x.sh                            3 gpus, 262,144 native
+  serve-3x-512k.sh                       3 gpus, 524,288, YaRN 2.0
+  serve-3x-1m.sh                         3 gpus, 1,000,000, YaRN 4.0
+  serve-4x.sh                            4 gpus, 262,144 native
+  serve-4x-512k.sh                       4 gpus, 524,288, YaRN 2.0, benched
+  serve-4x-1m.sh                         4 gpus, 1,000,000, YaRN 4.0, benched
   README.md                              this file
 ```
