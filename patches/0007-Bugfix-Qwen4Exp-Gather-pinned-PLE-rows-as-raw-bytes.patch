@@ -1,4 +1,4 @@
-From 6c343ff93bc1ad283ef80367e6e5ab1c0943d9dd Mon Sep 17 00:00:00 2001
+From b9ae8c815167aef2044a83e0794b1cdfc1eff649 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 21:30:33 +0200
 Subject: [PATCH 7/9] [Bugfix][Qwen4Exp] Gather pinned PLE rows as raw bytes

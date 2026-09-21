@@ -1,4 +1,4 @@
-From 995aebe8894e22308c872cf0b4933d7b2429f34b Mon Sep 17 00:00:00 2001
+From 0fdbdc79d4ce7cfb3e868adcde581a34fde3bc87 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:24 +0200
 Subject: [PATCH 4/9] [Bugfix][Mamba] Seed the align state column with the
@@ -15,7 +15,7 @@ until the mamba spec is known; a fresh request seeds -1 either way.
  1 file changed, 12 insertions(+), 1 deletion(-)
 
 diff --git a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
-index 2bf0a8aa2e..2e505c7593 100644
+index 9f12cf1c0f..ca8263c6dc 100644
 --- a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
 +++ b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
 @@ -124,8 +124,19 @@ class MambaHybridModelState(DefaultModelState):

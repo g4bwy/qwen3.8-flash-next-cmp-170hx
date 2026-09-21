@@ -1,4 +1,4 @@
-From 70f38ddf5f95d05634ddaea6d176f38c359ccc70 Mon Sep 17 00:00:00 2001
+From 8e37f697193edddf8694b7f08f8295f1d1be8dd4 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:24 +0200
 Subject: [PATCH 5/9] [Bugfix][Mamba] Honor drop_eagle_block in MambaManager
@@ -13,10 +13,10 @@ covers the fine-grained partial-unit branch (vllm#48375).
  1 file changed, 9 insertions(+)
 
 diff --git a/vllm/v1/core/single_type_kv_cache_manager.py b/vllm/v1/core/single_type_kv_cache_manager.py
-index 9ad0a38ed5..6e73fb6be9 100644
+index 70d56c6543..fbb4b999e9 100644
 --- a/vllm/v1/core/single_type_kv_cache_manager.py
 +++ b/vllm/v1/core/single_type_kv_cache_manager.py
-@@ -1500,6 +1500,15 @@ class MambaManager(SingleTypeKVCacheManager):
+@@ -1502,6 +1502,15 @@ class MambaManager(SingleTypeKVCacheManager):
          )
          assert dcp_world_size == 1, "DCP not support mamba now."
          assert pcp_world_size == 1, "PCP not support mamba now."
