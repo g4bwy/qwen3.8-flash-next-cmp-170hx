@@ -33,6 +33,7 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --engram-config '{"cpu_offload": true}' \
     --moe-backend humming \
     --enable-prefix-caching \
+    --prefix-cache-retention-interval 16000 \
     --gpu-memory-utilization 0.94 \
     --max-model-len 262144 \
     --max-num-seqs 8 \
