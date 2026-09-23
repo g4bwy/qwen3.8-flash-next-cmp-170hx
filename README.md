@@ -92,7 +92,8 @@ tok/s and time to first token drops from 28.5 s to 22.1 s.
 ```
 
 All six: MTP-3 spec decode, PLE n-gram table offloaded to pinned host RAM
-(`--engram-config '{"cpu_offload": true}'`), prefix caching on, NCCL P2P/IB
+(`--engram-config '{"cpu_offload": true}'`), prefix caching on with
+`--prefix-cache-retention-interval 16000` (see Prefix caching), NCCL P2P/IB
 off (this box has no P2P between the cards).
 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` kills allocator-OOM
 retries. vLLM only forbids it with KV connectors, and we run none. The 3x set
@@ -110,6 +111,55 @@ Startup checks for the YaRN lanes:
 2. The log prints `Maximum concurrency for <N> tokens per request: X.XXx`.
    Below 1.0 the box cannot serve its own context length, so lower
    `--max-model-len`.
+
+## Prefix caching
+
+This model mixes linear and full attention layers, so vLLM runs the Mamba cache
+in `align` mode. A later request resumes from a retained state snapshot, not
+from a per-token window, so reuse is only possible where a snapshot survived.
+
+`--prefix-cache-retention-interval` sets the spacing of those snapshots. vLLM
+defaults it to `0`, which keeps only the snapshots it can prove a later request
+will use. On this model that leaves a growing session with almost nothing to
+resume from, and each turn re-prefills most of its history. The serve scripts
+set 16,000, one snapshot per 16,000 tokens.
+
+Measured on the 4-card 1M lane, 2026-09-23, reading the counters
+`vllm:prompt_tokens_total` and `vllm:prompt_tokens_cached_total` from
+`/metrics`. A session sends a 120,000-token prompt, then the same prompt with
+two characters added:
+
+| interval | send | cached | recomputed | wall |
+|---|---|---:|---:|---:|
+| 0 (vLLM default) | 120,000 first | 0 | 120,000 | 10.40 s |
+| 0 (vLLM default) | 120,001, plus two chars | 57,600 | 62,401 | 6.28 s |
+| 16,000 | 120,000 first | 32,000 | 88,000 | 7.64 s |
+| 16,000 | 120,000 again | 96,000 | 24,000 | 2.57 s |
+| 16,000 | 120,001, plus two chars | 112,000 | 8,001 | 1.24 s |
+
+Reuse deepens turn by turn, which is what a chat session needs. The KV pool
+line was the same on both boots (2,541,795 tokens / 2.54x), so the 16,000
+spacing cost no measurable capacity here.
+
+Two limits worth knowing:
+
+- A prompt shorter than one interval has no snapshot to resume from, so the
+  probe reuses nothing at 9,990 tokens. One-shot prompts reuse less than
+  repeating ones: 8,000 of 22,500 and 20,800 of 42,495.
+- Chunk size is not the lever. Setting `--max-num-batched-tokens 9600`, a
+  multiple of the 1,600-token cache block, changed no reuse number and cost 10%
+  of the pool (2,541,795 down to 2,283,281), so the scripts do not set it.
+
+`enable_mamba_shared_prefix_checkpoint` stays off. Its docstring asks for a
+prefix match unit smaller than the Mamba block size, which is 16 tokens on this
+model, so it is the next thing to test if you want deeper reuse on the first
+turn of a session. Nobody has measured it here.
+
+Reproduce it with the probe, which needs no restart:
+
+```bash
+./benchmark/prefix_cache_probe.py --lengths 64000   # --base-url to point elsewhere
+```
 
 ## Measured, this box, FP8 checkpoint, single stream
 
@@ -235,6 +285,13 @@ streams and 468 at 4, where residency was never the limit.
   the ceiling. Run once per build, then `--compare a.json b.json`. It is also
   the shared prompt and metrics library for the other two tools.
 
+- `benchmark/prefix_cache_probe.py`: prompt reuse per turn. It sends a prompt,
+  the same prompt, then the same prompt with two characters added, and diffs
+  `vllm:prompt_tokens_total` against `vllm:prompt_tokens_cached_total`. The
+  recomputed column on the appended row is what a growing session pays per
+  turn. Flags: `--lengths`, `--base-url`, `--model`. It needs no restart and
+  does not clear the cache, so run each prompt shape once.
+
 ## Patches
 
 | # | does |
@@ -276,6 +333,8 @@ streams and 468 at 4, where residency was never the limit.
 - A long prefill that arrives during decode starves every running decode to
   ~1 step/s (under 20 tok/s) until it finishes. Schedule long prefills early,
   not in the middle of decode traffic.
+- A session shorter than `--prefix-cache-retention-interval` (16,000 tokens
+  here) reuses none of its history. See Prefix caching.
 - bench fill 100% targets (ctx - decode) x 0.99. An oversized prompt is a
   plain HTTP 400 from the server.
 
@@ -288,6 +347,7 @@ patchset-qwen38-pp/
   benchmark/bench.py                     fill sweep x concurrency -> table
   benchmark/sustained_decode.py          batched-decode capacity -> table
   benchmark/mtp_ab_probe.py              acceptance A/B + shared library
+  benchmark/prefix_cache_probe.py        prompt reuse per turn -> cached/recomputed table
   benchmark/*.json                       raw results behind the tables in results.md
   serve-3x.sh                            3 gpus, 262,144 native
   serve-3x-512k.sh                       3 gpus, 524,288, YaRN 2.0
