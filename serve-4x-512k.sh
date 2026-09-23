@@ -48,6 +48,7 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --engram-config '{"cpu_offload": true}' \
     --moe-backend humming \
     --enable-prefix-caching \
+    --prefix-cache-retention-interval 16000 \
     --gpu-memory-utilization 0.94 \
     --max-model-len 524288 \
     --hf-overrides '{"text_config":{"max_position_embeddings":524288,"rope_parameters":{"rope_type":"yarn","factor":2.0,"original_max_position_embeddings":262144}}}' \
