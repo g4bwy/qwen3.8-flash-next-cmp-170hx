@@ -1,7 +1,7 @@
-From 0fdbdc79d4ce7cfb3e868adcde581a34fde3bc87 Mon Sep 17 00:00:00 2001
+From e167192ee4ab3446144a832052b7882cc9d8feb4 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:24 +0200
-Subject: [PATCH 4/9] [Bugfix][Mamba] Seed the align state column with the
+Subject: [PATCH 4/7] [Bugfix][Mamba] Seed the align state column with the
  mamba block size
 
 A resumed request seeds its running state block from
@@ -15,10 +15,10 @@ until the mamba spec is known; a fresh request seeds -1 either way.
  1 file changed, 12 insertions(+), 1 deletion(-)
 
 diff --git a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
-index 9f12cf1c0f..ca8263c6dc 100644
+index 64367bc96b..2099209e5d 100644
 --- a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
 +++ b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
-@@ -124,8 +124,19 @@ class MambaHybridModelState(DefaultModelState):
+@@ -120,8 +120,19 @@ class MambaHybridModelState(DefaultModelState):
          self.num_accepted_tokens_gpu[req_index].fill_(1)
          if self._align_mode:
              # Seed the running state block from the resumed/prefilled position.

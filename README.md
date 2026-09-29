@@ -4,29 +4,30 @@ Patches over vLLM mainline, running with uv venv.
 No bullshit slop-wall-of-text, no docker, no opaque scripts, no nonsense.
 
 - Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`.
-- Base commit: `15859bb3a1d81a709b64eff2a1d1f38a958a362b` (vllm-project/vllm main, 2026-09-21).
-- 9 patches. After applying them, `git rev-parse HEAD^{tree}` must print
-  `d9dbc9743071da65419c9c18f969db58a1117bd9`. If it does not, you applied
+- Base commit: `741edeebeec3cedbe938d831b6d87641ed6191ef` (vllm-project/vllm main, 2026-09-29).
+- 7 patches. After applying them, `git rev-parse HEAD^{tree}` must print
+  `de5c10d7af7334e754214f67bdf59592a87ecfcc`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
   ranks, KV allocation dies with a bare `StopIteration`).
-- Current base status: both 1M lanes boot clean and serve requests, at the
-  pools the tables below list. The 256k and 512k lanes, and every tok/s number
-  here, come from an earlier base.
+- Current base status: both 1M lanes boot clean on the 7-patch tree, banner
+  `dev352+gc0fe11126`, with pools, weights, patch markers and probe numbers
+  unchanged from the 9-patch tree, so the two dropped patches were inert. The
+  256k and 512k lanes, and every tok/s number here, come from an earlier base.
 
 ## Apply
 
 ```bash
 git clone https://github.com/vllm-project/vllm
 cd vllm
-git checkout 15859bb3a1d81a709b64eff2a1d1f38a958a362b
+git checkout 741edeebeec3cedbe938d831b6d87641ed6191ef
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # d9dbc9743071da65419c9c18f969db58a1117bd9
+git rev-parse 'HEAD^{tree}'   # de5c10d7af7334e754214f67bdf59592a87ecfcc
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
-15859bb3a1`), then re-run the `git am`.
+741edeebee`), then re-run the `git am`.
 
 ## Build
 
@@ -35,7 +36,7 @@ Python 3.12, `uv` on PATH ([install](https://docs.astral.sh/uv/)).
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=15859bb3a1d81a709b64eff2a1d1f38a958a362b \
+VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=741edeebeec3cedbe938d831b6d87641ed6191ef \
   uv pip install -e . --torch-backend=auto
 ```
 
@@ -45,8 +46,11 @@ that commit must satisfy two rules:
 
 1. The base commit must have a published wheel. The install fetches
    `https://wheels.vllm.ai/<sha>/cu130/vllm/metadata.json` and stops on 404, and
-   wheel CI lags main by hours, so main's tip usually has nothing yet. Pick the
-   newest commit that answers 200.
+   wheel CI lags main by hours, so a fresh tip often has nothing yet. Walk down
+   from the tip and take the newest commit that answers 200. This base is the
+   tip itself, which publishes `0.30.1rc1.dev345+g741edeebe` (cp38-abi3,
+   manylinux_2_28_x86_64, 320 MB). Ignore the leading number, it tracks whatever
+   packaging upstream is on, and match the `+g<sha>` tail to your base.
 2. Pass that 40-hex sha in `VLLM_PRECOMPILED_WHEEL_COMMIT`. If you leave it out
    on a detached checkout, the install falls back to the moving `nightly` alias,
    and the compiled code then comes from a commit you did not choose.
@@ -106,7 +110,7 @@ two layers, not sixteen.
 Startup checks for the YaRN lanes:
 
 1. `Using max model len <N>` appears twice, once for the target and once for
-   the `Qwen4ExpMTP` draft. A second, smaller number means patch 9 is missing,
+   the `Qwen4ExpMTP` draft. A second, smaller number means patch 7 is missing,
    and MTP acceptance rots with context depth.
 2. The log prints `Maximum concurrency for <N> tokens per request: X.XXx`.
    Below 1.0 the box cannot serve its own context length, so lower
@@ -211,7 +215,7 @@ Startup facts, the three contexts on the 3-card set (boot logs
 - The 262k boot log starts mid-boot, so the per-rank KV figures for PP1..PP3
   were not captured. Pool and loads are complete.
 - The draft printed `Using max model len 1000000` next to the target's:
-  patch 9 holds at PP=4.
+  patch 7 holds at PP=4.
 - The `no KV cache group could be identified as the draft model's` and
   `max_num_scheduled_tokens is set to 2048` warnings are pre-existing on
   the 3-card base (they appear in `logs/boot-*.log` too), not PP=4 issues.
@@ -235,7 +239,7 @@ the 3-card box, 2026-09-19 and 2026-09-21 on the 4-card box.
 | 4-stream sustained agg, full fill | 405 tok/s (4 at once) | 367 tok/s (4 at once) | 296 tok/s (2-3 at once) |
 | resident streams at full fill | 4 of 4 | 4 of 4 | 2-3 of 4 |
 
-3-card box, PP=3, layer partition 16,17,15 (where patches 1-9 were
+3-card box, PP=3, layer partition 16,17,15 (where patches 1-7 were
 published):
 
 | metric | 262k native | 524k YaRN 2.0 | 1M YaRN 4.0 |
@@ -265,7 +269,7 @@ streams and 468 at 4, where residency was never the limit.
 - MTP acceptance: 3.7-4.0 of the 4.0 ceiling in every single-stream cell at
   any depth, including full 1M positions. A few short-window 2-stream cells
   read 3.25-3.3 because the window still holds drafter warmup. Acceptance
-  decaying with depth is the symptom of a missing patch 9.
+  decaying with depth is the symptom of a missing patch 7.
 - Oversubscription never preempts on this build at either pipeline width:
   the scheduler gates admission, extra streams queue, TTFT grows linearly,
   and preemptions stayed 0 in every 3-card and 4-card concurrency cell.
@@ -300,11 +304,9 @@ streams and 468 at 4, where residency was never the limit.
 | 2 | allow PLE when the n-gram layers are on rank 0 under PP |
 | 3 | V2: resolve deferred mamba state copies by request slot |
 | 4 | mamba: seed the align state column with the real mamba block size |
-| 5 | mamba: honor `drop_eagle_block` in MambaManager (MTP + prefix cache) |
-| 6 | per-stage KV cache budgets for heterogeneous pipelines |
-| 7 | Qwen4Exp: gather pinned PLE rows as raw bytes (Ampere has no `fp8e4nv`) |
-| 8 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
-| 9 | let `--hf-overrides` RoPE scaling reach the MTP draft config; mirror `max_position_embeddings` onto the Qwen4Exp wrapper so RoPE standardization can run on it |
+| 5 | Qwen4Exp: gather pinned PLE rows as raw bytes (Ampere has no `fp8e4nv`) |
+| 6 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
+| 7 | let `--hf-overrides` RoPE scaling reach the MTP draft config; mirror `max_position_embeddings` onto the Qwen4Exp wrapper so RoPE standardization can run on it |
 
 ## Gotchas
 
@@ -342,7 +344,7 @@ streams and 468 at 4, where residency was never the limit.
 
 ```
 patchset-qwen38-pp/
-  patches/0001-*.patch .. 0009-*.patch   the series, git am
+  patches/0001-*.patch .. 0007-*.patch   the series, git am
   benchmark/results.md                   full benchmark tables and how to reproduce
   benchmark/bench.py                     fill sweep x concurrency -> table
   benchmark/sustained_decode.py          batched-decode capacity -> table
@@ -356,4 +358,5 @@ patchset-qwen38-pp/
   serve-4x-512k.sh                       4 gpus, 524,288, YaRN 2.0, benched
   serve-4x-1m.sh                         4 gpus, 1,000,000, YaRN 4.0, benched
   README.md                              this file
+  TODO.md                                open items, in priority order, with the check that closes each
 ```

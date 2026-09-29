@@ -1,7 +1,7 @@
-From 5842b2d5125d4007933d57f6ec5c7eb9db1945e7 Mon Sep 17 00:00:00 2001
+From b6fed8648f35f26bf94c448186881beff46e115f Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:11 +0200
-Subject: [PATCH 2/9] [Bugfix][Qwen4Exp] Allow PLE when the n-gram layers are
+Subject: [PATCH 2/7] [Bugfix][Qwen4Exp] Allow PLE when the n-gram layers are
  on rank 0
 
 Only the first pipeline rank receives raw input_ids, which the n-gram PLE
@@ -53,10 +53,10 @@ index f0cca639bb..8be877bb9c 100644
                  Qwen4ExpForConditionalGenerationConfig.verify_and_update_config(
                      vllm_config
 diff --git a/vllm/model_executor/models/config.py b/vllm/model_executor/models/config.py
-index 8288eab236..cd554074a1 100644
+index 3c87b06167..9a3658f6b4 100644
 --- a/vllm/model_executor/models/config.py
 +++ b/vllm/model_executor/models/config.py
-@@ -855,6 +855,29 @@ def _strip_qwen4_exp_mrope(model_config: "ModelConfig") -> None:
+@@ -873,6 +873,29 @@ def _strip_qwen4_exp_mrope(model_config: "ModelConfig") -> None:
              rope_parameters.pop("mrope_interleaved", None)
  
  
@@ -86,7 +86,7 @@ index 8288eab236..cd554074a1 100644
  class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConfig):
      """Apply the Qwen3.5 hybrid-cache contract to Qwen4Exp."""
  
-@@ -876,11 +899,17 @@ class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConf
+@@ -894,11 +917,17 @@ class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConf
              )
          # Checked again in Qwen4ExpModelState; rejecting it here keeps the
          # engine from loading weights first.
