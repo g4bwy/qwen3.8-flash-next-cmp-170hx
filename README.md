@@ -165,6 +165,14 @@ Reproduce it with the probe, which needs no restart:
 ./benchmark/prefix_cache_probe.py --lengths 64000   # --base-url to point elsewhere
 ```
 
+Reuse is also correct, not merely fast. `benchmark/prefix_state_check.py` plants
+needles in the first block and at half depth, then compares cold, warm and grown
+answers, and it repeats that with several sessions in flight at once. Both lanes
+pass: on 3 cards at 22k and 68k depth, and on 4 cards at 20k and 64k depth, every
+trial returned both needles unchanged from the cold run with no cross-session
+leakage, including a 4-session round that fell from 257,353 recomputed tokens
+cold to 7,753 warm.
+
 ## Measured, this box, FP8 checkpoint, single stream
 
 The cards are CMP 170HX (GA100) running unlocked. The
@@ -287,7 +295,7 @@ streams and 468 at 4, where residency was never the limit.
 - `benchmark/mtp_ab_probe.py`: A/B tool for spec-decode acceptance at one
   depth. `--task copy` plants a marker mid-prompt so acceptance stays below
   the ceiling. Run once per build, then `--compare a.json b.json`. It is also
-  the shared prompt and metrics library for the other two tools.
+  the shared prompt and metrics library for the other three tools.
 
 - `benchmark/prefix_cache_probe.py`: prompt reuse per turn. It sends a prompt,
   the same prompt, then the same prompt with two characters added, and diffs
@@ -295,6 +303,14 @@ streams and 468 at 4, where residency was never the limit.
   recomputed column on the appended row is what a growing session pays per
   turn. Flags: `--lengths`, `--base-url`, `--model`. It needs no restart and
   does not clear the cache, so run each prompt shape once.
+- `benchmark/prefix_state_check.py`: whether a cache hit resumes the right state.
+  Reuse numbers cannot tell you this, because a wrong state answers just as fast.
+  It plants two random hex needles, one in the first block and one at half depth,
+  inside thousands of distinct filler lines, then compares cold, warm and grown
+  answers under greedy decoding. The concurrent round fires N sessions together,
+  which is where a deferred pipeline-parallel state copy would leak another
+  session's needles. Flags: `--depth`, `--trials`, `--sessions`, `--skip-serial`,
+  `--skip-concurrent`. Exits non-zero on failure, so it fits a check script.
 
 ## Patches
 
@@ -350,6 +366,7 @@ patchset-qwen38-pp/
   benchmark/sustained_decode.py          batched-decode capacity -> table
   benchmark/mtp_ab_probe.py              acceptance A/B + shared library
   benchmark/prefix_cache_probe.py        prompt reuse per turn -> cached/recomputed table
+  benchmark/prefix_state_check.py        does a cache hit resume the right state
   benchmark/*.json                       raw results behind the tables in results.md
   serve-3x.sh                            3 gpus, 262,144 native
   serve-3x-512k.sh                       3 gpus, 524,288, YaRN 2.0
