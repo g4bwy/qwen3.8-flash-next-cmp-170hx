@@ -5,7 +5,7 @@
 # runs on two builds see the same tokens and only the build differs.
 #
 #   ./benchmark/mtp_ab_probe.py --depth 200000 --out with9.json
-#   # revert patch 9 (RoPE forwarding), restart, wait for idle, then:
+#   # revert patch 7 (RoPE forwarding), restart, wait for idle, then:
 #   ./benchmark/mtp_ab_probe.py --depth 200000 --out no9.json
 #   ./benchmark/mtp_ab_probe.py --compare with9.json no9.json
 #

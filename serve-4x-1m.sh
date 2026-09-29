@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 1M context variant of serve-4x.sh. YaRN factor 4.0, the vendor's own
 # recipe. Expect "Using max model len 1000000" for the drafter too.
-# The override rules and the patch 9 startup check are in serve-4x-512k.sh.
+# The override rules and the patch 7 startup check are in serve-4x-512k.sh.
 # Apply the patch series first: git am --keep-non-patch patches/00*.patch
 # Details and measured numbers: README.md.
 #

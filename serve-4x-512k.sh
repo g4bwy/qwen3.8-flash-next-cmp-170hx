@@ -10,7 +10,7 @@
 # 2. max_position_embeddings rises to 524288 in the same override. Since
 #    vLLM #56446 the yarn limit is max_position_embeddings itself, and
 #    original_max_position_embeddings stays mandatory.
-# 3. Patch 9 forwards the override to the MTP drafter. The startup log must
+# 3. Patch 7 forwards the override to the MTP drafter. The startup log must
 #    print "Using max model len 524288" for the drafter too. A stray 262144
 #    there means the drafter runs unscaled RoPE.
 #
