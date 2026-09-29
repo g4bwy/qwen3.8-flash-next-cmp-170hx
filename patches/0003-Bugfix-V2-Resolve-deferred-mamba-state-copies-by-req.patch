@@ -1,7 +1,7 @@
-From df48eaf57a5e133ce9eea696ba58ba02e7549991 Mon Sep 17 00:00:00 2001
+From f33df16afc0939cc31b755206912d8ea362864b0 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:11 +0200
-Subject: [PATCH 3/9] [Bugfix][V2] Resolve deferred mamba state copies by
+Subject: [PATCH 3/7] [Bugfix][V2] Resolve deferred mamba state copies by
  request slot
 
 Under pipeline parallelism the sampled outputs of step T are consumed by
@@ -26,10 +26,10 @@ seen at its own step. Everything else keeps using the batch-ordered gather.
  5 files changed, 77 insertions(+), 8 deletions(-)
 
 diff --git a/vllm/v1/worker/gpu/block_table.py b/vllm/v1/worker/gpu/block_table.py
-index 6563e30c34..cbfbc3f6e6 100644
+index c7665c46b8..8063a2d5b4 100644
 --- a/vllm/v1/worker/gpu/block_table.py
 +++ b/vllm/v1/worker/gpu/block_table.py
-@@ -110,6 +110,17 @@ class BlockTables:
+@@ -117,6 +117,17 @@ class BlockTables:
          )
          self.input_block_table_ptrs = self._make_ptr_tensor(self.input_block_tables)
  
@@ -48,10 +48,10 @@ index 6563e30c34..cbfbc3f6e6 100644
          self,
          req_index: int,
 diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
-index 1ba40c5fda..b40f40695c 100644
+index 800ae825d4..deb3d172d2 100644
 --- a/vllm/v1/worker/gpu/model_runner.py
 +++ b/vllm/v1/worker/gpu/model_runner.py
-@@ -659,6 +659,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+@@ -686,6 +686,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
              cp_rank=self.dcp_rank,
              cp_interleave=self.cp_interleave,
          )
@@ -63,7 +63,7 @@ index 1ba40c5fda..b40f40695c 100644
              self.vllm_config,
              self.device,
 diff --git a/vllm/v1/worker/gpu/model_states/interface.py b/vllm/v1/worker/gpu/model_states/interface.py
-index a5c8d6f4cf..582d09e023 100644
+index ee3e519a6e..316c6c2947 100644
 --- a/vllm/v1/worker/gpu/model_states/interface.py
 +++ b/vllm/v1/worker/gpu/model_states/interface.py
 @@ -147,6 +147,13 @@ class ModelState(ABC):
@@ -81,10 +81,10 @@ index a5c8d6f4cf..582d09e023 100644
          self,
          idx_mapping: torch.Tensor,
 diff --git a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
-index bfad8a1b73..9f12cf1c0f 100644
+index 32924555b1..64367bc96b 100644
 --- a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
 +++ b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
-@@ -111,6 +111,12 @@ class MambaHybridModelState(DefaultModelState):
+@@ -107,6 +107,12 @@ class MambaHybridModelState(DefaultModelState):
              self._mamba_group_ids: list[int] = []
              self._mamba_spec: MambaSpec | None = None
              self._mamba_state_copy_funcs: MambaStateCopyFuncsByType | None = None
@@ -97,7 +97,7 @@ index bfad8a1b73..9f12cf1c0f 100644
  
      def add_request(self, req_index: int, new_req_data: NewRequestData) -> None:
          super().add_request(req_index, new_req_data)
-@@ -171,12 +177,18 @@ class MambaHybridModelState(DefaultModelState):
+@@ -167,12 +173,18 @@ class MambaHybridModelState(DefaultModelState):
              forward_context = self.vllm_config.compilation_config.static_forward_context
              # block_tables are batch-order slices of the persistent
              # input_block_tables (stable data_ptr), so the metadata is captured
