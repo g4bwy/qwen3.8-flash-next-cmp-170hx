@@ -78,9 +78,9 @@ one at a time:
 | `serve-3x.sh` | 3 | 262,144 | none, native window | 4.39x, best multi-stream decode |
 | `serve-3x-512k.sh` | 3 | 524,288 | static YaRN 2.0 | 2.30x |
 | `serve-3x-1m.sh` | 3 | 1,000,000 | static YaRN 4.0 | 1.21x, one request fits |
-| `serve-4x.sh` | 4 | 262,144 | none, native window | 9.03x, best prefill and TTFT |
-| `serve-4x-512k.sh` | 4 | 524,288 | static YaRN 2.0 | 4.76x |
-| `serve-4x-1m.sh` | 4 | 1,000,000 | static YaRN 4.0 | 2.54x |
+| `serve-4x.sh` | 4 | 262,144 | none, native window | 9.24x, best prefill and TTFT |
+| `serve-4x-512k.sh` | 4 | 524,288 | static YaRN 2.0 | 4.87x |
+| `serve-4x-1m.sh` | 4 | 1,000,000 | static YaRN 4.0 | 2.60x |
 
 Headroom is the measured KV pool divided by one full-context request, so it
 counts how many such requests fit at once. `--max-num-seqs 8` limits admission
@@ -102,8 +102,9 @@ All six scripts share these settings:
 - NCCL P2P and IB off, because this box has no P2P between the cards.
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, which stops allocator-OOM
   retries. vLLM forbids it only with KV connectors, and we run none.
-- Layer partitions `16,17,15` on 3 cards and `12,12,12,12` on 4. The 4-card split
-  was measured against the uneven alternative, see the 4-card notes below.
+- Layer partitions `13,12,12,11` on all three 4-card lanes, and `16,17,15` on
+  the 3-card scripts. The 3-card set is kept for historical comparison and is
+  not tuned further. See the 4-card notes below.
 
 Startup checks for the YaRN lanes:
 
@@ -169,13 +170,12 @@ warmup rather than steady decode.
 | 3 cards | 262,144 | 1,150,599 | 4.39x | 43.81 / 46.27 / 45.02 | 13.23 |
 | 3 cards | 524,288 YaRN 2.0 | 1,204,810 | 2.30x | 43.94 / 46.39 / 45.14 | 13.03 |
 | 3 cards | 1M YaRN 4.0 | 1,208,978 | 1.21x | 44.19 / 46.64 / 45.39 | 12.76 |
-| 4 cards | 262,144 | 2,367,797 | 9.03x | 33.71 / 33.64 / 33.64 / 37.44 | 23.23 / n/r |
-| 4 cards | 524,288 YaRN 2.0 | 2,496,752 | 4.76x | 33.83 / 33.77 / 33.77 / 37.57 | 23.14 / 24.72 / 24.72 / 20.79 |
-| 4 cards | 1M YaRN 4.0 | 2,541,795 | 2.54x | 34.08 / 34.02 / 34.02 / 37.82 | 22.88 / 24.31 / 24.31 / 22.29 |
+| 4 cards | 262,144 | 2,423,060 | 9.24x | 36.88 / 34.21 / 34.21 / 35.46 | 20.89 / 24.99 / 24.99 / 23.65 |
+| 4 cards | 524,288 YaRN 2.0 | 2,550,833 | 4.87x | 37.02 / 34.41 / 34.41 / 35.68 | 20.73 / 24.77 / 24.77 / 23.42 |
+| 4 cards | 1M YaRN 4.0 | 2,595,975 | 2.60x | 36.61 / 34.02 / 34.02 / 35.29 | 20.48 / 24.52 / 24.52 / 23.15 |
 
 The 3-card column is one value because the pipeline splits there differ by only a
-few blocks. The 4-card 262k log starts mid-boot, so ranks 1 to 3 were not
-captured. Each YaRN step adds 0.25 GiB per rank of weights. The cos/sin cache is
+few blocks. Each YaRN step adds 0.25 GiB per rank of weights. The cos/sin cache is
 `4 x 262144 x factor` fp32 rows, allocated before profiling, so it comes out of the
 KV pool.
 
@@ -194,8 +194,8 @@ Rates are tok/s unless the cell shows a duration.
 
 - Pool sets capacity. At 262k, 4 cards hold nine full streams against four on
   3 cards, which is the whole argument for the wider pipeline.
-- Prefill paces at the heaviest stage, not the sum, so four even 12-layer stages
-  beat `16,17,15` by about 20%. Single-stream decode barely moves between the two
+- Prefill paces at the heaviest stage, not the sum, so four balanced stages beat
+  `16,17,15` by about 20%. Single-stream decode barely moves between the two
   widths, because the 200 W cap binds first.
 - Batched decode pays for the extra hop. At 262k full fill, four streams fall from
   457 on 3 cards to 405 on 4. That 8-11% gap repeats across three methods: bench
@@ -213,14 +213,17 @@ Rates are tok/s unless the cell shows a duration.
 
 ### Why these layer splits
 
-The model has one PLE layer, at decoder index 1, so rank 0 needs two layers rather
-than 16. A layer also costs rank 0 0.80 GiB of KV against 2.04 GiB on a mid rank, so
-the cheap capacity sits at the front. On 4 cards, `16,12,11,9` stranded
-that budget and pooled 1,568,111 tokens / 1.57x at 1M, which is 62% less than the
-`12,12,12,12` now shipped. Rank 3 is the tight one there, at 12 layers plus the
-drafter's 3.74 GiB of weights. Moving a layer onto it costs the donor more than
-rank 3 gains. Nobody has A/B tested an even split on 3 cards, so `16,17,15` stands
-as known-good rather than as optimized.
+The pool caps at min_r (rank KV bytes / rank layer count). The model has one
+PLE layer, at decoder index 1, so rank 0 needs at least two layers, and a layer
+costs rank 0 0.80 GiB of KV against 2.04 GiB on a mid rank. All three 4-card
+lanes run `13,12,12,11`. Measured on all three lanes, that split beats an equal
+`12,12,12,12` by 2.13% of pool at 1M, 2.17% at 524k and 2.33% at 262k. The
+extra layer costs
+rank 0 2.53 GiB of weights while rank 3, which also carries the MTP drafter,
+gets the room back. Rank 0 is now the binding stage, so a second shifted layer
+has nowhere useful to go. Prefill, single-stream decode and four-stream decode
+did not move outside their boot-to-boot spread. The 3-card set is historical,
+so `16,17,15` stands unmeasured by choice.
 
 Two boot warnings are normal and cost you nothing. The 7
 `expandable_segments: memory mapping failed` messages fall inside CUDA graph
