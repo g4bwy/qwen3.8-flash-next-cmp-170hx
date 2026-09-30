@@ -23,17 +23,15 @@ set -euo pipefail
 
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
-# The model has a single PLE layer, at decoder index 1, so any split with
-# at least 2 layers on rank 0 satisfies the PLE-on-rank-0 rule. Balance
-# the layer counts instead: the KV pool caps at min_r (rank KV bytes /
-# rank layer count), and a rank's KV bytes shrink as its layer count
-# grows. Measured with 16,12,11,9 (boot-4x-1m.log): rank 0 stranded at
-# 12.76 GiB of KV for 16 layers while rank 3 sat on 28.13 GiB for 9,
-# capping the pool at 1.568M tokens. The equal 12s measure 2,541,795
-# tokens / 2.54x (+62%). Rank 3 is now the tightest (12 layers + the MTP
-# drafter's 3.74 GiB); shifting a layer there costs the donor rank more
-# than rank 3 gains, so 12,12,12,12 is the practical optimum.
-export VLLM_PP_LAYER_PARTITION=12,12,12,12
+# The KV pool caps at min_r (rank KV bytes / rank layer count), and a
+# rank's KV bytes shrink as its layer count grows. The model has one PLE
+# layer, at decoder index 1, so rank 0 needs at least 2 layers. Measured
+# at 1M (boot-4x-1m.log): 12,12,12,12 pools 2,541,795 tokens / 2.54x;
+# 13,12,12,11 pools 2,595,975 / 2.60x (+2.1%). The extra layer costs
+# rank 0 2.53 GiB of weights while rank 3, which also carries the MTP
+# drafter, gives the same back and gains the room. Rank 0 is now the
+# binding stage, so a second shifted layer has nowhere useful to go.
+export VLLM_PP_LAYER_PARTITION=13,12,12,11
 # No P2P between these cards. Every hop goes over the host bridge anyway.
 export NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1
 # Big transient shapes (248k-vocab logits) hit allocator-OOM retries on
