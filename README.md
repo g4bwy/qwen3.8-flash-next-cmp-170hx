@@ -5,8 +5,9 @@ No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nons
 
 - Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`.
 - Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
-- 7 patches. After applying them, `git rev-parse HEAD^{tree}` must print
-  `9ccfc5c50e251827b8ef276b6404cccd46374ba5`. If it does not, you applied
+- 7 patches: six ours, one adopted from upstream PR #58094 (pending review).
+  After applying them, `git rev-parse HEAD^{tree}` must print
+  `f1ee2bd7d613bd7e72300be01d464563c085e67d`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
@@ -19,7 +20,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout 155488d853a0bc42df227dbfc74005b3fd488e94
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # 9ccfc5c50e251827b8ef276b6404cccd46374ba5
+git rev-parse 'HEAD^{tree}'   # f1ee2bd7d613bd7e72300be01d464563c085e67d
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
@@ -263,7 +264,7 @@ set to 2048` comes from MTP-3.
 | 4 | mamba: seed the align state column with the real mamba block size |
 | 5 | Qwen4Exp: gather pinned PLE rows as raw bytes (Ampere has no `fp8e4nv`) |
 | 6 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
-| 7 | let `--hf-overrides` RoPE scaling reach the MTP draft config (wrapper mirror leg dropped at base 155488d853: the Qwen4Exp HF config now lives in transformers 5.18 without the RoPE alias) |
+| 7 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our old patch 7 used |
 
 ## Gotchas
 
