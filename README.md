@@ -97,8 +97,10 @@ All six scripts share these settings:
 
 - MTP-3 spec decode, and the PLE n-gram table offloaded to pinned host RAM
   (`--engram-config '{"cpu_offload": true}'`).
-- Prefix caching with `--prefix-cache-retention-interval 16000`. See Prefix
-  caching.
+- Prefix caching with `--mamba-cache-mode align` and `--prefix-cache-retention-interval
+  16000`, plus `--prefix-match-unit 16` on the three 4-card lanes. The 3-card set
+  is historical and does not carry the match unit, so its reuse numbers still
+  reflect the 1,600-token floor. See Prefix caching.
 - NCCL P2P and IB off, because this box has no P2P between the cards.
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, which stops allocator-OOM
   retries. vLLM forbids it only with KV connectors, and we run none.
@@ -118,12 +120,15 @@ Startup checks for the YaRN lanes:
 ## Prefix caching
 
 This model mixes linear and full attention, so vLLM runs the Mamba cache in `align`
-mode. A later request resumes from a retained state snapshot, so reuse is only
-possible where a snapshot survived, and `--prefix-cache-retention-interval` sets
-that spacing. vLLM defaults it to `0`, which keeps almost nothing on this model, and
-a growing session then re-prefills most of its history each turn. The scripts set
-16,000. A session sends a 120,000-token prompt, then the same prompt with two
-characters added, on the 4-card 1M lane:
+mode: a later request resumes from a retained state snapshot. Two knobs control
+reuse, and they are independent. `--prefix-cache-retention-interval` sets how often
+states are stored. `--prefix-match-unit` sets the token boundaries a hit can land
+on. vLLM ships both badly defaulted for this model.
+
+**Retention.** The interval defaults to `0`, which keeps almost nothing, and a
+growing session then re-prefills most of its history each turn. The scripts set
+16,000. A 120,000-token prompt, then the same prompt plus two characters, 4-card
+1M lane, before the match unit existed:
 
 | interval | send | cached | recomputed | wall |
 |---|---|---:|---:|---:|
@@ -133,24 +138,44 @@ characters added, on the 4-card 1M lane:
 | 16,000 | 120,000 again | 96,000 | 24,000 | 2.57 s |
 | 16,000 | 120,001, plus two chars | 112,000 | 8,001 | 1.24 s |
 
-- Reuse deepens each turn, which is what a session needs. The pool line stayed at
-  2,541,795 tokens / 2.54x, so the spacing costs no capacity here.
-- A prompt shorter than one interval reuses nothing, measured at 9,990 tokens.
-  One-shot prompts reuse less than repeating ones, 8,000 of 22,500 and 20,800 of
-  42,495.
-- Chunk size is not the lever. `--max-num-batched-tokens 9600` is a multiple of the
-  1,600-token cache block, and it moved no reuse number. It cost 10% of the pool,
-  so the scripts do not set it.
-- `enable_mamba_shared_prefix_checkpoint` stays off and unmeasured here. It wants a
-  prefix match unit below the Mamba block size, which is 16 tokens on this model.
+**Match unit.** The default is the GCD of the cacheable KV group block sizes, 1,600
+tokens here, so no hit could land finer than 1,600. That made prompts under 1,600
+dead and left one-shot reuse shallower than the retention grid predicted. The
+number came from the fork wtdcode/vllm-backport, which calls the flag effectively
+mandatory. `--prefix-match-unit 16` (16 divides the block sizes; 64 is rejected)
+drops the floor to 32 tokens with the MTP block drop. Same lane, probe lengths,
+after the flag:
+
+| send | cached | recomputed | hit |
+|---|---:|---:|---:|
+| 9,990 first, cold cache | 0 | 9,990 | 0% |
+| 9,990 identical prompt again | 9,968 | 22 | 99.8% |
+| 9,991 plus two chars | 9,968 | 23 | 99.8% |
+| 22,500 identical prompt again | 22,480 | 20 | 99.9% |
+| 22,501 plus two chars | 22,480 | 21 | 99.9% |
+
+- Repeats and appends now hit at 99.8-99.9% at any length above the floor, below
+  one retention interval included. The pool line is untouched: granularity changes
+  hashing, not allocation. Decode is unchanged (single stream 165.6-165.8 tok/s).
+- A grown turn resumes from the previous turn's end junction while that snapshot
+  survives pool pressure, recomputing about 20 tokens. When it does not survive,
+  the turn falls back to a coarser stored snapshot, about 3,100 tokens, or 0.3 s.
+  Worst case is therefore far below the 8,001-token cost of the retention-only fix.
+- Dense per-block retention, as the fork pairs with the flag for its LMCache tier,
+  is unnecessary without one and unmeasured here.
+- Chunk size is still not the lever. `--max-num-batched-tokens 9600` moved no reuse
+  number and cost 10% of the pool, so the scripts do not set it.
+- `enable_mamba_shared_prefix_checkpoint` stays off and unmeasured. The flag now
+  satisfies its stated prefix-unit precondition.
 
 Measure reuse with `./benchmark/prefix_cache_probe.py --lengths 64000`. That counts
 tokens, so it cannot say whether the resumed state is right.
 `benchmark/prefix_state_check.py` does. It hides two hex needles, one in the first
 block and one at half depth, then compares cold, warm and grown answers. A second
-phase runs several sessions at once. Both lanes pass, at 22k and 68k on 3 cards and
-20k and 64k on 4. One 4-session round fell from 257,353 recomputed tokens cold to
-7,753 warm.
+phase runs several sessions at once. All lanes pass, and the 4-card 1M lane passed
+again with the match unit set: warm 20k rows recompute 17-18 tokens with both
+needles intact, and a 4-session round fell from 82,978 recomputed tokens cold to
+1,682 warm, zero cross-session leakage.
 
 ## Measured, this box, FP8 checkpoint, single stream
 The cards are CMP 170HX (GA100). They run unlocked with the
