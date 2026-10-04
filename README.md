@@ -5,9 +5,11 @@ No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nons
 
 - Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`.
 - Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
-- 7 patches: six ours, one adopted from upstream PR #58094 (pending review).
+- 7 patches: five ours, two adopted from pending upstream PRs (#56444 as
+  patch 2, #58094 as patch 7). The adopted two are experimental until their PRs
+  merge or the swap is reverted; the 4x-1m hardware test of #56444 is owed.
   After applying them, `git rev-parse HEAD^{tree}` must print
-  `f1ee2bd7d613bd7e72300be01d464563c085e67d`. If it does not, you applied
+  `c7cd2ff08a2cd639ec392046be9739258d06d89d`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
@@ -20,7 +22,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout 155488d853a0bc42df227dbfc74005b3fd488e94
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # f1ee2bd7d613bd7e72300be01d464563c085e67d
+git rev-parse 'HEAD^{tree}'   # c7cd2ff08a2cd639ec392046be9739258d06d89d
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
@@ -259,7 +261,7 @@ set to 2048` comes from MTP-3.
 | # | does |
 |---|---|
 | 1 | Qwen4Exp MTP forward branches on `intermediate_tensors is None` rather than PP rank, so the last-rank drafter takes the embedding path |
-| 2 | allow PLE when the n-gram layers are on rank 0 under PP |
+| 2 | upstream PR #56444, adopted: carry PLE input ids (int32, +4 B/token/hop) inside the PP intermediate tensors, so PLE is pipeline-rank-free; replaces our rank-0 confinement; its three new tests got process-isolation guards locally |
 | 3 | V2: resolve deferred mamba state copies by request slot |
 | 4 | mamba: seed the align state column with the real mamba block size |
 | 5 | Qwen4Exp: gather pinned PLE rows as raw bytes (Ampere has no `fp8e4nv`) |
