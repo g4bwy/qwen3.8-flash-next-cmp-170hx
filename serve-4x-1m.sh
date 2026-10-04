@@ -27,8 +27,8 @@ set -euo pipefail
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # The KV pool caps at min_r (rank KV bytes / rank layer count), and a
-# rank's KV bytes shrink as its layer count grows. The model has one PLE
-# layer, at decoder index 1, so rank 0 needs at least 2 layers. Measured
+# rank's KV bytes shrink as its layer count grows. PLE no longer
+# constrains the split: patch 2 (upstream PR #56444) is pipeline-rank-free. Measured
 # at 1M (boot-4x-1m.log): 12,12,12,12 pools 2,541,795 tokens / 2.54x;
 # 13,12,12,11 pools 2,595,975 / 2.60x (+2.1%). The extra layer costs
 # rank 0 2.53 GiB of weights while rank 3, which also carries the MTP
