@@ -24,6 +24,8 @@ export NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1
 # vLLM forbids this only with KV connectors, and we run none.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# --prefix-match-unit 16 drops the prefix hit floor from 1,600 tokens to 32.
+# Measured rationale: serve-4x-1m.sh header and README, Prefix caching.
 exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --served-model-name qwen3.8-flash-next-fp8 \
     --port 8000 \
@@ -31,7 +33,9 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --engram-config '{"cpu_offload": true}' \
     --moe-backend humming \
     --enable-prefix-caching \
+    --mamba-cache-mode align \
     --prefix-cache-retention-interval 16000 \
+    --prefix-match-unit 16 \
     --gpu-memory-utilization 0.94 \
     --max-model-len 262144 \
     --max-num-seqs 8 \

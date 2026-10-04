@@ -42,6 +42,12 @@ export NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1
 # vLLM forbids this only with KV connectors, and we run none.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# The default prefix match granularity is the GCD of the cacheable KV group
+# block sizes, 1600 here, so a hit could not land finer than 1,600 tokens no
+# matter how often a prompt repeated. --prefix-match-unit 16 drops the floor
+# to 32 tokens with the MTP block drop: repeats and appends hit 99.8%+, the
+# one-shot shallow anomaly is gone, pool and decode unchanged. Retention
+# controls how often states are stored; this controls where hits land.
 exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --served-model-name qwen3.8-flash-next-fp8 \
     --port 8000 \
@@ -49,7 +55,9 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --engram-config '{"cpu_offload": true}' \
     --moe-backend humming \
     --enable-prefix-caching \
+    --mamba-cache-mode align \
     --prefix-cache-retention-interval 16000 \
+    --prefix-match-unit 16 \
     --gpu-memory-utilization 0.94 \
     --max-model-len 1000000 \
     --hf-overrides '{"text_config":{"max_position_embeddings":1000000,"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":262144}}}' \
