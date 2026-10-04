@@ -1,4 +1,4 @@
-From b2a18cd0b043169663fb10a1678d9bff0e2433a2 Mon Sep 17 00:00:00 2001
+From 7f369f90804a28e65ebe885a8e4aa8d0c83b61e3 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 22:12:29 +0200
 Subject: [PATCH 6/7] [Bugfix][Core] Build KV cache tensors from a group's

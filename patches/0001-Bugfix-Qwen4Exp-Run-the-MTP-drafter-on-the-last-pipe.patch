@@ -1,4 +1,4 @@
-From 079dcd056c6affa445ad609185cf0f0f612cd266 Mon Sep 17 00:00:00 2001
+From ed18b512b072ac04b966d18a0b2b109c06253526 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:51:58 +0200
 Subject: [PATCH 1/7] [Bugfix][Qwen4Exp] Run the MTP drafter on the last
