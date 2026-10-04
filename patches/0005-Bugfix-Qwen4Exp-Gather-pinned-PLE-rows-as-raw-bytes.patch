@@ -1,4 +1,4 @@
-From 7ff0fe04d1eb346f77b385deb9486089785e4378 Mon Sep 17 00:00:00 2001
+From 902edc889c3b74113387a3db91c5d9591659ea48 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 21:30:33 +0200
 Subject: [PATCH 5/7] [Bugfix][Qwen4Exp] Gather pinned PLE rows as raw bytes
@@ -19,10 +19,10 @@ already reduces FP8 rows as raw bytes.
  1 file changed, 12 insertions(+), 3 deletions(-)
 
 diff --git a/vllm/models/qwen4_exp/common/ngram_embedding.py b/vllm/models/qwen4_exp/common/ngram_embedding.py
-index 4d1d358958..dc7216f673 100644
+index 9e6eef03df..919bc8179f 100644
 --- a/vllm/models/qwen4_exp/common/ngram_embedding.py
 +++ b/vllm/models/qwen4_exp/common/ngram_embedding.py
-@@ -373,7 +373,7 @@ def _lookup_ple_embedding_from_pinned_kernel(
+@@ -382,7 +382,7 @@ def _lookup_ple_embedding_from_pinned_kernel(
      values = tl.load(
          weight_ptr + local_idx * embedding_dim + offsets,
          mask=load_mask,
@@ -31,7 +31,7 @@ index 4d1d358958..dc7216f673 100644
      )
      tl.store(
          output_ptr + row_id * embedding_dim + offsets,
-@@ -465,10 +465,19 @@ class Qwen4ExpPLEPinnedHostEmbedding(Qwen4ExpPLEEmbedding):
+@@ -471,10 +471,19 @@ class Qwen4ExpPLEPinnedHostEmbedding(Qwen4ExpPLEEmbedding):
  
          flat_ids = input_ids.reshape(-1).long()
          if flat_ids.numel():

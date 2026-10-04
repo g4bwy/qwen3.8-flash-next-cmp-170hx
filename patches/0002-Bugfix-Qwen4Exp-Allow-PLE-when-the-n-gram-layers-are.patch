@@ -1,4 +1,4 @@
-From b6fed8648f35f26bf94c448186881beff46e115f Mon Sep 17 00:00:00 2001
+From f6da369994ecaca7af73cd0a5c3cc66cc984e638 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:11 +0200
 Subject: [PATCH 2/7] [Bugfix][Qwen4Exp] Allow PLE when the n-gram layers are
@@ -14,26 +14,41 @@ there the "inject on the first rank only" behaviour is already correct.
 Share one predicate between the two refusal sites so config validation and
 the worker cannot diverge.
 ---
- tests/models/qwen4_exp/test_config.py       | 13 +++++---
+ tests/models/qwen4_exp/test_config.py       | 30 +++++++++++++++---
  vllm/model_executor/models/config.py        | 35 +++++++++++++++++++--
  vllm/models/qwen4_exp/nvidia/model_state.py | 15 ++++++---
- 3 files changed, 51 insertions(+), 12 deletions(-)
+ 3 files changed, 67 insertions(+), 13 deletions(-)
 
 diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
-index f0cca639bb..8be877bb9c 100644
+index 60336a81c6..f1ea848149 100644
 --- a/tests/models/qwen4_exp/test_config.py
 +++ b/tests/models/qwen4_exp/test_config.py
-@@ -147,11 +147,16 @@ def test_qwen4_exp_mtp_override_sets_draft_config(
+@@ -147,14 +147,34 @@ def test_qwen4_exp_mtp_override_sets_draft_config(
      assert draft_config.n_predict == 1
  
  
 -@pytest.mark.parametrize("ple_layer_ids", [[1], []])
 -def test_qwen4_exp_rejects_pipeline_parallel_only_with_ple(ple_layer_ids) -> None:
 +@pytest.mark.parametrize(
-+    "ple_layer_ids,confined", [([1], True), ([2], False), ([], True)]
++    "ple_kwargs,confined",
++    [
++        ({}, True),
++        # PLE id 3 attaches to 0-based layer 2, which pp=2 moves to rank 1.
++        # Layers stay linear_attention because transformers >= 5.18 rejects
++        # PLE on any other layer type.
++        (
++            {
++                "num_hidden_layers": 4,
++                "layer_types": ["linear_attention"] * 4,
++                "ple_layer_ids": [3],
++            },
++            False,
++        ),
++        ({"ple_layer_ids": []}, True),
++    ],
 +)
 +def test_qwen4_exp_allows_pipeline_parallel_only_with_rank0_ple(
-+    ple_layer_ids, confined
++    ple_kwargs, confined
 +) -> None:
      """PLE needs raw input_ids, which non-first pipeline ranks never see. The
      rest of the architecture is PP-capable, so the refusal must be conditional
@@ -42,21 +57,25 @@ index f0cca639bb..8be877bb9c 100644
 +    before the engine spends time loading weights."""
      vllm_config = SimpleNamespace(
          model_config=SimpleNamespace(
-             hf_text_config=_text_config(ple_layer_ids=ple_layer_ids),
-@@ -165,7 +170,7 @@ def test_qwen4_exp_rejects_pipeline_parallel_only_with_ple(ple_layer_ids) -> Non
+-            hf_text_config=_text_config(ple_layer_ids=ple_layer_ids),
++            hf_text_config=_text_config(**ple_kwargs),
+             multimodal_config=None,
+         ),
+         parallel_config=SimpleNamespace(
+@@ -165,7 +185,7 @@ def test_qwen4_exp_rejects_pipeline_parallel_only_with_ple(ple_layer_ids) -> Non
      with patch.object(
          Qwen3_5ForConditionalGenerationConfig, "verify_and_update_config"
      ):
 -        if ple_layer_ids:
-+        if ple_layer_ids and not confined:
++        if not confined:
              with pytest.raises(NotImplementedError, match="pipeline_parallel_size=1"):
                  Qwen4ExpForConditionalGenerationConfig.verify_and_update_config(
                      vllm_config
 diff --git a/vllm/model_executor/models/config.py b/vllm/model_executor/models/config.py
-index 3c87b06167..9a3658f6b4 100644
+index 8831c5f6c4..3191e7828b 100644
 --- a/vllm/model_executor/models/config.py
 +++ b/vllm/model_executor/models/config.py
-@@ -873,6 +873,29 @@ def _strip_qwen4_exp_mrope(model_config: "ModelConfig") -> None:
+@@ -862,6 +862,29 @@ def _strip_qwen4_exp_mrope(model_config: "ModelConfig") -> None:
              rope_parameters.pop("mrope_interleaved", None)
  
  
@@ -86,7 +105,7 @@ index 3c87b06167..9a3658f6b4 100644
  class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConfig):
      """Apply the Qwen3.5 hybrid-cache contract to Qwen4Exp."""
  
-@@ -894,11 +917,17 @@ class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConf
+@@ -883,11 +906,17 @@ class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConf
              )
          # Checked again in Qwen4ExpModelState; rejecting it here keeps the
          # engine from loading weights first.

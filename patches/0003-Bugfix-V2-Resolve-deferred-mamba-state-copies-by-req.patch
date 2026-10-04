@@ -1,4 +1,4 @@
-From f33df16afc0939cc31b755206912d8ea362864b0 Mon Sep 17 00:00:00 2001
+From de2f57fffb89111e6673896138ad954827115e7a Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:11 +0200
 Subject: [PATCH 3/7] [Bugfix][V2] Resolve deferred mamba state copies by
@@ -48,10 +48,10 @@ index c7665c46b8..8063a2d5b4 100644
          self,
          req_index: int,
 diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
-index 800ae825d4..deb3d172d2 100644
+index 1b9d0608e2..3123fe3b77 100644
 --- a/vllm/v1/worker/gpu/model_runner.py
 +++ b/vllm/v1/worker/gpu/model_runner.py
-@@ -686,6 +686,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+@@ -689,6 +689,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
              cp_rank=self.dcp_rank,
              cp_interleave=self.cp_interleave,
          )
@@ -118,7 +118,7 @@ index 32924555b1..64367bc96b 100644
          return ctx
  
 diff --git a/vllm/v1/worker/mamba_utils.py b/vllm/v1/worker/mamba_utils.py
-index c2e0120e46..72752e93b6 100644
+index 33a2b8b480..57375f43b7 100644
 --- a/vllm/v1/worker/mamba_utils.py
 +++ b/vllm/v1/worker/mamba_utils.py
 @@ -392,8 +392,9 @@ def postprocess_mamba_fused_kernel(

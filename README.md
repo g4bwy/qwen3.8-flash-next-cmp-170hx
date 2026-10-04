@@ -4,28 +4,26 @@ Patches over vLLM mainline, running with uv venv.
 No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nonsense.
 
 - Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`.
-- Base commit: `741edeebeec3cedbe938d831b6d87641ed6191ef` (vllm-project/vllm main, 2026-09-29).
+- Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
 - 7 patches. After applying them, `git rev-parse HEAD^{tree}` must print
-  `de5c10d7af7334e754214f67bdf59592a87ecfcc`. If it does not, you applied
+  `9ccfc5c50e251827b8ef276b6404cccd46374ba5`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
   ranks, KV allocation dies with a bare `StopIteration`).
-- Verification status: both 1M lanes boot clean on this tree. Every tok/s number
-  here was measured on an earlier base.
 
 ## Apply
 
 ```bash
 git clone https://github.com/vllm-project/vllm
 cd vllm
-git checkout 741edeebeec3cedbe938d831b6d87641ed6191ef
+git checkout 155488d853a0bc42df227dbfc74005b3fd488e94
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # de5c10d7af7334e754214f67bdf59592a87ecfcc
+git rev-parse 'HEAD^{tree}'   # 9ccfc5c50e251827b8ef276b6404cccd46374ba5
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
-741edeebee`), then re-run the `git am`.
+155488d853`), then re-run the `git am`.
 
 ## Build
 
@@ -34,7 +32,7 @@ Python 3.12, `uv` on PATH ([install](https://docs.astral.sh/uv/)).
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=741edeebeec3cedbe938d831b6d87641ed6191ef \
+VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=155488d853a0bc42df227dbfc74005b3fd488e94 \
   uv pip install -e . --torch-backend=auto
 ```
 
@@ -45,8 +43,8 @@ that commit must satisfy two rules:
 1. The base must have a published wheel. The install fetches
    `https://wheels.vllm.ai/<sha>/cu130/vllm/metadata.json` and stops on 404.
    Wheel CI lags main by hours, so walk down from the tip and take the newest
-   commit that answers 200. This base is the tip, at
-   `0.30.1rc1.dev345+g741edeebe`, cp38-abi3, x86_64, 320 MB. Match the
+   commit that answers 200. The wheel for this base:
+   `0.30.1rc1.dev640+g155488d85`, cp38-abi3, x86_64. Match the
    `+g<sha>` tail to your base. Ignore the leading number, which only tracks
    upstream packaging.
 2. Pass that 40-hex sha in `VLLM_PRECOMPILED_WHEEL_COMMIT`. Without it, a
@@ -265,7 +263,7 @@ set to 2048` comes from MTP-3.
 | 4 | mamba: seed the align state column with the real mamba block size |
 | 5 | Qwen4Exp: gather pinned PLE rows as raw bytes (Ampere has no `fp8e4nv`) |
 | 6 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
-| 7 | let `--hf-overrides` RoPE scaling reach the MTP draft config; mirror `max_position_embeddings` onto the Qwen4Exp wrapper so RoPE standardization can run on it |
+| 7 | let `--hf-overrides` RoPE scaling reach the MTP draft config (wrapper mirror leg dropped at base 155488d853: the Qwen4Exp HF config now lives in transformers 5.18 without the RoPE alias) |
 
 ## Gotchas
 
