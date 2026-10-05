@@ -41,6 +41,10 @@ export NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1
 # near-full cards, and expandable segments serve them from fresh segments.
 # vLLM forbids this only with KV connectors, and we run none.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# The 173 GiB checkpoint is read once into VRAM; drop its page cache as each
+# shard is consumed so the load does not evict cache worth keeping. Requires
+# patches/0009-safetensors-drop-pagecache.patch.
+export VLLM_SAFETENSORS_DROP_CACHE=1
 
 # The default prefix match granularity is the GCD of the cacheable KV group
 # block sizes, 1600 here, so a hit could not land finer than 1,600 tokens no

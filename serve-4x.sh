@@ -23,6 +23,10 @@ export NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1
 # near-full cards, and expandable segments serve them from fresh segments.
 # vLLM forbids this only with KV connectors, and we run none.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# The 173 GiB checkpoint is read once into VRAM; drop its page cache as each
+# shard is consumed so the load does not evict cache worth keeping. Requires
+# patches/0009-safetensors-drop-pagecache.patch.
+export VLLM_SAFETENSORS_DROP_CACHE=1
 
 # --prefix-match-unit 16 drops the prefix hit floor from 1,600 tokens to 32.
 # Measured rationale: serve-4x-1m.sh header and README, Prefix caching.

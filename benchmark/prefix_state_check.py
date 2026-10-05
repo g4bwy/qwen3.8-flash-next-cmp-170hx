@@ -36,7 +36,7 @@ import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-BASE_DEFAULT = "http://fender.lan:8000"
+BASE_DEFAULT = "http://127.0.0.1:8000"
 MODEL_DEFAULT = "qwen3.8-flash-next-fp8"
 SUBJECTS = ["archivist", "surveyor", "lighthouse-keeper", "cartographer",
             "auditor", "bellringer", "glassblower", "seed-merchant"]
