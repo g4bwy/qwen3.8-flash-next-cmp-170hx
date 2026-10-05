@@ -12,7 +12,7 @@ The probe needs no restart and writes nothing. It does not clear the cache, so
 run each prompt shape once, or accept that a first send can already hit.
 
 Usage:
-    ./prefix_cache_probe.py                      # against fender.lan:8000
+    ./prefix_cache_probe.py                      # against your serve box, pass --base-url
     ./prefix_cache_probe.py --lengths 16000,64000
     ./prefix_cache_probe.py --base-url http://host:8000 --model NAME
 """
@@ -92,7 +92,7 @@ def show(label, r):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--base-url", default="http://fender.lan:8000")
+    ap.add_argument("--base-url", default="http://127.0.0.1:8000")
     ap.add_argument("--model", default="qwen3.8-flash-next-fp8")
     ap.add_argument(
         "--lengths",

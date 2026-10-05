@@ -1,0 +1,9 @@
+draft_corpus*.jsonl
+benchmark/bench-default.json
+benchmark/bench-sweep*.json
+__pycache__/
+*.log
+benchmark/picked.json
+benchmark/sampler.py
+prof-1m/
+benchmark/mtp-4x1m-*.json

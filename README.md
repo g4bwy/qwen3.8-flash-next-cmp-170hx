@@ -5,11 +5,10 @@ No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nons
 
 - Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`.
 - Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
-- 7 patches: five ours, two adopted from pending upstream PRs (#56444 as
-  patch 2, #58094 as patch 7). The adopted two are experimental until their PRs
-  merge or the swap is reverted; the 4x-1m hardware test of #56444 is owed.
-  After applying them, `git rev-parse HEAD^{tree}` must print
-  `c7cd2ff08a2cd639ec392046be9739258d06d89d`. If it does not, you applied
+- 9 patches: seven ours, two adopted from pending upstream PRs (#56444 as
+  patch 2, #58094 as patch 7). Both adoptions boot-certified on 4x-1m. After
+  applying them, `git rev-parse HEAD^{tree}` must print
+  `c51f4b08fcc2ae527826ebac5ef77be77201ebd6`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
@@ -22,7 +21,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout 155488d853a0bc42df227dbfc74005b3fd488e94
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # c7cd2ff08a2cd639ec392046be9739258d06d89d
+git rev-parse 'HEAD^{tree}'   # c51f4b08fcc2ae527826ebac5ef77be77201ebd6
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
@@ -117,6 +116,44 @@ Startup checks for the YaRN lanes:
 2. The log prints `Maximum concurrency for <N> tokens per request: X.XXx`.
    Below 1.0 the box cannot serve its own context length, so lower
    `--max-model-len`.
+
+### Draft vocabulary head (patch 8)
+
+Patch 8 makes the MTP drafter score a small head instead of the 248k-row
+lm_head per draft step, worth ~9% single-stream. It engages only when the
+checkpoint directory carries the artifacts, and they take two commands:
+
+1. Build the id list from the model's own outputs. Any corpus of assistant
+   text works. On this setup the agent session logs are already that corpus:
+   [maki](https://github.com/tontinton/maki), the terminal coding agent
+   driving this patchset, keeps JSONL transcripts of every session under
+   `~/.local/state/maki/sessions/`, and its replies are the model's own text.
+   Another agent harness? Port `extract_maki_corpus.py` to wherever it keeps
+   its transcripts, the output contract is one JSON object per line with the
+   assistant text under `"output"` (the builder also accepts `text` and
+   `content`, so existing JSONL exports may plug in directly):
+
+   ```bash
+   ./benchmark/extract_maki_corpus.py --out draft_corpus.jsonl
+   ```
+
+   Copy the JSONL to the serve box. Coverage rule: the list must cover
+   ~97% of what the model emits, counted over its own generations. A
+   borrowed frequency list covering 92% costs back more in rejections than
+   the head saves.
+2. Build the artifacts in place (adds ~200 MB to the model dir and one
+   index entry, applied AFTER patch 8 or draft weight loading fails):
+
+   ```bash
+   ./benchmark/build_draft_vocab.py \
+       --model-path /path/to/Qwen3.8-Flash-Next-FP8 \
+       --corpus draft_corpus.jsonl --size 40000
+   ```
+
+Startup proof: `MTP drafter scores a 39532-token draft vocabulary`.
+Rollback: delete `mtp_draft_vocab_ids.pt`, `mtp_draft_lm_head.safetensors`,
+and their index entry. Patch 9's page-cache drop logs its own line,
+`Dropped consumed checkpoint pages from the page cache: 132 files, 172.97 GiB`.
 
 ## Prefix caching
 
@@ -267,6 +304,8 @@ set to 2048` comes from MTP-3.
 | 5 | Qwen4Exp: gather pinned PLE rows as raw bytes (Ampere has no `fp8e4nv`) |
 | 6 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
 | 7 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our old patch 7 used |
+| 8 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Needs artifacts, see Run, Draft vocabulary head |
+| 9 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts): 173 GiB of read-once weight bytes should not evict reusable cache at every boot |
 
 ## Gotchas
 
