@@ -1,0 +1,198 @@
+From c3d6f4346cded4c412b742996d128f814f176d28 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <gforte@wyplay.com>
+Date: Mon, 5 Oct 2026 10:24:14 +0200
+Subject: [PATCH 8/9] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
+
+Every draft token of MTP speculation runs compute_logits with the full
+248,320-row lm_head: on sm_80 at the ~1.1 TB/s measured for these cards
+that is ~1.2 ms per draft step of a ~19 ms iteration, 12-18% of decode
+spent scoring vocabulary the model almost never emits. When the model
+directory contains mtp_draft_vocab_ids.pt plus an
+mtp.draft_lm_head.weight tensor (both produced by
+benchmark/build_draft_vocab.py from the model's own outputs), the
+drafter scores that small head instead and scatters the logits back
+into full-vocabulary space with -inf elsewhere, so every downstream
+path keeps its exact shape and semantics.
+
+Output quality is unchanged by construction: the verifier is the
+target model and never sees the draft head; an id outside the draft
+vocabulary can only stop being proposed, never be wrong. Acceptance
+may dip with vocabulary coverage; keep the id list counted from this
+model's own generations.
+
+When the draft head is active the full lm_head module is not created
+and its checkpoint rows (shared_head.head / lm_head) are skipped at
+load, returning ~1.27 GiB on the last pipeline rank.
+
+Mechanism and the coverage lesson (a generic list covering 92% costs
+~10% throughput; a counted list covering 97.5% does not) follow
+syv-ai/HyperQwen's qwen3_5-mtp-draft-vocab patch, adapted to the
+qwen4_exp MTP module. Opt out by deleting the two files.
+
+Co-authored-by: Maki <agent@local>
+---
+ .../models/qwen4_exp/test_mtp_draft_vocab.py  | 29 ++++++++
+ vllm/models/qwen4_exp/nvidia/mtp.py           | 70 ++++++++++++++++++-
+ 2 files changed, 98 insertions(+), 1 deletion(-)
+ create mode 100644 tests/models/qwen4_exp/test_mtp_draft_vocab.py
+
+diff --git a/tests/models/qwen4_exp/test_mtp_draft_vocab.py b/tests/models/qwen4_exp/test_mtp_draft_vocab.py
+new file mode 100644
+index 0000000000..dddb7c8f81
+--- /dev/null
++++ b/tests/models/qwen4_exp/test_mtp_draft_vocab.py
+@@ -0,0 +1,29 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Draft-vocabulary head wiring for the Qwen4Exp MTP drafter."""
++
++import pytest
++import torch
++
++from vllm.models.qwen4_exp.nvidia.mtp import (
++    _remap_mtp_weight_name,
++    expand_draft_logits,
++)
++
++
++@pytest.mark.cpu_test
++def test_expand_draft_logits_scatters_and_masks() -> None:
++    sub = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
++    ids = torch.tensor([7, 3])
++    out = expand_draft_logits(sub, ids, vocab_size=10)
++    assert out.shape == (2, 10)
++    assert out[0, 7] == 1.0 and out[0, 3] == 2.0
++    assert out[1, 7] == 3.0 and out[1, 3] == 4.0
++    masked = out[:, [0, 1, 2, 4, 5, 6, 8, 9]]
++    assert torch.isinf(masked).all() and (masked < 0).all()
++
++
++@pytest.mark.cpu_test
++def test_draft_head_weight_names_remap() -> None:
++    assert _remap_mtp_weight_name("mtp.draft_lm_head.weight") == "draft_lm_head.weight"
++    assert _remap_mtp_weight_name("mtp.shared_head.head.weight") == "lm_head.weight"
+diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
+index fc307d4c77..0262ebd7a4 100644
+--- a/vllm/models/qwen4_exp/nvidia/mtp.py
++++ b/vllm/models/qwen4_exp/nvidia/mtp.py
+@@ -13,6 +13,7 @@ The MTP draft model reuses the Qwen4Exp backbone (PLE/HC/MoE) but:
+     multi stream [T, hc_count*H] (fed to the next draft step).
+ """
+ 
++import os
+ from collections.abc import Iterable
+ 
+ import regex as re
+@@ -22,6 +23,7 @@ from transformers import Qwen4ExpTextConfig
+ 
+ from vllm.config import VllmConfig, replace, set_current_vllm_config
+ from vllm.distributed import get_pp_group
++from vllm.logger import init_logger
+ from vllm.model_executor.layers.fused_moe.utils import (
+     is_model_fused_shared_expert_compatible,
+ )
+@@ -86,6 +88,23 @@ def _remap_quantized_layers(
+     }
+ 
+ 
++logger = init_logger(__name__)
++
++
++def expand_draft_logits(
++    sub_logits: torch.Tensor, draft_vocab_ids: torch.Tensor, vocab_size: int
++) -> torch.Tensor:
++    """Scatter draft-head logits into full-vocabulary space, -inf elsewhere.
++
++    Keeps the compute_logits contract identical, so proposal argmax and any
++    sampler path behave as with the full head; ids outside the draft
++    vocabulary simply can never be proposed.
++    """
++    full = sub_logits.new_full((sub_logits.shape[0], vocab_size), float("-inf"))
++    full.index_copy_(1, draft_vocab_ids.to(sub_logits.device), sub_logits)
++    return full
++
++
+ def _remap_mtp_weight_name(name: str) -> str | None:
+     """Map Qwen4Exp checkpoint paths into the standalone draft model."""
+     for checkpoint_prefix in (
+@@ -100,6 +119,8 @@ def _remap_mtp_weight_name(name: str) -> str | None:
+         name = f"model.{name}"
+     if name.startswith("model.mtp."):
+         name = name.removeprefix("model.")
++    if name.startswith("mtp.draft_lm_head."):
++        return name.replace("mtp.draft_lm_head.", "draft_lm_head.", 1)
+     if name.startswith("mtp.shared_head.head."):
+         return name.replace("mtp.shared_head.head.", "lm_head.", 1)
+     if name.startswith("model.shared_head.head."):
+@@ -386,8 +407,37 @@ class Qwen4ExpMTP(nn.Module, SupportsPP, Qwen4ExpMixtureOfExperts):
+             prefix=maybe_prefix(prefix, "mtp"),
+         )
+ 
++        self.draft_lm_head = None
++        self.draft_logits_processor = None
+         if get_pp_group().is_last_rank:
+-            if config.tie_word_embeddings:
++            draft_ids_path = os.path.join(
++                str(vllm_config.model_config.model), "mtp_draft_vocab_ids.pt"
++            )
++            if os.path.exists(draft_ids_path):
++                # Vocab-truncated draft head: score only the ids the model
++                # actually produces instead of the full-vocabulary lm_head
++                # once per draft step (build_draft_vocab.py writes both
++                # artifacts). Verification still runs the target head, so
++                # output quality is unchanged; only proposal coverage can
++                # shift acceptance.
++                ids = torch.load(draft_ids_path, map_location="cpu").to(torch.long)
++                if torch.cuda.is_available():
++                    # register_buffer ignores the loader device context, and a
++                    # CPU->GPU copy is illegal inside CUDA graph capture.
++                    ids = ids.to(torch.device(f"cuda:{torch.cuda.current_device()}"))
++                self.register_buffer("draft_vocab_ids", ids, persistent=False)
++                self.draft_lm_head = ParallelLMHead(
++                    int(ids.numel()),
++                    config.hidden_size,
++                    prefix=maybe_prefix(prefix, "draft_lm_head"),
++                )
++                self.draft_logits_processor = LogitsProcessor(int(ids.numel()))
++                self.lm_head = None
++                logger.info(
++                    "MTP drafter scores a %d-token draft vocabulary",
++                    int(ids.numel()),
++                )
++            elif config.tie_word_embeddings:
+                 self.lm_head = self.model.embed_tokens
+             else:
+                 self.lm_head = ParallelLMHead(
+@@ -429,11 +479,29 @@ class Qwen4ExpMTP(nn.Module, SupportsPP, Qwen4ExpMixtureOfExperts):
+     def compute_logits(
+         self, hidden_states: torch.Tensor, spec_step_idx: int = 0
+     ) -> torch.Tensor | None:
++        if self.draft_lm_head is not None:
++            sub = self.draft_logits_processor(self.draft_lm_head, hidden_states)
++            if sub is None:
++                return None
++            ids = self.draft_vocab_ids
++            if ids.device != sub.device:
++                ids = ids.to(sub.device)
++                self.draft_vocab_ids = ids
++            return expand_draft_logits(sub, ids, self.config.vocab_size)
+         return self.logits_processor(self.lm_head, hidden_states)
+ 
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
++        draft_active = getattr(self, "draft_lm_head", None) is not None
++
+         def remap_weight_names():
+             for name, weight in weights:
++                if "draft_lm_head" in name and not draft_active:
++                    continue
++                if draft_active and (
++                    "shared_head.head" in name
++                    or name.startswith(("model.lm_head.", "lm_head."))
++                ):
++                    continue
+                 remapped_name = _remap_mtp_weight_name(name)
+                 if remapped_name is not None:
+                     yield remapped_name, weight
+-- 
+2.55.0
+

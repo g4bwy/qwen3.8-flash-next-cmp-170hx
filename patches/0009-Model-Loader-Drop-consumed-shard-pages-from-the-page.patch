@@ -1,0 +1,195 @@
+From d0e8e1e8183ca5dedf22740e3b34fc46313de5a2 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <gforte@wyplay.com>
+Date: Mon, 5 Oct 2026 12:16:26 +0200
+Subject: [PATCH 9/9] [Model Loader] Drop consumed shard pages from the page
+ cache
+
+Set VLLM_SAFETENSORS_DROP_CACHE=1 to posix_fadvise(FADV_DONTNEED) each
+safetensors shard right after the loader has consumed it. For
+checkpoints far larger than useful cache, every byte read into the page
+cache during weight loading is read-once-into-VRAM: it survives the
+boot only to displace cache that is actually reusable. The drop runs in
+both the single-thread and multi-thread safetensors iterators and after
+all three load strategies; a summary line reports files and GiB
+released. Default off.
+
+Reopening the file for fadvise is deliberate: it acts on the inode's
+page cache regardless of how the reader accessed it (mmap or pread) and
+works on every Linux filesystem. Clean pages under an active mapping
+are the one kernel subtlety; by drop time the reader's mapping and the
+tensor copies are already independent of the file.
+
+Co-authored-by: Maki <agent@local>
+---
+ .../test_safetensors_drop_cache.py            | 61 +++++++++++++++++++
+ vllm/envs.py                                  |  9 +++
+ .../model_loader/weight_utils.py              | 37 +++++++++++
+ 3 files changed, 107 insertions(+)
+ create mode 100644 tests/model_executor/model_loader/test_safetensors_drop_cache.py
+
+diff --git a/tests/model_executor/model_loader/test_safetensors_drop_cache.py b/tests/model_executor/model_loader/test_safetensors_drop_cache.py
+new file mode 100644
+index 0000000000..b919bcd2eb
+--- /dev/null
++++ b/tests/model_executor/model_loader/test_safetensors_drop_cache.py
+@@ -0,0 +1,61 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""VLLM_SAFETENSORS_DROP_CACHE releases shard pages after consumption."""
++
++import os
++
++import pytest
++import torch
++from safetensors.torch import save_file
++
++import vllm.model_executor.model_loader.weight_utils as wu
++from vllm.model_executor.model_loader.weight_utils import (
++    multi_thread_safetensors_weights_iterator,
++    safetensors_weights_iterator,
++)
++
++
++def _make_shards(tmp_path, n=2):
++    paths = []
++    for i in range(n):
++        p = tmp_path / f"shard_{i}.safetensors"
++        save_file({f"layer.{i}.w": torch.randn(16, 16)}, str(p))
++        paths.append(str(p))
++    return paths
++
++
++@pytest.mark.cpu_test
++@pytest.mark.parametrize("iterator", [
++    lambda files: safetensors_weights_iterator(files, use_tqdm_on_load=False),
++    lambda files: multi_thread_safetensors_weights_iterator(
++        files, use_tqdm_on_load=False
++    ),
++], ids=["single", "multi-thread"])
++def test_drop_cache_calls_fadvise_per_shard(tmp_path, monkeypatch, iterator):
++    files = _make_shards(tmp_path)
++    calls = []
++    monkeypatch.setattr(wu.envs, "VLLM_SAFETENSORS_DROP_CACHE", True)
++    monkeypatch.setattr(
++        os, "posix_fadvise", lambda fd, off, length, advice: calls.append(advice)
++    )
++    list(iterator(files))
++    assert len(calls) == len(files)
++    assert all(a == os.POSIX_FADV_DONTNEED for a in calls)
++
++
++@pytest.mark.cpu_test
++def test_no_drop_when_disabled(tmp_path, monkeypatch):
++    files = _make_shards(tmp_path, n=1)
++    calls = []
++    monkeypatch.setattr(wu.envs, "VLLM_SAFETENSORS_DROP_CACHE", False)
++    monkeypatch.setattr(
++        os, "posix_fadvise", lambda *a: calls.append(a)
++    )
++    list(safetensors_weights_iterator(files, use_tqdm_on_load=False))
++    assert calls == []
++
++
++@pytest.mark.cpu_test
++def test_drop_survives_unreadable_file(tmp_path, monkeypatch):
++    monkeypatch.setattr(wu.envs, "VLLM_SAFETENSORS_DROP_CACHE", True)
++    assert wu._drop_file_cache(str(tmp_path / "missing.safetensors")) is None
+diff --git a/vllm/envs.py b/vllm/envs.py
+index f51100fe8b..ae501eb1ab 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -123,6 +123,7 @@ if TYPE_CHECKING:
+     VLLM_USE_MEGA_AOT_ARTIFACT: bool = False
+     VLLM_USE_TRITON_AWQ: bool = False
+     VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
++    VLLM_SAFETENSORS_DROP_CACHE: bool = False
+     VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
+     VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
+     VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
+@@ -1134,6 +1135,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_FASTSAFETENSORS_QUEUE_SIZE": lambda: int(
+         os.getenv("VLLM_FASTSAFETENSORS_QUEUE_SIZE", "0")
+     ),
++    # Release each checkpoint shard's page cache after the loader consumed it
++    # (POSIX_FADV_DONTNEED). For models far larger than useful cache, weight
++    # bytes are read once into VRAM and the resident pages only displace cache
++    # worth keeping (config files, tokenizer, pinned tables' neighbors).
++    # Default off to preserve current behavior; set 1 to enable.
++    "VLLM_SAFETENSORS_DROP_CACHE": lambda: (
++        os.getenv("VLLM_SAFETENSORS_DROP_CACHE", "0").lower() in ("1", "true")
++    ),
+     # Timeout in seconds for keeping HTTP connections alive in API server
+     "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
+         os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
+diff --git a/vllm/model_executor/model_loader/weight_utils.py b/vllm/model_executor/model_loader/weight_utils.py
+index 12d557fa1c..f72bda4074 100644
+--- a/vllm/model_executor/model_loader/weight_utils.py
++++ b/vllm/model_executor/model_loader/weight_utils.py
+@@ -1031,6 +1031,26 @@ def _prefetch_all_checkpoints(
+     threading.Thread(target=_run_prefetch, daemon=True).start()
+ 
+ 
++def _drop_file_cache(path: str) -> int | None:
++    """Release a fully consumed checkpoint shard's page cache.
++
++    Reopening for fadvise is intentional: it targets the inode's page cache
++    regardless of how (or whether) the reader mapped the file, and
++    FADV_DONTNEED on clean pages is async per kernel docs but immediate in
++    practice at these sizes. Returns the file size when dropped.
++    """
++    try:
++        fd = os.open(path, os.O_RDONLY)
++        try:
++            size = os.fstat(fd).st_size
++            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
++        finally:
++            os.close(fd)
++        return size
++    except OSError:
++        return None
++
++
+ def safetensors_weights_iterator(
+     hf_weights_files: list[str],
+     use_tqdm_on_load: bool,
+@@ -1117,6 +1137,9 @@ def safetensors_weights_iterator(
+         )
+ 
+     leftover_state_dict: dict[str, torch.Tensor] = {}
++    drop_cache = envs.VLLM_SAFETENSORS_DROP_CACHE
++    dropped_files = 0
++    dropped_bytes = 0
+     for st_file in tqdm(
+         sorted_files,
+         desc=loading_desc,
+@@ -1166,6 +1189,18 @@ def safetensors_weights_iterator(
+                         continue
+                     param = f.get_tensor(name)
+                     yield name, param
++        if drop_cache:
++            dropped = _drop_file_cache(st_file)
++            if dropped:
++                dropped_files += 1
++                dropped_bytes += dropped
++    if dropped_files:
++        logger.info(
++            "Dropped consumed checkpoint pages from the page cache: "
++            "%d files, %.2f GiB.",
++            dropped_files,
++            dropped_bytes / 1024**3,
++        )
+ 
+ 
+ def multi_thread_safetensors_weights_iterator(
+@@ -1177,6 +1212,8 @@ def multi_thread_safetensors_weights_iterator(
+ 
+     def _load_file(st_file: str):
+         result = load_file(st_file, device="cpu")
++        if envs.VLLM_SAFETENSORS_DROP_CACHE:
++            _drop_file_cache(st_file)
+         return result
+ 
+     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+-- 
+2.55.0
+

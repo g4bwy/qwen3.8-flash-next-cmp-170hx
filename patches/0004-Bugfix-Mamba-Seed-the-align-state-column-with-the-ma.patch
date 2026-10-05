@@ -1,7 +1,7 @@
 From 27377410ce7216683954a9a300676fc935ce4a6a Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:24 +0200
-Subject: [PATCH 4/7] [Bugfix][Mamba] Seed the align state column with the
+Subject: [PATCH 4/9] [Bugfix][Mamba] Seed the align state column with the
  mamba block size
 
 A resumed request seeds its running state block from

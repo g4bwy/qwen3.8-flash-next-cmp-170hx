@@ -1,7 +1,7 @@
 From 1e9bbd9eaaeb780c88236955e23263becfd7bff5 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 21:30:33 +0200
-Subject: [PATCH 5/7] [Bugfix][Qwen4Exp] Gather pinned PLE rows as raw bytes
+Subject: [PATCH 5/9] [Bugfix][Qwen4Exp] Gather pinned PLE rows as raw bytes
 
 The UVA lookup kernel only moves bytes, but it was instantiated on the
 weight's own element type, so an FP8 PLE table compiled a kernel over

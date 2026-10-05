@@ -1,0 +1,50 @@
+From ae647007a3621df2be025a65a895c82a3010be40 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <gforte@wyplay.com>
+Date: Mon, 5 Oct 2026 09:32:43 +0200
+Subject: [PATCH] [Bugfix][MoE] Disable stream-K for small-M humming expert
+ buckets
+
+The sm80 heuristics turn stream-K on from weight width alone
+(DeviceHeuristics.get_config tail: shape_k > 1024), never from M, so the
+gate/up expert GEMMs (K=2560) pay split-K reduction machinery even when
+a decode batch fills a fraction of one tile. A dense-proxy sweep of the
+real expert shapes measured (640,2560) at M=4: 140.3 us with stream-K
+on, 81.9 us off (while M=16 is faster with it on, hence the bucket
+bound). valid_shape_m counts top-k rows: single-stream MTP decode ~= 32,
+two streams ~= 64, so buckets capped at 64 flip off and prefill keeps
+the heuristic choice.
+
+EXPERIMENT, not shipped: A/B against the 165.7 tok/s baseline decides.
+If grouped MoE does not inherit the dense-proxy penalty, drop it.
+
+Co-authored-by: Maki <agent@local>
+---
+ .../layers/fused_moe/experts/fused_humming_moe.py    | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/vllm/model_executor/layers/fused_moe/experts/fused_humming_moe.py b/vllm/model_executor/layers/fused_moe/experts/fused_humming_moe.py
+index a6d44c3141..9dc701fdd1 100644
+--- a/vllm/model_executor/layers/fused_moe/experts/fused_humming_moe.py
++++ b/vllm/model_executor/layers/fused_moe/experts/fused_humming_moe.py
+@@ -173,6 +173,18 @@ class HummingExpertsBase(mk.FusedMoEExpertsModular):
+             use_batch_invariant=envs.VLLM_BATCH_INVARIANT,
+             gemm_type=self.humming_gemm_type(),
+         )
++        # Experiment: humming's stream-K choice keys off weight width only
++        # (shape_k > 1024 in DeviceHeuristics.get_config), independent of M,
++        # so the gate/up expert GEMMs (K=2560) run split-K reductions even
++        # when a decode batch fills a fraction of one tile. Dense-proxy
++        # sweep (patchset benchmark/humming_decode_bench.py): (640,2560) at
++        # M=4 measured 140 us with stream-K on vs 82 us off. valid_shape_m
++        # here is top-k token rows: single-stream MTP decode ~= 32, two
++        # streams ~= 64. Disable small-M buckets only; prefill untouched.
++        for _tuning in (self.w13_tuning_config, self.w2_tuning_config):
++            for _min_m, _max_m, _config in _tuning:
++                if _max_m <= 64 and _config.get("use_stream_k"):
++                    _config["use_stream_k"] = False
+         self.compute_config_str = json.dumps(self.compute_config)
+         self.w13_tuning_config_str = json.dumps(self.w13_tuning_config)
+         self.w2_tuning_config_str = json.dumps(self.w2_tuning_config)
+-- 
+2.55.0
+

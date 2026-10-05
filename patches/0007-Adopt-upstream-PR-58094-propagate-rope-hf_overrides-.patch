@@ -1,7 +1,7 @@
 From 165a53118bae492d624fdf80cd899de92237f4be Mon Sep 17 00:00:00 2001
 From: gokay-ai <60583610+gokay-ai@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 7/7] Adopt upstream PR #58094: propagate rope hf_overrides to
+Subject: [PATCH 7/9] Adopt upstream PR #58094: propagate rope hf_overrides to
  MTP draft
 
 Covers our --hf-overrides YaRN path (nested text_config.rope_parameters

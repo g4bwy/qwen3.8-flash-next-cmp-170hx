@@ -1,7 +1,7 @@
 From c5d079da27bbb911faffaf1fd6934de589930570 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <gab@chx-labs.org>
 Date: Thu, 10 Sep 2026 11:52:11 +0200
-Subject: [PATCH 3/7] [Bugfix][V2] Resolve deferred mamba state copies by
+Subject: [PATCH 3/9] [Bugfix][V2] Resolve deferred mamba state copies by
  request slot
 
 Under pipeline parallelism the sampled outputs of step T are consumed by
