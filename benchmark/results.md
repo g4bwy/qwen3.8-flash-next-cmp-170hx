@@ -635,6 +635,52 @@ with no first token. Raw: `bench-4x1m-tp4-n1.json`, `bench-4x1m-tp4-p2p-n1.json`
   first (`disable_tp=True`), since both TP rows above run without the draft
   head.
 
+## W8A16 dense lane (4x PP=4, 1M, SM74, 200 W)
+
+Int8 group-32 weight-only on the 228 main-body dense matrices; experts,
+PLE and sensitive tiers byte-identical to the official FP8 tree. Built and
+verified with `../checkpoint/` (152,089-tensor byte gate, 0 fails; dense
+rel-RMS mean 0.64 %, max 0.74 %). Served with series patch 10.
+Raw: `bench-w8a16-s1.json` (boot 1), `bench-w8a16-boot2.json`
+(boot 2), `bench-official-boot3.json` (official control, same session);
+boot-1 reruns and recovered cells are logged in the table.
+
+| fill % | decode official | decode W8A16 b1 | W8A16 b2 | prefill official | prefill W8A16 | acc |
+|---:|---:|---:|---:|---:|---:|---:|
+| 25 | 181.5 | 187.2 / 190.1 | 187.3 | 11,600 | 11,290-11,385 | 3.86-3.93 |
+| 50 | 184.4 | 190.7 / 190.5 | 189.8 | 11,310 | 10,932-11,075 | 3.92-3.95 |
+| 75 | 183.8 | 191.4 / 191.5 | 191.0 | 11,000 | 10,718-10,815 | 3.93-3.95 |
+| 100 | 183.2 | 191.1 / 192.4 | 190.9 | 10,760 | 10,502-10,573 | 3.91-3.94 |
+
+- Decode +3.1 to +5.0 %. Prefill -1.7 to -2.5 %: the Marlin int8 path
+  unpacks per element, a tax compute-bound prefill pays and
+  bandwidth-bound decode does not. Pool 2,619,195 vs 2,597,523 (+23k).
+- Official side has three boots agreeing (Sept grid, Oct SM74 grid, the
+  quality-session boot). W8A16 boot 2's 50/1 and 100/1 read acc 2.37 and
+  2.79 mid-grid, recovered to 3.92 on idle rerun: the known
+  transient-dip shape, logged from the boot-1 session on the same cells.
+
+### Quality gate
+
+`logprob_capture.py`: 256 corpus windows x 4k chars, top-1 token+logprob
+at 166,532 positions, plus 64 greedy tails. `quality_diff.py` compares
+captures; raw pairs in `quality/*.jsonl.gz`.
+
+| comparison | top-1 flips | mean abs logprob delta | >0.5 nats | greedy exact |
+|---|---:|---:|---:|---:|
+| official, same boot x2 | 7.27-7.30 % | 0.0734 | 1.06-1.07 % | 39-48 % |
+| official, boot 3 vs boot 4 | 7.36 % | 0.0738 | 1.12 % | 36 % |
+| W8A16, same boot x2 | 7.27 % | 0.0734 | 1.07 % | 39 % |
+| W8A16 vs official (2 boot pairs) | 8.09-8.18 % | 0.0815-0.0816 | 1.45 % | 34-38 % |
+
+- This box is not temp-0 reproducible: 7.3 % of top-1 tokens move on
+  identical weights and code, within or across boots. Any comparison
+  without that floor stated is theater.
+- Against the floor, the int8 conversion moves ~0.8 points: one extra
+  top-1 change per ~130 positions, 1.45 % of positions drifting over 0.5
+  nats. Acceptance is behavior-level agreement between drafter and
+  target, and it is unchanged; that is the practical pass.
+
 ## Reproduce
 
 Run with the server idle, after warming it with a few short requests. The
