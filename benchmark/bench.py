@@ -34,6 +34,7 @@
 import argparse
 import json
 import math
+import os
 import threading
 import time
 import urllib.request
@@ -88,18 +89,26 @@ def percentile(xs, p):
     return xs[f] + (xs[c] - xs[f]) * (k - f)
 
 
-def gen_sampler(base, t0, stop, samples, timeout):
+def gen_sampler(base, t0, stop, samples, timeout, tag=None):
     """Aggregate generation tok/s samples every 0.5 s until stopped."""
     prev_t = time.time()
     prev_v = metrics(base, timeout)["gen_tokens"]
+    beat = prev_t
     while not stop.wait(0.5):
         t = time.time()
         v = metrics(base, timeout)["gen_tokens"]
-        samples.append((t - t0, (v - prev_v) / (t - prev_t)))
+        rate = (v - prev_v) / (t - prev_t)
+        samples.append((t - t0, rate))
         prev_t, prev_v = t, v
+        if tag and t - beat >= 30.0:
+            print(
+                f"  ... {tag}: {(t - t0) / 60:.1f} min, now {rate:,.0f} tok/s agg",
+                flush=True,
+            )
+            beat = t
 
 
-def run_cell(base, model, depth, n, cpt, salt, decode, timeout):
+def run_cell(base, model, depth, n, cpt, salt, decode, timeout, tag=None):
     prompts = [
         build_prompt(depth, cpt, salt + i, tail_for("repeat", salt + i), task="repeat")
         for i in range(n)
@@ -109,7 +118,7 @@ def run_cell(base, model, depth, n, cpt, salt, decode, timeout):
     stop = threading.Event()
     samples = []
     sampler = threading.Thread(
-        target=gen_sampler, args=(base, t0, stop, samples, timeout), daemon=True
+        target=gen_sampler, args=(base, t0, stop, samples, timeout, tag), daemon=True
     )
     sampler.start()
     with ThreadPoolExecutor(max_workers=n) as pool:
@@ -147,12 +156,26 @@ def run_cell(base, model, depth, n, cpt, salt, decode, timeout):
         "out_tps": ctoks / wall,
         "win_avg_tps_per_req": sum(steady) / len(steady) if steady else float("nan"),
         "sustained_agg_tps": sustained,
+        "samples": [[round(t, 2), round(v, 2)] for t, v in samples],
         "mean_acceptance_length": 1.0 + accepted / drafts if drafts else float("nan"),
         "preemptions": after["preemptions"] - before["preemptions"],
         "total_prompt_tokens": ptoks,
         "total_completion_tokens": ctoks,
         "ttfts_s": ttfts,
     }
+
+
+def dump_json(args, label, rows):
+    if not args.json:
+        return
+    tmp = args.json + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(
+            {"label": label, "ctx": args.ctx, "decode": args.decode, "rows": rows},
+            fh,
+            indent=2,
+        )
+    os.replace(tmp, args.json)
 
 
 def main():
@@ -184,6 +207,13 @@ def main():
     )
     ap.add_argument("--timeout", type=float, default=3600.0)
     ap.add_argument("--label", default=None)
+    ap.add_argument(
+        "--salt",
+        type=int,
+        default=None,
+        help="prompt series offset; default is time-derived so runs "
+        "never reuse prefixes cached by earlier runs",
+    )
     ap.add_argument("--json", default=None, help="also dump results to this file")
     args = ap.parse_args()
 
@@ -203,14 +233,17 @@ def main():
     )
     print("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     rows = []
-    salt = 1000
+    salt = args.salt if args.salt is not None else int(time.time()) // 10 * 10
     for pct in fills:
         for n in concs:
             # 100% fill = largest prompt with room for decode inside --ctx;
             # the 1% shave covers calibration drift. Oversized = HTTP 400.
             depth = int((args.ctx - args.decode) * pct / 100.0 * 0.99)
+            tag = f"fill {pct:g}% conc {n} ({depth:,} tok each)"
+            print(f"| starting {tag} at {time.strftime('%H:%M:%S')}", flush=True)
             row = run_cell(
-                args.base_url, model, depth, n, cpt, salt, args.decode, args.timeout
+                args.base_url, model, depth, n, cpt, salt, args.decode,
+                args.timeout, tag=tag,
             )
             row["fill_pct"] = pct
             salt += 100
@@ -221,15 +254,11 @@ def main():
                 f"| {row['wall_s']:.1f} | {row['in_tps']:,.0f} | {row['out_tps']:,.0f} "
                 f"| {row['win_avg_tps_per_req']:.1f} | {row['sustained_agg_tps']:.0f} "
                 f"| {row['mean_acceptance_length']:.2f} "
-                f"| {row['preemptions']:.0f} |"
+                f"| {row['preemptions']:.0f} |",
+                flush=True,
             )
-    if args.json:
-        with open(args.json, "w") as fh:
-            json.dump(
-                {"label": label, "ctx": args.ctx, "decode": args.decode, "rows": rows},
-                fh,
-                indent=2,
-            )
+            dump_json(args, label, rows)
+
 
 
 if __name__ == "__main__":
