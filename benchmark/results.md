@@ -3,7 +3,9 @@
 All numbers measured on the 3x unlocked CMP 170HX box (200 W power cap, PP=3,
 MTP-3, PLE host offload) running one server at a time, idle and warmed,
 greedy, unique prompt per row so every row pays a full prefill. The
-"4-card set" section is the same box with a fourth card, PP=4. Tools:
+"4-card set" section is the same box with a fourth card, PP=4. The 4-card
+1M grid runs the current unlock revision, 74 SMs per card; every other table
+predates it, at 70. Tools:
 `bench.py` (fill sweeps and concurrency cells), `sustained_decode.py` (decode
 plateaus), `mtp_ab_probe.py` (acceptance A/B). Everything here was measured
 2026-09-15 unless noted. Headlines live in the top-level README.
@@ -330,15 +332,60 @@ decode 1024 keeps all streams overlapping, and the plateau comes from
   the clean deep plateau instead: 265-280 agg at 2 streams, ~135 per stream.
 - These numbers are at the 200 W cap. Scaling at stock power will differ.
 
-## 4-card set (PP=4, partition 12,12,12,12), decode 1024
+## 4-card set (PP=4), decode 1024
 
-### 1M (YaRN 4.0)
+### 1M (YaRN 4.0), restored silicon
 
-Measured 2026-09-19, the first 4-card numbers. Tree at base fc8132a5e5; the
-compiled artifacts were still the nightly wheel (`+gdc6954d14`) until the
-pin is applied. KV pool 2,541,795 tokens, maximum concurrency 2.54x at the
-1M window (3-card box: 1,208,978 tokens, 1.21x). Per-rank KV:
-22.88 / 24.31 / 24.31 / 22.29 GiB. Raw: `bench-4x-1m-conc.json`.
+Re-measured 2026-10-07. The unlock revision returned 4 masked SMs per
+card, 70 to 74. Partition 13,12,12,11, tree dev649: draft-vocab head,
+`--prefix-match-unit 16`, page-cache drop. KV pool 2,595,975 tokens,
+2.60x headroom, cap 200 W. Fresh boot, cold pool; the tool now derives
+its prompt salt from the clock, so no row can hit a prefix cached by an
+earlier run. The 50/1 sweep row read win avg 45.4 with acc 1.43 right
+after the 25/4 cell; an idle rerun gave 184.4 and 3.93 and replaces it,
+the same contamination shape as the September 75/1 case. Raw:
+`bench-4x-1m-sm74-200w.json` plus that one rerun.
+
+| fill % | conc | each tok | TTFT mean s | TTFT p95 s | wall s | in tok/s | out tok/s | win avg tok/s/req | sust agg tok/s | acc len | preempt |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 25 | 1 | 247,095 | 21.3 | 21.3 | 26.9 | 9,181 | 38 | 181.5 | 187 | 3.92 | 0 |
+| 25 | 2 | 247,090 | 32.9 | 43.1 | 50.2 | 9,850 | 41 | 105.0 | 438 | 3.71 | 0 |
+| 25 | 4 | 247,286 | 56.3 | 88.2 | 98.7 | 10,022 | 41 | 53.8 | 548 | 3.91 | 0 |
+| 50 | 1 | 494,302 | 43.7 | 43.7 | 49.2 | 10,038 | 21 | 184.4 | 187 | 3.93 | 0 |
+| 50 | 2 | 494,242 | 66.9 | 87.4 | 95.5 | 10,355 | 21 | 98.5 | 348 | 3.93 | 0 |
+| 50 | 4 | 494,315 | 114.8 | 178.9 | 197.4 | 10,016 | 21 | 45.9 | 383 | 2.92 | 0 |
+| 75 | 1 | 741,460 | 67.4 | 67.4 | 73.0 | 10,158 | 14 | 183.8 | 182 | 3.92 | 0 |
+| 75 | 2 | 741,460 | 102.9 | 134.4 | 144.5 | 10,265 | 14 | 84.7 | 285 | 3.88 | 0 |
+| 75 | 4 | 741,400 | 173.9 | 269.7 | 293.7 | 10,096 | 14 | 37.9 | 236 | 2.24 | 0 |
+| 100 | 1 | 988,628 | 91.9 | 91.9 | 97.5 | 10,138 | 11 | 183.2 | 183 | 3.85 | 0 |
+| 100 | 2 | 988,486 | 140.1 | 183.0 | 193.5 | 10,219 | 11 | 95.3 | 340 | 3.92 | 0 |
+| 100 | 4 | 988,394 | 239.5 | 372.6 | 392.9 | 10,063 | 10 | 93.1 | 325 | 2.98 | 0 |
+
+- Single-stream decode 181.5-184.4 against 161.0-169.4 in the September
+  grid. The extra SMs did not do it. The draft-vocab A/B measured
+  181.4-182.3 on the 70-SM cards with the same tool, so the step is
+  patch 8; the silicon change is flat on decode, as expected when HBM
+  bandwidth and the 200 W cap bind first.
+- Prefill and TTFT unchanged: peak 10.4k tok/s against 10.3k,
+  full-window TTFT 91.9 s against 92.2 s. Four more SMs sharing a fixed
+  200 W clock lower; compute-bound phases gain nothing measurable.
+- 25% 4-stream sust 548 against September's 404. The sust column is not
+  a steady-state rate; see the repeat-grid forensics below. Honest
+  end-to-end: wall 98.7 and 97.9 s against 105.3, about -7% at 25% fill,
+  flat elsewhere.
+- Acceptance holds 3.85-3.93 in every single-stream cell. Batch cells
+  dip where a late stream's prefill interleaves another's decode. Zero
+  preemptions in all 12 cells.
+
+### 1M grid, September 2026 (70 SMs, 12,12,12,12)
+
+The superseded grid, kept because the 524k and 262k tables below were
+measured on that configuration. Measured 2026-09-19, the first 4-card
+numbers. Tree at base fc8132a5e5; the compiled artifacts were still the
+nightly wheel (`+gdc6954d14`) until the pin is applied. KV pool
+2,541,795 tokens, maximum concurrency 2.54x at the 1M window (3-card
+box: 1,208,978 tokens, 1.21x). Per-rank KV: 22.88 / 24.31 / 24.31 /
+22.29 GiB. Raw: `bench-4x-1m-conc.json`.
 
 | fill % | conc | each tok | TTFT mean s | TTFT p95 s | wall s | in tok/s | out tok/s | win avg tok/s/req | sust agg tok/s | acc len | preempt |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -355,6 +402,7 @@ pin is applied. KV pool 2,541,795 tokens, maximum concurrency 2.54x at the
 | 100 | 2 | 988,420 | 140.1 | 183.3 | 215.5 | 9,174 | 10 | 23.0 | 331 | 3.26 | 0 |
 | 100 | 4 | 988,535 | 239.2 | 371.1 | 392.0 | 10,087 | 10 | 47.5 | 296 | 3.76 | 0 |
 
+
 - The 75/1 row is a clean rerun. The first attempt read win avg 39.7 and acc
   3.41; an immediate rerun gave 169.4 and 3.84, so the dip was contamination
   in that window, not depth.
@@ -369,6 +417,39 @@ pin is applied. KV pool 2,541,795 tokens, maximum concurrency 2.54x at the
   one 1M stream resident (163) and the rest queued.
 - Acceptance 3.71-3.94 everywhere: PP=4 costs spec decode nothing.
 - Zero preemptions in all 12 cells, same admission-gating behavior as 3x.
+
+### 1M, 4-stream repeat grid (metric forensics)
+
+Trigger: 25/4 sust read 404 (September) against 548 (restored-silicon
+grid), while wall time differed by only 6%. All four 4-stream cells rerun
+once on the same dev649 boot, fresh salts, idle gaps between cells. The
+sampler timeseries is in each raw JSON. Raw: `bench-4x-1m-n4-rerun.json`.
+
+| fill % | wall s Sep/grid/rerun | sust Sep/grid/rerun | acc Sep/grid/rerun | rerun peak at |
+|---:|---:|---:|---:|---:|
+| 25 | 105.3 / 98.7 / 97.9 | 404 / 548 / 545 | 3.71 / 3.91 / 3.92 | 95% of run |
+| 50 | 196.2 / 197.4 / 197.0 | 395 / 383 / 493 | 3.94 / 2.92 / 3.69 | 97% of run |
+| 75 | 287.2 / 293.7 / 309.2 | 296 / 236 / 284 | 3.93 / 2.24 / 2.44 | 92% of run |
+| 100 | 392.0 / 392.9 / 390.2 | 296 / 325 / 291 | 3.76 / 2.98 / 2.93 | 48% of run |
+
+- sust is the best 1.5 s in the cell, and in three of four cells that
+  instant sits in the final 8% of wall time: streams finish at staggered
+  instants, and whatever is left decodes near single-stream speed. One
+  survivor at 183 tok/s plus two finishing bursts writes 545. The metric
+  describes the wind-down, not the batch. Use wall or out tok/s to compare
+  grids; use sust only inside a cell family.
+- The real 25/4 difference is the -7% wall gain of the dev649 tree over
+  September's, confirmed twice. 50/4 and 100/4 are flat within 1 s.
+- Batch acceptance at deep fills is lower on this tree than September's,
+  reproduced across two independent 4-stream runs: 75/4 reads 2.24 and
+  2.44 against 3.93, 100/4 reads 2.98 and 2.93 against 3.76. Single-stream
+  acceptance is untouched (3.85-3.93). September's grid had isolated batch
+  dips (25/2 at 3.25), so some variance is normal; a repeat pattern at 75
+  and 100 is new. Candidate causes: the draft-vocab head at deep positions
+  under batch, or base drift between the trees. A draft-vocab-off boot at
+  these two cells is the separating experiment; wall time is unchanged
+  either way, so the effect is on acceptance, where it shows as the draft
+  being rejected, not as slower decode.
 
 ### 524k (YaRN 2.0)
 
@@ -459,6 +540,102 @@ are the 512k decode-1024 rows.
 - 100/2's low win avg (52.3) is queue pacing, not slow decode: the first
   stream's decode runs while the second 257k prompt still prefills. The sust
   column (384) is the real number.
+
+## NCCL P2P, and TP=4 + EP, 2026-10-09
+
+The driver was upgraded so the cards answer `cudaDeviceCanAccessPeer`, which
+they did not before. Two layouts were then measured against the tables above,
+same tree (dev649) and the same 200 W cap. Box state: `nvidia-smi topo -m` puts
+**every GPU pair at NODE** distance (PCIe plus the interconnect between host
+bridges, one NUMA node, cores 0-31), and link widths are **x16 on GPU1, x4 on
+GPU0, GPU2 and GPU3**. In a ring every hop is limited by the narrower end, so
+all four links sit near 2 GB/s.
+
+### PP=4 1M, peer DMA versus the host-staged path
+
+Nothing had to be done to get P2P at PP=4: NCCL already selects it at its
+default level for the 2-rank send/recv comms that pipeline hops use. Reference
+column is the restored-silicon grid above (pool 2,595,975; the P2P boot pooled
+2,597,523, a 0.06% drift).
+
+| cell | metric | P2P off, Oct 7 | P2P on, Oct 9 | delta |
+|---:|---|---:|---:|---:|
+| 25/1 | in tok/s | 9,181 | 9,012 | -1.8% |
+| | TTFT s | 21.3 | 21.9 | +2.8% |
+| | win avg tok/s/req | 181.5 | 185.1 | +2.0% |
+| 50/1 | in tok/s | 10,038 | 9,750 | -2.9% |
+| | TTFT s | 43.7 | 45.2 | +3.4% |
+| | win avg tok/s/req | 184.4 | 186.7 | +1.2% |
+| 100/1 | in tok/s | 10,138 | 9,841 | -2.9% |
+| | TTFT s | 91.9 | 94.9 | +3.3% |
+| | win avg tok/s/req | 183.2 | 183.4 | +0.1% |
+| 25/4 | in tok/s | 10,022 | 9,774 | -2.5% |
+| | TTFT mean s | 56.3 | 58.0 | +3.0% |
+| | wall s | 98.7 | 101.1 | +2.4% |
+| | win avg tok/s/req | 53.8 | 53.8 | 0 |
+
+Acceptance 3.77 to 3.95, zero preemptions, four cells. Prefill and TTFT are
+consistently 2 to 3% worse with peer DMA, single-stream decode is one or two
+points better, batched decode is flat. PP moves one activation per stage
+boundary per step, so there is little for P2P to win and a little it costs.
+**Keep P2P disabled at PP=4**, which is what every shipped script does. Raw:
+`bench-4x-1m-p2p-n1.json`, `bench-4x-1m-p2p-n4.json`. Transport evidence is in
+the untracked `boot-4x-1m-p2p.log`: `isAllCudaP2p 1`, three 2-rank comms
+`isAllDirectP2p 1`, and rank 0 `Channel 00/1 : 0[0] -> 1[1] via P2P/CUMEM`.
+
+### TP=4 + EP, 1M: rejected, script kept for reference
+
+`serve-4x-1m-tp.sh` runs the same 1M lane with `--tensor-parallel-size 4
+--enable-expert-parallel` instead of PP=4. At TP=4 NCCL refused peer DMA for
+the collective rings until `NCCL_P2P_LEVEL=SYS` was exported, which is the
+NODE-distance fix. vLLM's own custom all-reduce is unavailable at any setting:
+`custom_all_reduce.py:236` turns it off for `world_size > 2 and not
+fully_connected`, and `fully_connected` is an NVLink mesh test. Both boots:
+weights 33.59 GiB on every rank, attention block size 800, KV pool 1,741,935
+tokens (SHM) and 1,741,148 (P2P), 1.74x headroom against 2.60x at PP=4, so two
+1M requests do not fit. EP did engage: 512 routed experts split 128 per rank,
+with humming moving to `grouped_contiguous` GEMMs. Patch 8 was disabled for
+both TP rows because its draft head is not TP-safe, so TP decode carries a
+handicap of about 8.7%.
+
+| cell | metric | TP, P2P off | TP, P2P on | P2P gain | PP=4, P2P on |
+|---:|---|---:|---:|---:|---:|
+| 25/1 | in tok/s | 1,195 | 1,434 | +20% | 9,012 |
+| | TTFT s | 197.0 | 163.2 | -17% | 21.9 |
+| | wall s | 206.9 | 172.3 | -17% | 27.4 |
+| | win avg tok/s/req | 103.4 | 111.7 | +8% | 185.1 |
+| | acc len | 3.62 | 3.73 | | 3.93 |
+| 50/1 | in tok/s | 1,221 | 1,456 | +19% | 9,750 |
+| | TTFT s | 393.3 | 327.5 | -17% | 45.2 |
+| | win avg tok/s/req | 88.2 | 86.3 | -2% | 186.7 |
+| | acc len | 3.25 | 3.18 | | 3.95 |
+
+Zero preemptions. The 100/1 cell on the SHM boot was killed after 5.7 minutes
+with no first token. Raw: `bench-4x1m-tp4-n1.json`, `bench-4x1m-tp4-p2p-n1.json`.
+
+- **Why TP loses 6.7x on prefill.** TP puts about two collectives per layer in
+  every step, roughly 100 per decode step, against one hop per stage boundary
+  at PP. On a 2048-token chunk each of those moves about 25 MB over a link that
+  carries 2 GB/s, which lands almost exactly on the measured 1,434 tok/s. The
+  lane is at its wire limit, not at a software limit.
+- **Why P2P bought only 20%.** A reference box with the same cards at the same
+  NODE distance but **Gen2 x16** measured 1.8 to 1.9x faster TP prefill with
+  P2P, 2.5k against 4.6-5.0k tok/s. Peer DMA removes the host copy and the CPU
+  synchronisation, and it cannot add bytes per second. Three of four cards here
+  negotiate x4.
+- **The flag that keeps the workers alive.** `serve-4x-1m-tp.sh` exports
+  `NCCL_P2P_LEVEL=SYS` and passes `--disable-custom-all-reduce`. Once peer
+  access exists, the CUDA-IPC buffer path fails across root complexes with
+  "invalid argument" and a VRAM blowup that crash-loops the workers, while
+  NCCL keeps its own P2P path. The flag is a no-op for selection at TP=4 and
+  becomes load-bearing at TP=2, where the world-size gate passes.
+- **Revisit only if the links change.** Check `lspci -vv` and compare `LnkCap`
+  with `LnkSta` on GPU0/2/3; if `LnkCap` also reads x4 the slots are wired that
+  way and no software change helps. Both remaining levers are
+  layout-independent: the GPC voltage-frequency offset (+200 MHz at the same
+  200 W is worth about +6% prefill and +7% decode on the reference box, and
+  +250 hung a card under real load there), and making patch 8 TP-safe with
+  `disable_tp=True` if TP is ever retried.
 
 ## Reproduce
 

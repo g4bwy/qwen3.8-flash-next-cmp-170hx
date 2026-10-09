@@ -3,6 +3,18 @@
 Patches over vLLM mainline, running with uv venv.
 No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nonsense.
 
+- Box: 4x NVIDIA CMP 170HX (GA100, unlocked to 64 GB and 74 SM), one NUMA node,
+  cores 0-31, `nvidia-smi -pl 200` per card, PLE n-gram table in pinned host RAM.
+  **PCIe is the limiting resource: on the 4-card rig GPU1 runs an x16 link while GPU0, GPU2 and GPU3
+  negotiate x4, at Gen2, and `nvidia-smi topo -m` reports every GPU pair at NODE
+  distance.** A ring is only as wide as its narrowest card, so inter-card
+  bandwidth is about 2 GB/s on all four links, not 8. That single fact decides
+  the layout: it is why PP=4 wins, why TP=4 + EP was rejected, and why NCCL needs
+  `NCCL_P2P_LEVEL=SYS` to use peer DMA between these cards at all. Check the
+  width with `nvidia-smi -q -d PCIE` and `lspci -vv`, comparing `LnkCap` with
+  `LnkSta`: if `LnkCap` also reads x4 the slot is wired that way and no driver
+  setting changes it. The unlocker flow trains Gen2 on purpose
+  (`pcie-gen2.patch`, `RmForceEnableGen2=1`).
 - Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`.
 - Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
 - 9 patches: seven ours, two adopted from pending upstream PRs (#56444 as
@@ -93,6 +105,19 @@ tok/s and time to first token drops from 28.5 s to 22.1 s.
 ./serve-4x-1m.sh       # MODEL=/local/path overrides the checkpoint tag
 ```
 
+A seventh script, `serve-4x-1m-tp.sh`, is in the tree for reference and is not a
+lane. It runs TP=4 with `--enable-expert-parallel` in place of PP=4 and loses:
+1,434 against 9,012 tok/s prefill and 111.7 against 185.1 tok/s single-stream
+decode, both at 200 W on the same tree. TP puts roughly 100 collectives in every
+decode step, and the link widths under Box above cap every ring hop near
+2 GB/s, so the lane sits at its wire limit rather than at a software one.
+Enabling NCCL peer DMA
+(`NCCL_P2P_LEVEL=SYS`, needed because every GPU pair is at NODE distance) buys
+20% there. At PP=4 peer DMA needs no setting at all and measures 2 to 3% worse
+on prefill with decode unchanged, so the shipped scripts keep
+`NCCL_P2P_DISABLE=1`. Tables and the reasoning: benchmark/results.md, section
+"NCCL P2P, and TP=4 + EP".
+
 All six scripts share these settings:
 
 - MTP-3 spec decode, and the PLE n-gram table offloaded to pinned host RAM
@@ -101,7 +126,9 @@ All six scripts share these settings:
   16000`, plus `--prefix-match-unit 16` on the three 4-card lanes. The 3-card set
   is historical and does not carry the match unit, so its reuse numbers still
   reflect the 1,600-token floor. See Prefix caching.
-- NCCL P2P and IB off, because this box has no P2P between the cards.
+- NCCL IB off (single node, no fabric). NCCL P2P is off in every script except
+  `serve-4x-1m.sh`, which drops `NCCL_P2P_DISABLE=1` after the 2026-10-09
+  driver upgrade made peer access available on this box. Unmeasured so far.
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, which stops allocator-OOM
   retries. vLLM forbids it only with KV connectors, and we run none.
 - Layer partitions `13,12,12,11` on all three 4-card lanes, and `16,17,15` on
@@ -120,7 +147,9 @@ Startup checks for the YaRN lanes:
 ### Draft vocabulary head (patch 8)
 
 Patch 8 makes the MTP drafter score a small head instead of the 248k-row
-lm_head per draft step, worth ~9% single-stream. It engages only when the
+lm_head per draft step, worth ~9% single-stream. At 4 streams and >=50%
+context fill it trades that win away: acceptance falls to 2.2-3.0 and wall
+time cancels out flat. It is a single-stream patch. It engages only when the
 checkpoint directory carries the artifacts, and they take two commands:
 
 1. Build the id list from the model's own outputs. Any corpus of assistant
@@ -219,11 +248,13 @@ needles intact, and a 4-session round fell from 82,978 recomputed tokens cold to
 The cards are CMP 170HX (GA100). They run unlocked with the
 [amoghmunikote/cmpunlocker](https://github.com/amoghmunikote/cmpunlocker) module,
 which restores SM compute, the 64 GB HBM2e geometry, PCIe Gen 2 speed and BAR1.
+On the current unlock revision each card exposes the full GA100 die, 74 SMs;
+an earlier revision left 4 masked, so the 70-SM tables are marked where they
+still stand.
 The link is x4 here, about 2 GB/s per card in each direction. Nothing else is
-tuned. Each card is capped at 200 W (`nvidia-smi -pl 200`, re-apply after
-reboot), so every tok/s figure here is a 200 W figure. Full tables, methodology
-and reproduce commands: [benchmark/results.md](benchmark/results.md). Numbers use
-repetition-task prompts at decode 1024, because a short window measures drafter
+tuned. Each card is capped at 200 W.
+Full tables, methodology and reproduce commands: [benchmark/results.md](benchmark/results.md).
+Numbers use repetition-task prompts at decode 1024, because a short window measures drafter
 warmup rather than steady decode.
 
 ### Pool and weights at boot
@@ -253,8 +284,16 @@ Rates are tok/s unless the cell shows a duration.
 | 3 cards, 1M | 119.1 s | 9.2k | 161-165 | 163-164, 1 of 4 |
 | 4 cards, 262k | 22.1 s | 9.9k | 151-165 | 405, 4 of 4 |
 | 4 cards, 524k | 46.0 s | 10.5k | 163-168 | 367, 4 of 4 |
-| 4 cards, 1M | 92.2 s | 10.3k | 161-169 | 296, 2-3 of 4 |
+| 4 cards, 1M | 91.9 s | 10.4k | 181-184 | 325, 2-3 of 4 |
 
+- Provenance: the 4-card 1M row is 74 SMs, partition 13,12,12,11, tree dev649
+  with the draft-vocab head. The other 4-card rows and every 3-card row carry
+  70-SM numbers measured on 12,12,12,12 or 16,17,15. Single-stream decode
+  moved 161-169 to 181-184 because of the draft-vocab head, not the silicon;
+  prefill and TTFT did not move when the SMs did, because the 200 W cap binds.
+  The sustained column is a 1.5 s peak that typically lands in the wind-down
+  of the run; compare grids on wall or out tok/s. Grids, repeat runs and the
+  batch-acceptance open question: [benchmark/results.md](benchmark/results.md).
 - Pool sets capacity. At 262k, 4 cards hold nine full streams against four on
   3 cards, which is the whole argument for the wider pipeline.
 - Prefill paces at the heaviest stage, not the sum, so four balanced stages beat
@@ -350,6 +389,7 @@ patchset-qwen38-pp/
   serve-4x.sh                            4 gpus, 262,144 native
   serve-4x-512k.sh                       4 gpus, 524,288, YaRN 2.0, benched
   serve-4x-1m.sh                         4 gpus, 1,000,000, YaRN 4.0, benched
+  serve-4x-1m-tp.sh                      4 gpus, 1,000,000, TP=4 + EP, rejected, reference only
   README.md                              this file
   TODO.md                                open items, in priority order, with the check that closes each
 ```
