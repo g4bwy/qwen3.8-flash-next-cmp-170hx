@@ -137,42 +137,11 @@ Startup checks for the YaRN lanes:
 ### Draft vocabulary head (patch 8)
 
 Patch 8 makes the MTP drafter score a small head instead of the 248k-row
-lm_head per draft step, worth ~9% single-stream. At 4 streams and >=50%
-context fill it trades that win away: acceptance falls to 2.2-3.0 and wall
-time cancels out flat. It is a single-stream patch. It engages only when the
-checkpoint directory carries the artifacts, and they take two commands:
-
-1. Build the id list from the model's own outputs. Any corpus of assistant
-   text works. On this setup the agent session logs are already that corpus:
-   [maki](https://github.com/tontinton/maki), the terminal coding agent
-   driving this patchset, keeps JSONL transcripts of every session under
-   `~/.local/state/maki/sessions/`, and its replies are the model's own text.
-   Another agent harness? Port `extract_maki_corpus.py` to wherever it keeps
-   its transcripts, the output contract is one JSON object per line with the
-   assistant text under `"output"` (the builder also accepts `text` and
-   `content`, so existing JSONL exports may plug in directly):
-
-   ```bash
-   ./checkpoint/extract_maki_corpus.py --out draft_corpus.jsonl
-   ```
-
-   Copy the JSONL to the serve box. Coverage rule: the list must cover
-   ~97% of what the model emits, counted over its own generations. A
-   borrowed frequency list covering 92% costs back more in rejections than
-   the head saves.
-2. Build the artifacts in place (adds ~200 MB to the model dir and one
-   index entry, applied AFTER patch 8 or draft weight loading fails):
-
-   ```bash
-   ./checkpoint/build_draft_vocab.py \
-       --model-path /path/to/Qwen3.8-Flash-Next-FP8 \
-       --corpus draft_corpus.jsonl --size 40000
-   ```
-
-Startup proof: `MTP drafter scores a 39532-token draft vocabulary`.
-Rollback: delete `mtp_draft_vocab_ids.pt`, `mtp_draft_lm_head.safetensors`,
-and their index entry. Patch 9's page-cache drop logs its own line,
-`Dropped consumed checkpoint pages from the page cache: 132 files, 172.97 GiB`.
+lm_head per draft step, worth ~9% single-stream; at 4 streams and >=50%
+context fill the win cancels (see the batch caveat and artifact commands
+in [checkpoint/README.md](checkpoint/README.md)). It engages only when the
+checkpoint directory carries the artifacts. Startup proof:
+`MTP drafter scores a 39532-token draft vocabulary`.
 
 ## Prefix caching
 
@@ -346,7 +315,7 @@ about one position in 130 moves because of the quantization. Full tables:
 | 5 | Qwen4Exp: gather pinned PLE rows as raw bytes (Ampere has no `fp8e4nv`) |
 | 6 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
 | 7 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our old patch 7 used |
-| 8 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Needs artifacts, see Run, Draft vocabulary head |
+| 8 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Needs artifacts, build commands in checkpoint/README |
 | 9 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts): 173 GiB of read-once weight bytes should not evict reusable cache at every boot |
 | 10 | Qwen4Exp PLE embedding honors fp8 n-gram tables inside compressed-tensors checkpoints: resolve the scheme (none -> unquantized, float8 -> fp8, else raise) instead of falling through to the Fp8Config-only gate |
 
