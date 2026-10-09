@@ -652,9 +652,17 @@ boot-1 reruns and recovered cells are logged in the table.
 | 75 | 183.8 | 191.4 / 191.5 | 191.0 | 11,000 | 10,718-10,815 | 3.93-3.95 |
 | 100 | 183.2 | 191.1 / 192.4 | 190.9 | 10,760 | 10,502-10,573 | 3.91-3.94 |
 
-- Decode +3.1 to +5.0 %. Prefill -1.7 to -2.5 %: the Marlin int8 path
-  unpacks per element, a tax compute-bound prefill pays and
-  bandwidth-bound decode does not. Pool 2,619,195 vs 2,597,523 (+23k).
+- Decode +3.1 to +5.0 %. Prefill -1.7 to -2.5 %. Pool 2,619,195 vs
+  2,597,523 (+23k).
+- The prefill loss is the weight-only DEQUANT itself, not the kernel:
+  booting with `VLLM_DISABLED_KERNELS=MarlinLinearKernel` swaps every
+  dense int8 layer to HummingLinearKernel and moves prefill <0.5 % at
+  every depth (same grid, raw `bench-w8a16-humming.json`), while both
+  stay ~2 % under cuBLAS bf16. Ampere unpacks int8 in registers per
+  element; at saturated prefill issue that competes with MMA whatever
+  streams the bytes. Decode side, the same swap read +0.5 to +1.0 % in
+  all four cells over Marlin's two boots; one boot, so unconfirmed, and
+  an env line away if it ever matters.
 - Official side has three boots agreeing (Sept grid, Oct SM74 grid, the
   quality-session boot). W8A16 boot 2's 50/1 and 100/1 read acc 2.37 and
   2.79 mid-grid, recovered to 3.92 on idle rerun: the known
