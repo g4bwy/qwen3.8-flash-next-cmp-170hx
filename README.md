@@ -12,10 +12,10 @@ No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nons
   `NCCL_P2P_LEVEL=SYS` to use peer DMA here at all.
 - Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`.
 - Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
-- 9 patches: seven ours, two adopted from pending upstream PRs (#56444 as
-  patch 2, #58094 as patch 7). Both adoptions boot-certified on 4x-1m. After
+- 10 patches: eight ours, two adopted from pending upstream PRs (#56444 as
+  patch 2, #58094 as patch 7). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `c51f4b08fcc2ae527826ebac5ef77be77201ebd6`. If it does not, you applied
+  `d872151849cb9d6492ecb3dc1909445fa09e6ed4`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
@@ -322,6 +322,19 @@ Two boot warnings are normal and cost you nothing. The 7
 capture, none after `Application startup complete`. `max_num_scheduled_tokens is
 set to 2048` comes from MTP-3.
 
+## Optional lane: W8A16 dense checkpoint
+
+`checkpoint/` builds a variant of the official FP8 tree that stores the 228
+main-body dense matrices as int8 (group-32, weight-only) instead of bf16.
+Serving it needs patch 10 and no other change; point `MODEL=` at the built
+directory. Two boots per side on 4x-1m: single-stream decode 187-192 tok/s
+(+3.1 to +5.0 %), prefill -1.7 to -2.5 %, KV pool +23,220 tokens,
+acceptance 3.86-3.95 unchanged. The quality gate (166k scored positions,
+two captures per boot, four boots): top-1 flip 8.1 % against a 7.3 %
+machine non-reproducibility floor measured within and across boots, so
+about one position in 130 moves because of the quantization. Full tables:
+[benchmark/results.md](benchmark/results.md).
+
 ## Patches
 
 | # | does |
@@ -335,6 +348,7 @@ set to 2048` comes from MTP-3.
 | 7 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our old patch 7 used |
 | 8 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Needs artifacts, see Run, Draft vocabulary head |
 | 9 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts): 173 GiB of read-once weight bytes should not evict reusable cache at every boot |
+| 10 | Qwen4Exp PLE embedding honors fp8 n-gram tables inside compressed-tensors checkpoints: resolve the scheme (none -> unquantized, float8 -> fp8, else raise) instead of falling through to the Fp8Config-only gate |
 
 ## Gotchas
 
@@ -365,14 +379,18 @@ set to 2048` comes from MTP-3.
 
 ```
 patchset-qwen38-pp/
-  patches/0001-*.patch .. 0007-*.patch   the series, git am
+  patches/0001-*.patch .. 0010-*.patch   the series, git am
   benchmark/results.md                   full benchmark tables and how to reproduce
   benchmark/bench.py                     fill sweep x concurrency -> table
   benchmark/sustained_decode.py          batched-decode capacity -> table
   benchmark/mtp_ab_probe.py              acceptance A/B, also the shared lib
   benchmark/prefix_cache_probe.py        prompt reuse per turn -> cached/recomputed
   benchmark/prefix_state_check.py        cache-hit state check, exits non-zero
+  benchmark/logprob_capture.py           quality fingerprint: top-1 logprobs + greedy tails
+  benchmark/quality_diff.py              diff two fingerprints -> flips, drift, agreement
+  benchmark/quality/*.jsonl.gz           raw captures behind the W8A16 quality gate
   benchmark/*.json                       raw results behind the tables in results.md
+  checkpoint/                            W8A16 dense checkpoint builder + checks, see its README
   serve-3x.sh                            3 gpus, 262,144 native
   serve-3x-512k.sh                       3 gpus, 524,288, YaRN 2.0
   serve-3x-1m.sh                         3 gpus, 1,000,000, YaRN 4.0
