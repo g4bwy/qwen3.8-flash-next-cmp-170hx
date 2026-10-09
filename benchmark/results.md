@@ -292,13 +292,12 @@ Full-depth numbers, the ones that hold up:
 - The 3-card box wins 2-stream full-depth decode at 524k too, so PP=4's hop
   cost is not a 262k-only effect. The margin depends on the test: 304 vs 265
   (+15%) on the bench cell, 282 vs 270 (+4%) on the deep plateau. Both agree
-  on sign; neither is tight enough to pin one number, so the honest read is
+  on sign; neither is tight enough to pin one number, so the safe read is
   "3-card is a few to fifteen percent ahead", not a single figure.
 - The deep plateau is the softer of the two this time: on 4 cards the 460k
   prompt prefills in ~41 s per stream (TTFTs 40.6, 82.9), so stream 1 has
   only ~10 s of true 2-stream overlap inside the 20,480-token window before
-  it drains, against 3 cards' ~77 s. The bench cell is the load-bearing
-  measurement.
+  it drains, against 3 cards' ~77 s. The bench cell is the one that decides it.
 - Two plateau geometry rules: prompt plus decode must fit inside
   `max_model_len` (517k + 12,288 = 529k dies at HTTP 400 on every request),
   and the decode count must exceed the solo rate (~165 tok/s) times the
@@ -370,9 +369,8 @@ the same contamination shape as the September 75/1 case. Raw:
   full-window TTFT 91.9 s against 92.2 s. Four more SMs sharing a fixed
   200 W clock lower; compute-bound phases gain nothing measurable.
 - 25% 4-stream sust 548 against September's 404. The sust column is not
-  a steady-state rate; see the repeat-grid forensics below. Honest
-  end-to-end: wall 98.7 and 97.9 s against 105.3, about -7% at 25% fill,
-  flat elsewhere.
+  a steady-state rate; see the repeat-grid forensics below. End to end: wall
+  98.7 and 97.9 s against 105.3, about -7% at 25% fill, flat elsewhere.
 - Acceptance holds 3.85-3.93 in every single-stream cell. Batch cells
   dip where a late stream's prefill interleaves another's decode. Zero
   preemptions in all 12 cells.
@@ -544,12 +542,11 @@ are the 512k decode-1024 rows.
 ## NCCL P2P, and TP=4 + EP, 2026-10-09
 
 The driver was upgraded so the cards answer `cudaDeviceCanAccessPeer`, which
-they did not before. Two layouts were then measured against the tables above,
-same tree (dev649) and the same 200 W cap. Box state: `nvidia-smi topo -m` puts
-**every GPU pair at NODE** distance (PCIe plus the interconnect between host
-bridges, one NUMA node, cores 0-31), and link widths are **x16 on GPU1, x4 on
-GPU0, GPU2 and GPU3**. In a ring every hop is limited by the narrower end, so
-all four links sit near 2 GB/s.
+they did not before. Two layouts were measured against the tables above, same
+tree (dev649), same 200 W cap. Box state: `nvidia-smi topo -m` puts every GPU
+pair at NODE distance (PCIe plus the interconnect between host bridges, one NUMA
+node), and link widths are x16 on GPU1, x4 on GPU0/2/3. In a ring every hop is
+limited by the narrower end, so all four links sit near 2 GB/s.
 
 ### PP=4 1M, peer DMA versus the host-staged path
 
@@ -577,8 +574,8 @@ column is the restored-silicon grid above (pool 2,595,975; the P2P boot pooled
 Acceptance 3.77 to 3.95, zero preemptions, four cells. Prefill and TTFT are
 consistently 2 to 3% worse with peer DMA, single-stream decode is one or two
 points better, batched decode is flat. PP moves one activation per stage
-boundary per step, so there is little for P2P to win and a little it costs.
-**Keep P2P disabled at PP=4**, which is what every shipped script does. Raw:
+boundary per step, so P2P has little to win and something to lose. Keep P2P
+disabled at PP=4, which is what every shipped script does. Raw:
 `bench-4x-1m-p2p-n1.json`, `bench-4x-1m-p2p-n4.json`. Transport evidence is in
 the untracked `boot-4x-1m-p2p.log`: `isAllCudaP2p 1`, three 2-rank comms
 `isAllDirectP2p 1`, and rank 0 `Channel 00/1 : 0[0] -> 1[1] via P2P/CUMEM`.
@@ -613,29 +610,30 @@ handicap of about 8.7%.
 Zero preemptions. The 100/1 cell on the SHM boot was killed after 5.7 minutes
 with no first token. Raw: `bench-4x1m-tp4-n1.json`, `bench-4x1m-tp4-p2p-n1.json`.
 
-- **Why TP loses 6.7x on prefill.** TP puts about two collectives per layer in
+- TP loses 6.7x on prefill because it puts about two collectives per layer in
   every step, roughly 100 per decode step, against one hop per stage boundary
   at PP. On a 2048-token chunk each of those moves about 25 MB over a link that
   carries 2 GB/s, which lands almost exactly on the measured 1,434 tok/s. The
   lane is at its wire limit, not at a software limit.
-- **Why P2P bought only 20%.** A reference box with the same cards at the same
-  NODE distance but **Gen2 x16** measured 1.8 to 1.9x faster TP prefill with
+- P2P bought only 20% here. A reference box with the same cards at the same
+  NODE distance but Gen2 x16 measured 1.8 to 1.9x faster TP prefill with
   P2P, 2.5k against 4.6-5.0k tok/s. Peer DMA removes the host copy and the CPU
   synchronisation, and it cannot add bytes per second. Three of four cards here
   negotiate x4.
-- **The flag that keeps the workers alive.** `serve-4x-1m-tp.sh` exports
-  `NCCL_P2P_LEVEL=SYS` and passes `--disable-custom-all-reduce`. Once peer
-  access exists, the CUDA-IPC buffer path fails across root complexes with
-  "invalid argument" and a VRAM blowup that crash-loops the workers, while
-  NCCL keeps its own P2P path. The flag is a no-op for selection at TP=4 and
-  becomes load-bearing at TP=2, where the world-size gate passes.
-- **Revisit only if the links change.** Check `lspci -vv` and compare `LnkCap`
+- `serve-4x-1m-tp.sh` exports `NCCL_P2P_LEVEL=SYS` and passes
+  `--disable-custom-all-reduce`. Once peer access exists, the CUDA-IPC buffer
+  path fails across root complexes with "invalid argument" and a VRAM blowup
+  that crash-loops the workers, while NCCL keeps its own P2P path. The flag is
+  a no-op for selection at TP=4 and matters at TP=2, where the world-size gate
+  passes.
+- Revisit only if the links change: check `lspci -vv` and compare `LnkCap`
   with `LnkSta` on GPU0/2/3; if `LnkCap` also reads x4 the slots are wired that
-  way and no software change helps. Both remaining levers are
-  layout-independent: the GPC voltage-frequency offset (+200 MHz at the same
-  200 W is worth about +6% prefill and +7% decode on the reference box, and
-  +250 hung a card under real load there), and making patch 8 TP-safe with
-  `disable_tp=True` if TP is ever retried.
+  way and no software change helps. One lever is independent of this
+  comparison: the GPC voltage-frequency offset, where +200 MHz at the same 200 W
+  is worth about +6% prefill and +7% decode on the reference box, and +250 hung
+  a card under real load there. If TP is ever retried, make patch 8 TP-safe
+  first (`disable_tp=True`), since both TP rows above run without the draft
+  head.
 
 ## Reproduce
 

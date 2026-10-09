@@ -4,17 +4,12 @@ Patches over vLLM mainline, running with uv venv.
 No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nonsense.
 
 - Box: 4x NVIDIA CMP 170HX (GA100, unlocked to 64 GB and 74 SM), one NUMA node,
-  cores 0-31, `nvidia-smi -pl 200` per card, PLE n-gram table in pinned host RAM.
-  **PCIe is the limiting resource: on the 4-card rig GPU1 runs an x16 link while GPU0, GPU2 and GPU3
-  negotiate x4, at Gen2, and `nvidia-smi topo -m` reports every GPU pair at NODE
-  distance.** A ring is only as wide as its narrowest card, so inter-card
-  bandwidth is about 2 GB/s on all four links, not 8. That single fact decides
-  the layout: it is why PP=4 wins, why TP=4 + EP was rejected, and why NCCL needs
-  `NCCL_P2P_LEVEL=SYS` to use peer DMA between these cards at all. Check the
-  width with `nvidia-smi -q -d PCIE` and `lspci -vv`, comparing `LnkCap` with
-  `LnkSta`: if `LnkCap` also reads x4 the slot is wired that way and no driver
-  setting changes it. The unlocker flow trains Gen2 on purpose
-  (`pcie-gen2.patch`, `RmForceEnableGen2=1`).
+  PLE n-gram table in pinned host RAM. Every number here is at a 200 W per-card
+  cap.
+- PCIe is the limit. Gen2, GPU1 at x16, GPU0/2/3 at x4, and `nvidia-smi topo -m`
+  puts every pair at NODE distance. A ring is only as wide as its narrowest
+  card, so budget about 2 GB/s between any two GPUs, not 8. NCCL needs
+  `NCCL_P2P_LEVEL=SYS` to use peer DMA here at all.
 - Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`.
 - Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
 - 9 patches: seven ours, two adopted from pending upstream PRs (#56444 as
@@ -105,18 +100,13 @@ tok/s and time to first token drops from 28.5 s to 22.1 s.
 ./serve-4x-1m.sh       # MODEL=/local/path overrides the checkpoint tag
 ```
 
-A seventh script, `serve-4x-1m-tp.sh`, is in the tree for reference and is not a
-lane. It runs TP=4 with `--enable-expert-parallel` in place of PP=4 and loses:
-1,434 against 9,012 tok/s prefill and 111.7 against 185.1 tok/s single-stream
-decode, both at 200 W on the same tree. TP puts roughly 100 collectives in every
-decode step, and the link widths under Box above cap every ring hop near
-2 GB/s, so the lane sits at its wire limit rather than at a software one.
-Enabling NCCL peer DMA
-(`NCCL_P2P_LEVEL=SYS`, needed because every GPU pair is at NODE distance) buys
-20% there. At PP=4 peer DMA needs no setting at all and measures 2 to 3% worse
-on prefill with decode unchanged, so the shipped scripts keep
-`NCCL_P2P_DISABLE=1`. Tables and the reasoning: benchmark/results.md, section
-"NCCL P2P, and TP=4 + EP".
+`serve-4x-1m-tp.sh` is a seventh script, kept for reference and not run. It
+swaps PP=4 for TP=4 with `--enable-expert-parallel`, and loses: 1,434 against
+9,012 tok/s prefill, 111.7 against 185.1 tok/s single-stream decode, 1.74x
+against 2.60x KV pool. TP puts roughly 100 collectives in every decode step, so
+the x4 links above are the wall. Peer DMA adds 20% there. At PP=4 it costs 2 to
+3% of prefill with decode unchanged, so the shipped scripts keep
+`NCCL_P2P_DISABLE=1`. Tables: benchmark/results.md.
 
 All six scripts share these settings:
 
