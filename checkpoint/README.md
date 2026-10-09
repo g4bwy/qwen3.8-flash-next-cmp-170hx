@@ -1,11 +1,51 @@
-# Checkpoint build tools
+# Checkpoint artifacts
 
-Two artifact families live here. The draft-vocab pair feeds patch 8:
-`extract_maki_corpus.py` turns agent session logs into
-`draft_corpus.jsonl`, `build_draft_vocab.py` counts the corpus and writes
-`mtp_draft_vocab_ids.pt` + `mtp_draft_lm_head.safetensors` into a model
-directory (apply after any tree rebuild; root README, Draft vocabulary
-head, has the procedure and the coverage rule).
+Two builders live here. Both write into a model directory and both
+are described at full length below: the draft-vocab pair that feeds
+patch 8, and the W8A16 dense tree builder that turns the official FP8
+release into an int8-dense variant.
+
+## Draft vocabulary head (patch 8)
+
+Patch 8 makes the MTP drafter score a small head instead of the 248k-row
+lm_head per draft step, worth ~9% single-stream. At 4 streams and >=50%
+context fill it trades that win away: acceptance falls to 2.2-3.0 and wall
+time cancels out flat. It is a single-stream patch. It engages only when the
+checkpoint directory carries the artifacts, and they take two commands:
+
+1. Build the id list from the model's own outputs. Any corpus of assistant
+   text works. On this setup the agent session logs are already that corpus:
+   [maki](https://github.com/tontinton/maki), the terminal coding agent
+   driving this patchset, keeps JSONL transcripts of every session under
+   `~/.local/state/maki/sessions/`, and its replies are the model's own text.
+   Another agent harness? Port `extract_maki_corpus.py` to wherever it keeps
+   its transcripts, the output contract is one JSON object per line with the
+   assistant text under `"output"` (the builder also accepts `text` and
+   `content`, so existing JSONL exports may plug in directly):
+
+   ```bash
+   ./checkpoint/extract_maki_corpus.py --out draft_corpus.jsonl
+   ```
+
+   Copy the JSONL to the serve box. Coverage rule: the list must cover
+   ~97% of what the model emits, counted over its own generations. A
+   borrowed frequency list covering 92% costs back more in rejections than
+   the head saves.
+2. Build the artifacts in place (adds ~200 MB to the model dir and one
+   index entry, applied AFTER patch 8 or draft weight loading fails):
+
+   ```bash
+   ./checkpoint/build_draft_vocab.py \
+       --model-path /path/to/Qwen3.8-Flash-Next-FP8 \
+       --corpus draft_corpus.jsonl --size 40000
+   ```
+
+Startup proof: `MTP drafter scores a 39532-token draft vocabulary`.
+Rollback: delete `mtp_draft_vocab_ids.pt`, `mtp_draft_lm_head.safetensors`,
+and their index entry. Patch 9's page-cache drop logs its own line,
+`Dropped consumed checkpoint pages from the page cache: 132 files, 172.97 GiB`.
+
+## W8A16 dense checkpoint
 
 Build a W8A16 dense variant of the official FP8 checkpoint: the 228
 main-body dense matrices (QSA q/k/v/o, GDN out_proj, shared experts) move
@@ -18,7 +58,7 @@ bytes buy decode speed; nothing here changes what the model can represent.
 Requirements: Python 3.12+, numpy, ~350 GiB free at the working disk plus
 read access to `Qwen/Qwen3.8-Flash-Next-FP8`. No GPU, no torch.
 
-## Build
+### Build
 
 ```
 python encode_w8a16.py SRC OUT --files a,b,c   # per-batch workers (4 fit an NVMe)
@@ -35,7 +75,7 @@ shard that matches its own header is re-derived and skipped.
 and, run directly, the v1 rehearsal encoder that emits fp8-dense instead
 of int8. Expect ~6 minutes with four workers and 173 GiB of input.
 
-## Check
+### Check
 
 ```
 python resolve_check.py OUT/config.json [OFFICIAL_CONFIG_DIR]   # CPU, needs a vllm tree
@@ -50,7 +90,7 @@ PLE to float8-block, held and draft modules to unquantized.
 byte-compares every passthrough tensor: 152,089 checks. Run all four
 batches.
 
-## Results from the reference build
+### Results from the reference build
 
 Dense rel-RMS: mean 0.64 %, max 0.74 % across the 228. Verification: zero
 failures on 152,089 tensors, twice (v1 and v2 layouts). Measured on the
@@ -63,7 +103,7 @@ non-reproducibility floor of 7.3 % measured both within and across boots.
 The quantization residue is about 0.8 points, roughly one position in 130.
 Full tables: [benchmark/results.md](../benchmark/results.md).
 
-## Gotchas
+### Gotchas
 
 - Target and ignore regexes run against RUNTIME module names:
   `model.layers.N....` after the model's `hf_to_vllm_mapper`, and the
