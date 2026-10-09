@@ -153,7 +153,7 @@ checkpoint directory carries the artifacts, and they take two commands:
    `content`, so existing JSONL exports may plug in directly):
 
    ```bash
-   ./benchmark/extract_maki_corpus.py --out draft_corpus.jsonl
+   ./checkpoint/extract_maki_corpus.py --out draft_corpus.jsonl
    ```
 
    Copy the JSONL to the serve box. Coverage rule: the list must cover
@@ -164,7 +164,7 @@ checkpoint directory carries the artifacts, and they take two commands:
    index entry, applied AFTER patch 8 or draft weight loading fails):
 
    ```bash
-   ./benchmark/build_draft_vocab.py \
+   ./checkpoint/build_draft_vocab.py \
        --model-path /path/to/Qwen3.8-Flash-Next-FP8 \
        --corpus draft_corpus.jsonl --size 40000
    ```
@@ -390,7 +390,7 @@ patchset-qwen38-pp/
   benchmark/quality_diff.py              diff two fingerprints -> flips, drift, agreement
   benchmark/quality/*.jsonl.gz           raw captures behind the W8A16 quality gate
   benchmark/*.json                       raw results behind the tables in results.md
-  checkpoint/                            W8A16 dense checkpoint builder + checks, see its README
+  checkpoint/                            artifact builders: W8A16 dense tree + draft-vocab, see its README
   serve-3x.sh                            3 gpus, 262,144 native
   serve-3x-512k.sh                       3 gpus, 524,288, YaRN 2.0
   serve-3x-1m.sh                         3 gpus, 1,000,000, YaRN 4.0

@@ -1,5 +1,12 @@
 # Checkpoint build tools
 
+Two artifact families live here. The draft-vocab pair feeds patch 8:
+`extract_maki_corpus.py` turns agent session logs into
+`draft_corpus.jsonl`, `build_draft_vocab.py` counts the corpus and writes
+`mtp_draft_vocab_ids.pt` + `mtp_draft_lm_head.safetensors` into a model
+directory (apply after any tree rebuild; root README, Draft vocabulary
+head, has the procedure and the coverage rule).
+
 Build a W8A16 dense variant of the official FP8 checkpoint: the 228
 main-body dense matrices (QSA q/k/v/o, GDN out_proj, shared experts) move
 from bf16 to int8 symmetric group-32. Experts, the PLE n-gram table, and
