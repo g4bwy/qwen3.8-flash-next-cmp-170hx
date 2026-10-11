@@ -141,7 +141,8 @@ lm_head per draft step, worth ~9% single-stream. The head keeps the full
 lm_head resident too and drafts mixed prefill+decode windows (a stream
 joining or growing while others decode) with it, because that is where
 the small head costs acceptance; uniform decode rounds replay the graphed
-small head and keep the win. Artifact commands and the measured story:
+small head and keep the win (long-tail 4-stream cells already draft at
+3.98-3.99 with v2, so v3's payoff is concentrated in short-tail churn). Artifact commands and the measured story:
 [checkpoint/README.md](checkpoint/README.md). Engages only when the
 checkpoint directory carries the artifacts. Startup proof:
 `MTP drafter scores a 40000-token draft vocabulary`.
