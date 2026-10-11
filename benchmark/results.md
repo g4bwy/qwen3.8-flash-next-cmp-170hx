@@ -519,16 +519,16 @@ lives in rank 3's slack, exactly as designed. Raw: `bench-v3-100n4-short
 
 | cell | v2 acc | v3 acc |
 |---|---|---|
-| 100/4 greedy short tail | 2.93, 2.98, 2.93 | 2.44, 3.73, 3.76 |
+| 100/4 greedy short tail | 2.93, 2.98, 2.93 | 2.44, 3.73, 3.76, 3.92 |
 | 50/4 greedy short tail | 2.92, 3.69 | 3.93 |
 | corpus heavy join, T=1 | 2.371 | 2.259 |
 | corpus light join, T=1 | 2.306 | 2.120 |
 | corpus light join, T=0 | (never run) | 3.048 |
 
 - The gate fires where predicted: greedy short-tail acceptance left the
-  tight 2.93-2.98 band and sits at 3.73-3.76 in two of three samples.
-  The 2.44 outlier (first cell of the session, also the only one with
-  win-avg 129) is kept in the record unexplained.
+  tight 2.93-2.98 band in three of four samples (3.73, 3.76, 3.92; the
+  2.44 outlier was the first heavy cell after boot, kept in the record).
+  The v3 band 3.73-3.92 is closing on the dv-off ceiling of 3.95.
 - Sampled corpus cells read -0.1 to -0.19 against v2. With one sample
   per cell on v3's side and no v2 greedy-corpus reference, this is
   unresolved rather than a regression; wall and sustained rates are
