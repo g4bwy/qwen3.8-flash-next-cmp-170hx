@@ -1,7 +1,7 @@
-From d0e8e1e8183ca5dedf22740e3b34fc46313de5a2 Mon Sep 17 00:00:00 2001
+From c182aaaef66de5b98d1711520d0b8f069a083554 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 12:16:26 +0200
-Subject: [PATCH 9/9] [Model Loader] Drop consumed shard pages from the page
+Subject: [PATCH 09/10] [Model Loader] Drop consumed shard pages from the page
  cache
 
 Set VLLM_SAFETENSORS_DROP_CACHE=1 to posix_fadvise(FADV_DONTNEED) each
@@ -190,6 +190,3 @@ index 12d557fa1c..f72bda4074 100644
          return result
  
      with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
--- 
-2.55.0
-

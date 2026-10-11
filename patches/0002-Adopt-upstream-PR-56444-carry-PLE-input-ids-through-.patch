@@ -1,8 +1,8 @@
-From 2cfaa19191e54ba4d7509a687b00a406224fcf03 Mon Sep 17 00:00:00 2001
+From 540b94d7e02981033930df6827eb4c1d25382fcc Mon Sep 17 00:00:00 2001
 From: Vaishnavi220506 <183067453+Vaishnavi220506@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 2/9] Adopt upstream PR #56444: carry PLE input ids through PP
- intermediates
+Subject: [PATCH 02/10] Adopt upstream PR #56444: carry PLE input ids through
+ PP intermediates
 
 Makes PLE pipeline-rank-free by transporting int32 input_ids inside the
 existing intermediate tensors (+4 B/token per hop). Removes the PP>1
@@ -361,6 +361,3 @@ index 246168509b..4d43cddd08 100644
          self.ngram_context_len = int(config.ngram_size) - 1
          if self.ngram_context_len <= 0:
              raise ValueError("N-gram embedding requires context length >= 1.")
--- 
-2.55.0
-
