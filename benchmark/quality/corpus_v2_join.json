@@ -1,0 +1,42 @@
+{
+ "label": "v2 baseline, corpus, staggered joins",
+ "seed": 4242,
+ "conc": 4,
+ "depth_tokens_est": 45000,
+ "window": 4096,
+ "stagger": 1.5,
+ "span_s": 81.0,
+ "drafts": 7105.0,
+ "mean_acceptance_length": 2.306,
+ "pos_shares": {
+  "0": 0.468,
+  "1": 0.31,
+  "2": 0.222
+ },
+ "per_stream": [
+  {
+   "i": 0,
+   "ttft": 4.4,
+   "toks": 4096,
+   "rate": 53.5
+  },
+  {
+   "i": 1,
+   "ttft": 7.4,
+   "toks": 4096,
+   "rate": 63.2
+  },
+  {
+   "i": 2,
+   "ttft": 10.4,
+   "toks": 4096,
+   "rate": 61.2
+  },
+  {
+   "i": 3,
+   "ttft": 13.2,
+   "toks": 4096,
+   "rate": 74.3
+  }
+ ]
+}
