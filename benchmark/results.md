@@ -571,6 +571,29 @@ group sizes"), so `--prefix-cache-retention-interval` must track it
   after trailing rejections", the megakernel project does this) would
   be the honest version of this feature; TODO-listed, not scheduled.
 
+#### Indexer sharing across draft steps: negative on this config
+
+The upstream `index_share_for_mtp_iteration` flag (hooks implemented in
+`qwen4_exp/nvidia/mtp.py`, driven by the MTP speculator) is the free
+version of the Qwen-Flash-SM80-170HX overlay's "QSA indexer at draft
+step 0 only" trick. Verified via the config classes that
+`--hf-overrides` carries it into the draft config, booted at depth 3:
+
+| cell | control (v3 boot) | indexer-share | delta |
+|---|---:|---:|---:|
+| 100/1 tok/s | 190.9-192.4 | 175.9 | -8% |
+| 50/1 tok/s | 189.8-190.7 | 177.5 | -7% |
+| E (100/1) | 3.90-3.95 | 3.879 (p2=0.939) | down |
+
+Step time grew ~7% and acceptance sagged: the compact/reuse machinery
+costs more than the indexer passes it skips here (12 QSA layers only,
+indexer_head_dim 128 at budget 2048 - small fry; on the overlay's
+NVFP4/TP2 config the relative cost is clearly different). Flag reverted,
+kept out of the scripts. Revisit only if the draft path grows heavier
+(deeper MTP with cheap iterations) or on hardware where the indexer is
+a bigger share of the step. Raw: `bench-share-100n1.json`,
+`bench-share-50n1.json`.
+
 
 ### 524k (YaRN 2.0)
 
