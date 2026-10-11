@@ -1,4 +1,4 @@
-From 4380d5dc98e0abdef744056e576d113f4f302314 Mon Sep 17 00:00:00 2001
+From 27217c43319ddf63a15d4f9466afb1812683af74 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 10 Sep 2026 11:52:11 +0200
 Subject: [PATCH 03/10] [Bugfix][V2] Resolve deferred mamba state copies by
