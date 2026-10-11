@@ -463,15 +463,17 @@ joining windows. Boot: W8A16 lane, Humming kernel, 40k vocab head. Raw:
 | cell | decode/stream | acc samples | mixed-window share of wall |
 |---|---:|---|---:|
 | 100/4 | 1024 | 2.98, 2.93, 2.93 | ~60% |
-| 100/4 | 8192 | 3.99, 3.63 | ~20% |
+| 100/4 | 8192 | 3.99, 3.99 | ~20% |
 | 50/4 | 1024 | 2.92, 3.69 (bimodal) | ~45% |
-| 50/4 | 4096 | 3.68, 3.72 | ~20% |
+| 50/4 | 4096 | 3.98 | ~20% |
 | 25/4 | 1024 | 3.91, 3.92 | ~15% |
 | conc<=2, all fills | 1024 | 3.71-3.95 | rounds stay uniform |
 
 - Acceptance tracks the mixed-window share monotonically at fixed batch.
-  The second E2 sample (3.63) also ran hot (TTFT 276 s against 261 s),
-  so read it as 3.6-4.0: clearly above 2.93, not a second 3.99.
+  Methodology scar: the first E1/E2 captures were contaminated by an
+  unrelated prompt on the box (visible only in wall time: 281 s vs 218 s
+  on E1) and read 3.63-3.72; the idle-box reruns replaced them, and E2
+  then repeated 3.99 exactly twice.
 - The structural fit: the drafter takes a CUDA graph only when the whole
   batch is uniform decode (`get_uniform_decode_token_count`); any real
   prefill in the batch forces the eager step-0 draft path. The small head
