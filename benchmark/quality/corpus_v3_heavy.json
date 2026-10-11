@@ -1,0 +1,43 @@
+{
+ "label": "v3 corpus, heavy joins",
+ "seed": 4242,
+ "conc": 4,
+ "temperature": null,
+ "depth_tokens_est": 250000,
+ "window": 4096,
+ "stagger": 1.5,
+ "span_s": 168.7,
+ "drafts": 7253.0,
+ "mean_acceptance_length": 2.259,
+ "pos_shares": {
+  "0": 0.474,
+  "1": 0.307,
+  "2": 0.219
+ },
+ "per_stream": [
+  {
+   "i": 0,
+   "ttft": 24.3,
+   "toks": 4096,
+   "rate": 28.7
+  },
+  {
+   "i": 1,
+   "ttft": 49.0,
+   "toks": 4096,
+   "rate": 35.6
+  },
+  {
+   "i": 2,
+   "ttft": 73.7,
+   "toks": 4096,
+   "rate": 44.5
+  },
+  {
+   "i": 3,
+   "ttft": 100.6,
+   "toks": 4096,
+   "rate": 69.6
+  }
+ ]
+}

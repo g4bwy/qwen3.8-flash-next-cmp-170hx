@@ -137,12 +137,13 @@ Startup checks for the YaRN lanes:
 ### Draft vocabulary head (patch 8)
 
 Patch 8 makes the MTP drafter score a small head instead of the 248k-row
-lm_head per draft step, worth ~9% single-stream. The head keeps the full
-lm_head resident too and drafts mixed prefill+decode windows (a stream
-joining or growing while others decode) with it, because that is where
-the small head costs acceptance; uniform decode rounds replay the graphed
-small head and keep the win (long-tail 4-stream cells already draft at
-3.98-3.99 with v2, so v3's payoff is concentrated in short-tail churn). Artifact commands and the measured story:
+lm_head per draft step, worth ~9% single-stream. It keeps the full head
+resident too and drafts mixed prefill+decode windows (a stream joining or
+growing while others decode) with it, because that is where the small head
+costs acceptance: greedy short-tail 4-stream cells moved from 2.93-2.98 to
+3.73-3.76 with the dual head, pool unchanged. Uniform decode rounds replay
+the graphed small head and keep the win. Sampled corpus traffic shows no
+measurable effect either way. Artifact commands and the measured story:
 [checkpoint/README.md](checkpoint/README.md). Engages only when the
 checkpoint directory carries the artifacts. Startup proof:
 `MTP drafter scores a 40000-token draft vocabulary`.

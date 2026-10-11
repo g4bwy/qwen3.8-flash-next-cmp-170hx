@@ -1,0 +1,43 @@
+{
+ "label": "v3 corpus light, GREEDY",
+ "seed": 4242,
+ "conc": 4,
+ "temperature": 0.0,
+ "depth_tokens_est": 45000,
+ "window": 4096,
+ "stagger": 1.5,
+ "span_s": 45.1,
+ "drafts": 5376.0,
+ "mean_acceptance_length": 3.048,
+ "pos_shares": {
+  "0": 0.4,
+  "1": 0.327,
+  "2": 0.274
+ },
+ "per_stream": [
+  {
+   "i": 0,
+   "ttft": 0.3,
+   "toks": 4096,
+   "rate": 91.4
+  },
+  {
+   "i": 1,
+   "ttft": 0.3,
+   "toks": 4096,
+   "rate": 105.7
+  },
+  {
+   "i": 2,
+   "ttft": 0.3,
+   "toks": 4096,
+   "rate": 100.3
+  },
+  {
+   "i": 3,
+   "ttft": 0.3,
+   "toks": 4096,
+   "rate": 108.9
+  }
+ ]
+}
