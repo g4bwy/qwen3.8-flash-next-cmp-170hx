@@ -539,6 +539,38 @@ lives in rank 3's slack, exactly as designed. Raw: `bench-v3-100n4-short
   if anyone cares to close it: a v2 greedy-corpus baseline and one
   more 100/4 repeat of each tree.
 
+### MTP depth is content-bound: the 4-vs-3 sweep (2026-10-12)
+
+W8A16 lane, v3 dual-head, depth 4 via `num_speculative_tokens: 4`.
+Boot gotcha: every extra draft row grows the hybrid scheduler block
+size by the match unit (1600 -> 1616 at depth 4, logged as "kv cache
+group sizes"), so `--prefix-cache-retention-interval` must track it
+(16160). Pool cost: 2,620,743 -> 2,596,273. Raw: `bench-d4-*.json`,
+`quality/corpus_d4_*.json`.
+
+| workload | E(d3) | E(d4) | tok/s d3 | tok/s d4 |
+|---|---:|---:|---:|---:|
+| synthetic repeat 100/1 | 3.92 | 4.88 | 191 | 198.6 |
+| synthetic repeat 50/1 | 3.93 | 4.91 | 190 | 198.0 |
+| corpus, greedy | 3.048 | 3.006 | (span 45.1 s) | (span 60.1 s) |
+| corpus, T=1 top-k | 2.12 | 2.417 | ~58/stream | ~63/stream |
+
+- Per-position acceptance at depth 4 on synthetic: 0.986 / 0.976 /
+  0.967 / 0.952, the fourth position holds, +3.7 to +4.2% tok/s.
+- On real assistant text greedy, E is FLAT (3.006 vs 3.048): the fourth
+  draft token is nearly always rejected while its drafting iteration
+  (~4 ms) is always paid. Result: 25-30% slower. Sampled T=1 sits
+  between: E +0.3 roughly cancels the step cost.
+- Conclusion: fixed depth 4 wins only on highly repetitive content;
+  production stays at depth 3. The community MTP6 claim (E 4.46) is
+  the synthetic curve, not real text: content decides, and their
+  single-run totals cannot show that. Depth 5/6 were not booted: the
+  real-content curve already says extra positions cost and do not pay.
+- vLLM has `enable_adaptive_verification` (per-request draft budget)
+  but it is gated to method=dspark. An MTP early-exit ("stop drafting
+  after trailing rejections", the megakernel project does this) would
+  be the honest version of this feature; TODO-listed, not scheduled.
+
 
 ### 524k (YaRN 2.0)
 
