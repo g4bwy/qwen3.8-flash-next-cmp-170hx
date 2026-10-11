@@ -488,6 +488,29 @@ joining windows. Boot: W8A16 lane, Humming kernel, 40k vocab head. Raw:
 - Real traffic reading: long-lived sessions pay nothing (rare windows);
   bursts of joins on long contexts draft full-head quality during churn.
 
+#### Corpus acceptance: sampling hides the window (v2 baselines)
+
+`corpus_accept_probe.py` reruns the joining-window experiment on real
+maki-session text at the clients' own sampling defaults (T=1.0, top_k=20),
+4 streams staggered 1.5 s. Raw: `quality/corpus_v2_*.json`, one seed.
+
+| cell | window depth | join share of span | acc |
+|---|---:|---:|---:|
+| light join | 45k tok prompts | ~15% | 2.306 |
+| long window | 45k, decode 12288 | ~8% | 2.313 |
+| heavy join | 250k tok prompts | ~40% | 2.371 |
+
+- On sampled corpus text the acceptance sits at ~2.3 regardless of join
+  share: temperature + top-k set the floor and eager-path draft degradation
+  does not surface. The synthetic greedy grid, where acceptance is an
+  argmax contest, is the regime that exposed the 2.9-vs-3.99 split.
+- Practical reading: patch 8's measured harm on this box lives in
+  greedy/T0 traffic; agent traffic as configured here samples and is
+  unaffected by the window. v3 remains correct to ship (T0 users exist,
+  the gate is free), but its expected win on real sessions is ~0, and
+  2.31 is the number to hold v3 against, not 3.9.
+
+
 ### 524k (YaRN 2.0)
 
 Measured 2026-09-21, same tree. KV pool 2,496,752 tokens, maximum
