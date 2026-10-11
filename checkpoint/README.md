@@ -13,7 +13,7 @@ deep-fill cells read acceptance 2.2-3.0, first blamed on batch size. The
 follow-up (results.md, joining-window section) shows the loss lives in
 mixed prefill+decode windows: same batch 4, long decode tail, acceptance
 at ceiling (3.98-3.99). Patch 8 v3 keeps both heads: the eager window path drafts with
-the full tied head, graphed uniform decode rounds replay the small one,
+the full head, graphed uniform decode rounds replay the small one,
 so steady multi-stream decode keeps the +9%. It engages only when the
 checkpoint directory carries the artifacts, and they take two commands:
 
