@@ -1,4 +1,4 @@
-From c336c87fb71686333a67a99d181aa4c59954ab51 Mon Sep 17 00:00:00 2001
+From d2ec769b2acb65a888131deef367dd8337aa6989 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 9 Oct 2026 20:51:39 +0200
 Subject: [PATCH 10/10] [Model Loader] Qwen4Exp: Honor fp8 PLE tables under

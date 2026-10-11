@@ -1,4 +1,4 @@
-From c182aaaef66de5b98d1711520d0b8f069a083554 Mon Sep 17 00:00:00 2001
+From 497b9377ab5db592143d0fb9ba834a5025ecb45d Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 12:16:26 +0200
 Subject: [PATCH 09/10] [Model Loader] Drop consumed shard pages from the page
