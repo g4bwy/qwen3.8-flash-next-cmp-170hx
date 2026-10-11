@@ -449,6 +449,43 @@ sampler timeseries is in each raw JSON. Raw: `bench-4x-1m-n4-rerun.json`.
   either way, so the effect is on acceptance, where it shows as the draft
   being rejected, not as slower decode.
 
+#### The dip is the joining window, not the batch
+
+Closed 2026-10-10. The separating boot (patch 8 disengaged) had already
+said "draft head, not the tree": 75/4 and 100/4 read 3.85 / 3.95 with
+the full head. The next question was *what about the head only misbehaves
+at batch and depth*. The discriminator is decode length: same fill, same
+4 streams, but a tail long enough that pure-decode rounds dwarf the
+joining windows. Boot: W8A16 lane, Humming kernel, 40k vocab head. Raw:
+`bench-e1-dvon.json`, `bench-e2-dvon.json`; first single-shot reads
+(3.68, 3.99) in the session log.
+
+| cell | decode/stream | acc samples | mixed-window share of wall |
+|---|---:|---|---:|
+| 100/4 | 1024 | 2.98, 2.93, 2.93 | ~60% |
+| 100/4 | 8192 | 3.99, 3.63 | ~20% |
+| 50/4 | 1024 | 2.92, 3.69 (bimodal) | ~45% |
+| 50/4 | 4096 | 3.68, 3.72 | ~20% |
+| 25/4 | 1024 | 3.91, 3.92 | ~15% |
+| conc<=2, all fills | 1024 | 3.71-3.95 | rounds stay uniform |
+
+- Acceptance tracks the mixed-window share monotonically at fixed batch.
+  The second E2 sample (3.63) also ran hot (TTFT 276 s against 261 s),
+  so read it as 3.6-4.0: clearly above 2.93, not a second 3.99.
+- The structural fit: the drafter takes a CUDA graph only when the whole
+  batch is uniform decode (`get_uniform_decode_token_count`); any real
+  prefill in the batch forces the eager step-0 draft path. The small head
+  degrades only on that eager mixed-window path.
+- Shipped as patch 8 v3 (dual-head): the full head stays resident and the
+  speculator sets `model.full_head_window = prefill_batch_desc.cg_mode !=
+  FULL` before drafting, so joining windows score the whole vocabulary and
+  graphed uniform rounds replay the small head (capture always sees the
+  flag false). Rank 3 absorbs the 1.27 GiB with rank 0 still binding the
+  pool; verify the pool line at the next boot, within 1k tokens of the
+  small-head boot.
+- Real traffic reading: long-lived sessions pay nothing (rare windows);
+  bursts of joins on long contexts draft full-head quality during churn.
+
 ### 524k (YaRN 2.0)
 
 Measured 2026-09-21, same tree. KV pool 2,496,752 tokens, maximum

@@ -1,7 +1,7 @@
-From c3d6f4346cded4c412b742996d128f814f176d28 Mon Sep 17 00:00:00 2001
+From 06b2f1c400f78477db384b354af4bbf755f31a0d Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
-Subject: [PATCH 8/9] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
+Subject: [PATCH 08/10] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
 
 Every draft token of MTP speculation runs compute_logits with the full
 248,320-row lm_head: on sm_80 at the ~1.1 TB/s measured for these cards
@@ -31,9 +31,10 @@ qwen4_exp MTP module. Opt out by deleting the two files.
 
 Co-authored-by: Maki <agent@local>
 ---
- .../models/qwen4_exp/test_mtp_draft_vocab.py  | 29 ++++++++
- vllm/models/qwen4_exp/nvidia/mtp.py           | 70 ++++++++++++++++++-
- 2 files changed, 98 insertions(+), 1 deletion(-)
+ .../models/qwen4_exp/test_mtp_draft_vocab.py  | 29 +++++++
+ vllm/models/qwen4_exp/nvidia/mtp.py           | 78 ++++++++++++++++++-
+ .../spec_decode/autoregressive/speculator.py  |  9 +++
+ 3 files changed, 115 insertions(+), 1 deletion(-)
  create mode 100644 tests/models/qwen4_exp/test_mtp_draft_vocab.py
 
 diff --git a/tests/models/qwen4_exp/test_mtp_draft_vocab.py b/tests/models/qwen4_exp/test_mtp_draft_vocab.py
@@ -72,7 +73,7 @@ index 0000000000..dddb7c8f81
 +    assert _remap_mtp_weight_name("mtp.draft_lm_head.weight") == "draft_lm_head.weight"
 +    assert _remap_mtp_weight_name("mtp.shared_head.head.weight") == "lm_head.weight"
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index fc307d4c77..0262ebd7a4 100644
+index fc307d4c77..89be0a2c7c 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -13,6 +13,7 @@ The MTP draft model reuses the Qwen4Exp backbone (PLE/HC/MoE) but:
@@ -124,12 +125,13 @@ index fc307d4c77..0262ebd7a4 100644
      if name.startswith("mtp.shared_head.head."):
          return name.replace("mtp.shared_head.head.", "lm_head.", 1)
      if name.startswith("model.shared_head.head."):
-@@ -386,8 +407,37 @@ class Qwen4ExpMTP(nn.Module, SupportsPP, Qwen4ExpMixtureOfExperts):
+@@ -386,8 +407,48 @@ class Qwen4ExpMTP(nn.Module, SupportsPP, Qwen4ExpMixtureOfExperts):
              prefix=maybe_prefix(prefix, "mtp"),
          )
  
 +        self.draft_lm_head = None
 +        self.draft_logits_processor = None
++        self.full_head_window = False
          if get_pp_group().is_last_rank:
 -            if config.tie_word_embeddings:
 +            draft_ids_path = os.path.join(
@@ -154,7 +156,17 @@ index fc307d4c77..0262ebd7a4 100644
 +                    prefix=maybe_prefix(prefix, "draft_lm_head"),
 +                )
 +                self.draft_logits_processor = LogitsProcessor(int(ids.numel()))
-+                self.lm_head = None
++                # Full head stays resident: mixed prefill windows draft
++                # eagerly and score the whole vocabulary there, while
++                # graphed decode rounds replay the small head.
++                if config.tie_word_embeddings:
++                    self.lm_head = self.model.embed_tokens
++                else:
++                    self.lm_head = ParallelLMHead(
++                        config.vocab_size,
++                        config.hidden_size,
++                        prefix=maybe_prefix(prefix, "lm_head"),
++                    )
 +                logger.info(
 +                    "MTP drafter scores a %d-token draft vocabulary",
 +                    int(ids.numel()),
@@ -163,11 +175,11 @@ index fc307d4c77..0262ebd7a4 100644
                  self.lm_head = self.model.embed_tokens
              else:
                  self.lm_head = ParallelLMHead(
-@@ -429,11 +479,29 @@ class Qwen4ExpMTP(nn.Module, SupportsPP, Qwen4ExpMixtureOfExperts):
+@@ -429,11 +490,26 @@ class Qwen4ExpMTP(nn.Module, SupportsPP, Qwen4ExpMixtureOfExperts):
      def compute_logits(
          self, hidden_states: torch.Tensor, spec_step_idx: int = 0
      ) -> torch.Tensor | None:
-+        if self.draft_lm_head is not None:
++        if self.draft_lm_head is not None and not self.full_head_window:
 +            sub = self.draft_logits_processor(self.draft_lm_head, hidden_states)
 +            if sub is None:
 +                return None
@@ -185,14 +197,28 @@ index fc307d4c77..0262ebd7a4 100644
              for name, weight in weights:
 +                if "draft_lm_head" in name and not draft_active:
 +                    continue
-+                if draft_active and (
-+                    "shared_head.head" in name
-+                    or name.startswith(("model.lm_head.", "lm_head."))
-+                ):
++                if draft_active and "shared_head.head" in name:
 +                    continue
                  remapped_name = _remap_mtp_weight_name(name)
                  if remapped_name is not None:
                      yield remapped_name, weight
--- 
-2.55.0
-
+diff --git a/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py b/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
+index 897e7af8de..fdc0068f90 100644
+--- a/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
+@@ -302,6 +302,15 @@ class AutoRegressiveSpeculator(DraftModelSpeculator):
+ 
+         self._prepare_eplb_forward(num_tokens)
+ 
++        # Mixed prefill+decode windows take the eager draft path; score
++        # those rounds with the full head. Uniform decode rounds replay a
++        # graph captured with this flag False, so the small head stays in
++        # the hot path.
++        if hasattr(self.model, "full_head_window"):
++            self.model.full_head_window = (
++                prefill_batch_desc.cg_mode != CUDAGraphMode.FULL
++            )
++
+         self.on_prefill_begin(num_reqs)
+         if prefill_batch_desc.cg_mode == CUDAGraphMode.FULL:
+             # Replay the full graph for draft prefill.

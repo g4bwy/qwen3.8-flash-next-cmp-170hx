@@ -1,7 +1,7 @@
-From ed18b512b072ac04b966d18a0b2b109c06253526 Mon Sep 17 00:00:00 2001
+From d54906197d15f38dd33e17e74bb92f868d3b05de Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 10 Sep 2026 11:51:58 +0200
-Subject: [PATCH 1/9] [Bugfix][Qwen4Exp] Run the MTP drafter on the last
+Subject: [PATCH 01/10] [Bugfix][Qwen4Exp] Run the MTP drafter on the last
  pipeline rank
 
 The drafter is instantiated only on the last pipeline rank (model_runner
@@ -71,6 +71,3 @@ index 61290617ae..fc307d4c77 100644
              assert hidden_states is not None
              if inputs_embeds is None:
                  assert input_ids is not None
--- 
-2.55.0
-
