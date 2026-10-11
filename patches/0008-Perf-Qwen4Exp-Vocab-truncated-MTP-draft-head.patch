@@ -1,4 +1,4 @@
-From 06b2f1c400f78477db384b354af4bbf755f31a0d Mon Sep 17 00:00:00 2001
+From c912c2c010726044e9cfc70cb36b7227f4b50d14 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
 Subject: [PATCH 08/10] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
@@ -203,7 +203,7 @@ index fc307d4c77..89be0a2c7c 100644
                  if remapped_name is not None:
                      yield remapped_name, weight
 diff --git a/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py b/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
-index 897e7af8de..fdc0068f90 100644
+index 897e7af8de..367b1af947 100644
 --- a/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
 +++ b/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
 @@ -302,6 +302,15 @@ class AutoRegressiveSpeculator(DraftModelSpeculator):
@@ -216,7 +216,7 @@ index 897e7af8de..fdc0068f90 100644
 +        # the hot path.
 +        if hasattr(self.model, "full_head_window"):
 +            self.model.full_head_window = (
-+                prefill_batch_desc.cg_mode != CUDAGraphMode.FULL
++                max_query_len > self.num_speculative_steps + 1
 +            )
 +
          self.on_prefill_begin(num_reqs)
