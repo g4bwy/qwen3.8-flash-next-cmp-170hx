@@ -8,9 +8,13 @@ release into an int8-dense variant.
 ## Draft vocabulary head (patch 8)
 
 Patch 8 makes the MTP drafter score a small head instead of the 248k-row
-lm_head per draft step, worth ~9% single-stream. At 4 streams and >=50%
-context fill it trades that win away: acceptance falls to 2.2-3.0 and wall
-time cancels out flat. It is a single-stream patch. It engages only when the
+lm_head per draft step, worth ~9% single-stream. Measured history: 4-stream
+deep-fill cells read acceptance 2.2-3.0, first blamed on batch size. The
+follow-up (results.md, joining-window section) shows the loss lives in
+mixed prefill+decode windows: same batch 4, long decode tail, acceptance
+3.6-4.0. Patch 8 v3 keeps both heads: the eager window path drafts with
+the full tied head, graphed uniform decode rounds replay the small one,
+so steady multi-stream decode keeps the +9%. It engages only when the
 checkpoint directory carries the artifacts, and they take two commands:
 
 1. Build the id list from the model's own outputs. Any corpus of assistant

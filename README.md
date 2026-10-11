@@ -15,7 +15,7 @@ No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nons
 - 10 patches: eight ours, two adopted from pending upstream PRs (#56444 as
   patch 2, #58094 as patch 7). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `d872151849cb9d6492ecb3dc1909445fa09e6ed4`. If it does not, you applied
+  `9a7a4cd46e40a38ec7fa6ebf37b5254bd8c62a86`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
@@ -137,11 +137,14 @@ Startup checks for the YaRN lanes:
 ### Draft vocabulary head (patch 8)
 
 Patch 8 makes the MTP drafter score a small head instead of the 248k-row
-lm_head per draft step, worth ~9% single-stream; at 4 streams and >=50%
-context fill the win cancels (see the batch caveat and artifact commands
-in [checkpoint/README.md](checkpoint/README.md)). It engages only when the
+lm_head per draft step, worth ~9% single-stream. The head keeps the full
+lm_head resident too and drafts mixed prefill+decode windows (a stream
+joining or growing while others decode) with it, because that is where
+the small head costs acceptance; uniform decode rounds replay the graphed
+small head and keep the win. Artifact commands and the measured story:
+[checkpoint/README.md](checkpoint/README.md). Engages only when the
 checkpoint directory carries the artifacts. Startup proof:
-`MTP drafter scores a 39532-token draft vocabulary`.
+`MTP drafter scores a 40000-token draft vocabulary`.
 
 ## Prefix caching
 
@@ -315,7 +318,7 @@ about one position in 130 moves because of the quantization. Full tables:
 | 5 | Qwen4Exp: gather pinned PLE rows as raw bytes (Ampere has no `fp8e4nv`) |
 | 6 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
 | 7 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our old patch 7 used |
-| 8 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Needs artifacts, build commands in checkpoint/README |
+| 8 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Dual-head: eager mixed prefill windows draft with the full head, graphed uniform decode rounds keep the small one. Needs artifacts, build commands in checkpoint/README |
 | 9 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts): 173 GiB of read-once weight bytes should not evict reusable cache at every boot |
 | 10 | Qwen4Exp PLE embedding honors fp8 n-gram tables inside compressed-tensors checkpoints: resolve the scheme (none -> unquantized, float8 -> fp8, else raise) instead of falling through to the Fp8Config-only gate |
 

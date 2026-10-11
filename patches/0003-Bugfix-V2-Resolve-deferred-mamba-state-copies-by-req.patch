@@ -1,7 +1,7 @@
-From c5d079da27bbb911faffaf1fd6934de589930570 Mon Sep 17 00:00:00 2001
+From 4380d5dc98e0abdef744056e576d113f4f302314 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 10 Sep 2026 11:52:11 +0200
-Subject: [PATCH 3/9] [Bugfix][V2] Resolve deferred mamba state copies by
+Subject: [PATCH 03/10] [Bugfix][V2] Resolve deferred mamba state copies by
  request slot
 
 Under pipeline parallelism the sampled outputs of step T are consumed by
@@ -261,6 +261,3 @@ index 33a2b8b480..57375f43b7 100644
              self.block_table_stride_req,
              self.state_base_addrs,
              self.state_block_strides,
--- 
-2.55.0
-
