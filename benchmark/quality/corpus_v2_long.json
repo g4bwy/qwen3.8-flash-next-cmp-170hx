@@ -1,0 +1,42 @@
+{
+ "label": "v2 corpus, long window",
+ "seed": 4242,
+ "conc": 4,
+ "depth_tokens_est": 45000,
+ "window": 12288,
+ "stagger": 1.5,
+ "span_s": 166.0,
+ "drafts": 21249.0,
+ "mean_acceptance_length": 2.313,
+ "pos_shares": {
+  "0": 0.469,
+  "1": 0.309,
+  "2": 0.222
+ },
+ "per_stream": [
+  {
+   "i": 0,
+   "ttft": 0.4,
+   "toks": 12288,
+   "rate": 79.3
+  },
+  {
+   "i": 1,
+   "ttft": 0.3,
+   "toks": 12288,
+   "rate": 81.4
+  },
+  {
+   "i": 2,
+   "ttft": 0.3,
+   "toks": 12288,
+   "rate": 95.1
+  },
+  {
+   "i": 3,
+   "ttft": 0.3,
+   "toks": 12288,
+   "rate": 76.2
+  }
+ ]
+}
