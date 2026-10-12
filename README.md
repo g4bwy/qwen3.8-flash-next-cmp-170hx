@@ -1,4 +1,4 @@
-# Qwen3.8-Flash-Next-FP8 (official checkpoint) on 3x or 4x CMP170HX / PP=3 or PP=4 / MTP-3
+# Qwen3.8-Flash-Next-FP8 (official checkpoint) on 3x or 4x CMP170HX / PP=3 or PP=4 / MTP-3, MTP-4 on the W8A16 lane
 
 Patches over vLLM mainline, running with uv venv.
 No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nonsense.
@@ -10,12 +10,12 @@ No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nons
   puts every pair at NODE distance. A ring is only as wide as its narrowest
   card, so budget about 2 GB/s between any two GPUs, not 8. NCCL needs
   `NCCL_P2P_LEVEL=SYS` to use peer DMA here at all.
-- Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`.
+- Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`. The fast lane builds an int8-dense variant with `checkpoint/` and runs it at MTP-4; official at MTP-4 is unmeasured.
 - Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
 - 10 patches: eight ours, two adopted from pending upstream PRs (#56444 as
   patch 2, #58094 as patch 7). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `9a7a4cd46e40a38ec7fa6ebf37b5254bd8c62a86`. If it does not, you applied
+  `1de2b16fd7b10bd552577667f88399bc3cea22ed`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
@@ -249,6 +249,7 @@ Rates are tok/s unless the cell shows a duration.
 | 4 cards, 262k | 22.1 s | 9.9k | 151-165 | 405, 4 of 4 |
 | 4 cards, 524k | 46.0 s | 10.5k | 163-168 | 367, 4 of 4 |
 | 4 cards, 1M | 91.9 s | 10.4k | 181-184 | 325, 2-3 of 4 |
+| 4 cards, 1M, W8A16 lane, MTP-4 | 93.5 s | 10.1k | 217-226 | 400 s wall at 100/4, batch-neutral |
 
 - Provenance: the 4-card 1M row is 74 SMs, partition 13,12,12,11, tree dev649
   with the draft-vocab head. The other 4-card rows and every 3-card row carry
