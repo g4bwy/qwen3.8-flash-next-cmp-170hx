@@ -250,7 +250,7 @@ Rates are tok/s unless the cell shows a duration.
 | 4 cards, 262k | 22.1 s | 9.9k | 151-165 | 405, 4 of 4 |
 | 4 cards, 524k | 46.0 s | 10.5k | 163-168 | 367, 4 of 4 |
 | 4 cards, 1M | 91.9 s | 10.4k | 181-184 | 325, 2-3 of 4 |
-| 4 cards, 1M, official, MTP-4 | 90.6 s | 10.4k | 205-215 (median of 3) | not measured |
+| 4 cards, 1M, official, MTP-4 | 90.6 s | 10.4k | 205-215 (median of 3) | sust 301, wall 386 s (median of 3), 2-3 of 4 resident |
 | 4 cards, 1M, W8A16 lane, MTP-4 | 93.5 s | 10.1k | 217-226 | 400 s wall at 100/4, batch-neutral |
 
 - Provenance: the 4-card 1M row is 74 SMs, partition 13,12,12,11, tree dev649
