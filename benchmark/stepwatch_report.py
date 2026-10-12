@@ -54,5 +54,4 @@ if dec:
 # bimodality flag: coefficient of variation of decode step_ms
 if len(dec) > 8:
     v = st.pvariance(series("step_ms", dec)) ** 0.5 / st.mean(series("step_ms", dec))
-    print(f"decode step_ms CV: {v * 100:.1f}% "
-          + ("<-- bimodal risk, use median of cells" if v > 0.06 else "(stable)"))
+    print(f"decode step_ms CV: {v * 100:.1f}% " + ("(wide; cross-check acc column - content, not clocks)" if v > 0.06 else "(stable)"))
