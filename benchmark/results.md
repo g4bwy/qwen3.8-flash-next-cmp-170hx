@@ -640,6 +640,15 @@ salt and quote the band; identical fixed salt re-uses the prefix cache
 tok/s in, vs 90.7 s cold). The old "first cell after idle" folklore is
 retired - the cells were never identical to begin with.
 
+Stepwatch block audit of the same six cells (remote 20 Hz): decode
+step_ms median 21.3-21.5 in EVERY block, fixed and rotating salt
+alike, while acc medians swing 2.75-5.00 with throughput. Machine
+acquitted by instrument, not arithmetic. Two open threads from the
+capture: a stable p90 ~32 ms second mode in all blocks (suspect poll
+aliasing from remote 20 Hz sampling; localhost rerun decides) and an
+empty nvml column (--nvml needs pynvml on the serving box; fallback to
+nvidia-smi subprocess queued).
+
 #### Indexer sharing across draft steps: voided, retest pending
 
 Retest 2026-10-12, fixed d4 stack (depth 4, Marlin, 40k head, warmup
