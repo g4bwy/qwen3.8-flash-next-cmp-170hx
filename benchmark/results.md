@@ -600,6 +600,13 @@ Raw: `bench-fix-*.json`, `bench-fixd4-*.json`, `bench-d5*.json`,
   content where the chain dies at position 2-3), and each depth costs
   ~1% pool plus the block/ring config dance (d5 needs --block-size 1632
   for the QSA ring, retention 16320).
+- Measured control, same session, official FP8 tree at depth 4:
+  211.6 / 214.5 / 212.4 tok/s (median of three, E 4.85-4.93, TTFT 90.6 s,
+  pool 2,572,981 = lane minus the int8 byte savings, consistent). The
+  depth gift transfers: +16 % of the lane's +20 % is depth, the rest is
+  int8. Prefill also did NOT regress at depth 4 on the official tree
+  (10.35k vs the 10.1-10.2k d3 band), so the lane's "-2 % prefill" is a
+  lane-vs-official delta (Marlin unpack), not a depth cost.
 - Ship depth 4: best real-content profile at T=0, neutral-to-better
   elsewhere, +15% synthetic single-stream over d3, +20% vs the official
   FP8 tree's 181-184.

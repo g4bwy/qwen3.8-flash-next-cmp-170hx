@@ -10,7 +10,7 @@ No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nons
   puts every pair at NODE distance. A ring is only as wide as its narrowest
   card, so budget about 2 GB/s between any two GPUs, not 8. NCCL needs
   `NCCL_P2P_LEVEL=SYS` to use peer DMA here at all.
-- Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`. The fast lane builds an int8-dense variant with `checkpoint/` and runs it at MTP-4; official at MTP-4 is unmeasured.
+- Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`. All serve scripts default to MTP-4; the fast lane builds an int8-dense variant with `checkpoint/` (+6 % on top of depth, +20 % over official MTP-3).
 - Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
 - 10 patches: eight ours, two adopted from pending upstream PRs (#56444 as
   patch 2, #58094 as patch 7). After
@@ -249,6 +249,7 @@ Rates are tok/s unless the cell shows a duration.
 | 4 cards, 262k | 22.1 s | 9.9k | 151-165 | 405, 4 of 4 |
 | 4 cards, 524k | 46.0 s | 10.5k | 163-168 | 367, 4 of 4 |
 | 4 cards, 1M | 91.9 s | 10.4k | 181-184 | 325, 2-3 of 4 |
+| 4 cards, 1M, official, MTP-4 | 90.6 s | 10.4k | 205-215 (median of 3) | not measured |
 | 4 cards, 1M, W8A16 lane, MTP-4 | 93.5 s | 10.1k | 217-226 | 400 s wall at 100/4, batch-neutral |
 
 - Provenance: the 4-card 1M row is 74 SMs, partition 13,12,12,11, tree dev649
