@@ -911,6 +911,24 @@ captures; raw pairs in `quality/*.jsonl.gz`.
   nats. Acceptance is behavior-level agreement between drafter and
   target, and it is unchanged; that is the practical pass.
 
+## Step telemetry (CUPTI-free)
+
+`stepwatch.py` samples the engine's own per-step counters (plus optional
+NVML clocks/power with `--nvml`, on the serving box) and separates slow
+cells into machine (step_ms drift, clocks), draft (acc drift) or
+scheduling (run/wait) causes. Intended use is per-cell: start it, run one
+bench cell, stop it - windows spanning idle time dilute the acc estimate.
+
+```
+python3 stepwatch.py --out cell.jsonl --hz 20 [--nvml] &
+python3 bench.py ... ; kill %1
+python3 stepwatch_report.py cell.jsonl
+```
+
+First live run (official-d4, 25/1): prefill chunks 2048-token steps at
+~8 ms, decode steady 21.6 ms median at tok/iter 5, gen-rate arithmetic
+closing (21.6 ms x 5 tok = 232 vs measured 230).
+
 ## Reproduce
 
 Run with the server idle, after warming it with a few short requests. The
