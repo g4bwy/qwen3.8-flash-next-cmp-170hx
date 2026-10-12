@@ -648,6 +648,11 @@ capture: a stable p90 ~32 ms second mode in all blocks (suspect poll
 aliasing from remote 20 Hz sampling; localhost rerun decides) and an
 empty nvml column (--nvml needs pynvml on the serving box; fallback to
 nvidia-smi subprocess queued).
+  GHOST RESOLVED: localhost 20 Hz capture on a fixed-salt cell reads
+  step_ms 21.6 / it_s 46.3 / acc 5.0 / gen 231 - one clean cadence,
+  arithmetically closed. The remote p90 ~32 ms was poll aliasing, not
+  engine periodicity; the tok_it<=8 filter now drops mixed-edge
+  samples from decode stats.
 
 #### Indexer sharing across draft steps: voided, retest pending
 
