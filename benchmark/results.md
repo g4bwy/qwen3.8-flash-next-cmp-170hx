@@ -611,6 +611,18 @@ Raw: `bench-fix-*.json`, `bench-fixd4-*.json`, `bench-d5*.json`,
 
 #### Indexer sharing across draft steps: voided, retest pending
 
+Retest 2026-10-12, fixed d4 stack (depth 4, Marlin, 40k head, warmup
+cell first): flagged samples read E 4.78 / 4.88 vs control 4.88 / 4.89
+with identical TTFT and in-band step rates - no upside anywhere, no
+downside beyond noise. Verdict: dead on this config, as the indexer
+size math predicted; the flag stays off. The retest also produced a
+protocol finding stronger than its answer: two cells flipped between
+216 and 176, and 222 and 187, minutes apart on an idle box - bimodal
+cells are NOT limited to the post-idle case. Single-cell comparisons
+are worthless here; ladder verdicts now require median of three. Three
+separate flag-verdicts this week would have been wrong without repeat
+cells.
+
 NOTE (2026-10-12): this section's measurements ran on the broken v3 gate
 (full head on every round, f660b7e era predecessor). Flag-on 175.9 and
 clean-Humming 176.9 were both the bug, not the flag. The conclusion
