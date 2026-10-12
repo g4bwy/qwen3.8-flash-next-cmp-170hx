@@ -45,7 +45,9 @@ if pf:
     print(f"prefill/mixed samples: {len(pf)} "
           f"(avg tok/iter {st.mean(series('tok_it', pf)):.0f}, "
           f"step_ms median {st.median(pfm) if pfm else 0:.1f})")
-dec = [r for r in busy if (r.get("prompt_tps") or 0) < 10 and (r.get("gen_tps") or 0) > 20]
+dec = [r for r in busy if (r.get("prompt_tps") or 0) < 10
+         and (r.get("gen_tps") or 0) > 20
+         and (r.get("tok_it") or 99) <= 8]  # drop mixed-iteration edges
 if dec:
     print(f"pure-decode samples: {len(dec)}, "
           f"step_ms median {st.median(series('step_ms', dec)):.1f}, "
