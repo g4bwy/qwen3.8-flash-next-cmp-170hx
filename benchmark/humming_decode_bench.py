@@ -254,7 +254,11 @@ def time_fn(fn, reps, flush_buf):
         end.record()
         torch.cuda.synchronize()
         times.append(start.elapsed_time(end) * 1000.0)
-    return statistics.median(times)
+    # min-composed scoring (megakernel methodology): the floor clock jitter
+    # raises outliers but never lowers the true kernel time, so the min is
+    # the only cross-run comparable stat. med/spread stay as trust signals.
+    return {"min": min(times), "med": statistics.median(times),
+            "spread_pct": round((statistics.median(times) / min(times) - 1) * 100, 1)}
 
 
 def run_case_bf16(n, k, m, args, device):
@@ -275,12 +279,14 @@ def run_case_bf16(n, k, m, args, device):
         try:
             fn()
             torch.cuda.synchronize()
-            us = time_fn(fn, args.reps, flush)
+            t = time_fn(fn, args.reps, flush)
         except Exception as e:  # noqa: BLE001
             rows.append({"name": name, "error": str(e)[:120]})
             continue
+        us = t["min"] if args.score == "min" else t["med"]
         wbytes = 2 * (n * k + m * k + m * n)
-        rows.append({"name": name, "us": round(us, 1),
+        rows.append({"name": name, "us": round(us, 1), "min": round(t["min"], 1),
+                     "med": round(t["med"], 1), "spread": t["spread_pct"],
                      "GB/s": round(wbytes / (us * 1e-6) / 1e9, 1)})
     return {"n": n, "k": k, "kind": "none", "m": m, "heuristic": None,
             "rows": rows}
@@ -312,11 +318,13 @@ def run_case(n, k, kind, m, args, device):
         try:
             y = call(tuning)()
             torch.cuda.synchronize()
-            us = time_fn(call(tuning), args.reps, flush)
+            t = time_fn(call(tuning), args.reps, flush)
         except Exception as e:  # noqa: BLE001
             rows.append({"name": name, "error": str(e)[:120]})
             continue
-        out_rows = {"name": name, "us": round(us, 1)}
+        us = t["min"] if args.score == "min" else t["med"]
+        out_rows = {"name": name, "us": round(us, 1), "min": round(t["min"], 1),
+                    "med": round(t["med"], 1), "spread": t["spread_pct"]}
         if tuning is not None:
             out_rows["block"] = list(tuning.get("block_shape", []))
         rows.append(out_rows)
@@ -333,6 +341,8 @@ def main():
     ap.add_argument("--model-path", default=DEFAULT_MODEL)
     ap.add_argument("--ms", default="4,16,33")
     ap.add_argument("--reps", type=int, default=50)
+    ap.add_argument("--score", choices=["min", "median"], default="min",
+                    help="min-composed scoring resists clock-floor jitter")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--sweep", action="store_true")
     ap.add_argument("--shapes-file", help="json list of [N,K,kind] to bench")
