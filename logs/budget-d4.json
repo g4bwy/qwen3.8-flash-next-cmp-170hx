@@ -1,0 +1,1871 @@
+{
+ "model": "/ssd/ai/models/Qwen/Qwen3.8-Flash-Next-FP8",
+ "results": [
+  {
+   "n": 320,
+   "k": 10240,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 32.8,
+     "min": 32.8,
+     "med": 33.8,
+     "spread": 3.1,
+     "GB/s": 200.6
+    },
+    {
+     "name": "linear_out",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 221.4
+    },
+    {
+     "name": "matmul_t",
+     "us": 32.8,
+     "min": 32.8,
+     "med": 34.8,
+     "spread": 6.3,
+     "GB/s": 200.6
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 320,
+   "k": 10240,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 34.8,
+     "min": 34.8,
+     "med": 36.9,
+     "spread": 5.9,
+     "GB/s": 191.3
+    },
+    {
+     "name": "linear_out",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 224.2
+    },
+    {
+     "name": "matmul_t",
+     "us": 35.8,
+     "min": 35.8,
+     "med": 36.9,
+     "spread": 2.9,
+     "GB/s": 185.8
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 320,
+   "k": 10240,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 32.8,
+     "min": 32.8,
+     "med": 33.8,
+     "spread": 3.1,
+     "GB/s": 232.2
+    },
+    {
+     "name": "linear_out",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 29.7,
+     "spread": 0.0,
+     "GB/s": 256.2
+    },
+    {
+     "name": "matmul_t",
+     "us": 33.8,
+     "min": 33.8,
+     "med": 34.8,
+     "spread": 3.0,
+     "GB/s": 225.2
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 512,
+   "k": 2560,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 31.7,
+     "spread": 3.3,
+     "GB/s": 85.5
+    },
+    {
+     "name": "linear_out",
+     "us": 24.6,
+     "min": 24.6,
+     "med": 25.6,
+     "spread": 4.2,
+     "GB/s": 106.9
+    },
+    {
+     "name": "matmul_t",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 31.7,
+     "spread": 3.3,
+     "GB/s": 85.5
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 512,
+   "k": 2560,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 34.8,
+     "min": 34.8,
+     "med": 34.8,
+     "spread": 0.0,
+     "GB/s": 76.2
+    },
+    {
+     "name": "linear_out",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 29.7,
+     "spread": 0.0,
+     "GB/s": 89.3
+    },
+    {
+     "name": "matmul_t",
+     "us": 34.8,
+     "min": 34.8,
+     "med": 35.8,
+     "spread": 2.9,
+     "GB/s": 76.2
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 512,
+   "k": 2560,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 34.8,
+     "min": 34.8,
+     "med": 34.8,
+     "spread": 0.0,
+     "GB/s": 84.1
+    },
+    {
+     "name": "linear_out",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 98.6
+    },
+    {
+     "name": "matmul_t",
+     "us": 34.8,
+     "min": 34.8,
+     "med": 35.8,
+     "spread": 2.9,
+     "GB/s": 84.1
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 640,
+   "k": 2560,
+   "kind": "block:128,128",
+   "m": 1,
+   "heuristic": [
+    16,
+    64,
+    256
+   ],
+   "rows": [
+    {
+     "name": "default",
+     "us": 60.4,
+     "min": 60.4,
+     "med": 61.4,
+     "spread": 1.7,
+     "GB/s": 27.1
+    }
+   ],
+   "dt": "fp8"
+  },
+  {
+   "n": 640,
+   "k": 2560,
+   "kind": "block:128,128",
+   "m": 5,
+   "heuristic": [
+    16,
+    64,
+    256
+   ],
+   "rows": [
+    {
+     "name": "default",
+     "us": 59.4,
+     "min": 59.4,
+     "med": 60.4,
+     "spread": 1.7,
+     "GB/s": 27.6
+    }
+   ],
+   "dt": "fp8"
+  },
+  {
+   "n": 640,
+   "k": 2560,
+   "kind": "block:128,128",
+   "m": 50,
+   "heuristic": [
+    64,
+    64,
+    128
+   ],
+   "rows": [
+    {
+     "name": "default",
+     "us": 67.6,
+     "min": 67.6,
+     "med": 68.6,
+     "spread": 1.5,
+     "GB/s": 24.2
+    }
+   ],
+   "dt": "fp8"
+  },
+  {
+   "n": 640,
+   "k": 2560,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 27.6,
+     "min": 27.6,
+     "med": 29.7,
+     "spread": 7.4,
+     "GB/s": 118.7
+    },
+    {
+     "name": "linear_out",
+     "us": 23.6,
+     "min": 23.6,
+     "med": 24.6,
+     "spread": 4.3,
+     "GB/s": 139.4
+    },
+    {
+     "name": "matmul_t",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 29.7,
+     "spread": 0.0,
+     "GB/s": 110.6
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 640,
+   "k": 2560,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 32.8,
+     "min": 32.8,
+     "med": 33.8,
+     "spread": 3.1,
+     "GB/s": 101.0
+    },
+    {
+     "name": "linear_out",
+     "us": 27.6,
+     "min": 27.6,
+     "med": 28.7,
+     "spread": 3.7,
+     "GB/s": 119.7
+    },
+    {
+     "name": "matmul_t",
+     "us": 33.8,
+     "min": 33.8,
+     "med": 34.8,
+     "spread": 3.0,
+     "GB/s": 97.9
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 640,
+   "k": 2560,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 31.7,
+     "min": 31.7,
+     "med": 31.7,
+     "spread": 0.0,
+     "GB/s": 113.3
+    },
+    {
+     "name": "linear_out",
+     "us": 26.6,
+     "min": 26.6,
+     "med": 27.6,
+     "spread": 3.8,
+     "GB/s": 135.1
+    },
+    {
+     "name": "matmul_t",
+     "us": 32.8,
+     "min": 32.8,
+     "med": 32.8,
+     "spread": 0.0,
+     "GB/s": 109.8
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 1152,
+   "k": 1152,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 29.7,
+     "spread": 3.6,
+     "GB/s": 92.7
+    },
+    {
+     "name": "linear_out",
+     "us": 23.6,
+     "min": 23.6,
+     "med": 24.6,
+     "spread": 4.3,
+     "GB/s": 112.9
+    },
+    {
+     "name": "matmul_t",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 29.7,
+     "spread": 0.0,
+     "GB/s": 89.5
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 1152,
+   "k": 1152,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 29.7,
+     "spread": 3.6,
+     "GB/s": 93.4
+    },
+    {
+     "name": "linear_out",
+     "us": 23.6,
+     "min": 23.6,
+     "med": 24.6,
+     "spread": 4.3,
+     "GB/s": 113.7
+    },
+    {
+     "name": "matmul_t",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 29.7,
+     "spread": 3.6,
+     "GB/s": 93.4
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 1152,
+   "k": 1152,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 27.6,
+     "min": 27.6,
+     "med": 28.7,
+     "spread": 3.7,
+     "GB/s": 104.3
+    },
+    {
+     "name": "linear_out",
+     "us": 23.6,
+     "min": 23.6,
+     "med": 23.6,
+     "spread": 0.0,
+     "GB/s": 122.5
+    },
+    {
+     "name": "matmul_t",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 29.7,
+     "spread": 3.6,
+     "GB/s": 100.6
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 1152,
+   "k": 4304,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 33.8,
+     "min": 33.8,
+     "med": 34.8,
+     "spread": 3.0,
+     "GB/s": 293.8
+    },
+    {
+     "name": "linear_out",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 31.7,
+     "spread": 3.3,
+     "GB/s": 323.2
+    },
+    {
+     "name": "matmul_t",
+     "us": 33.8,
+     "min": 33.8,
+     "med": 34.8,
+     "spread": 3.0,
+     "GB/s": 293.8
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 1152,
+   "k": 4304,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 34.8,
+     "min": 34.8,
+     "med": 35.8,
+     "spread": 2.9,
+     "GB/s": 286.4
+    },
+    {
+     "name": "linear_out",
+     "us": 31.7,
+     "min": 31.7,
+     "med": 32.8,
+     "spread": 3.2,
+     "GB/s": 314.1
+    },
+    {
+     "name": "matmul_t",
+     "us": 36.9,
+     "min": 36.9,
+     "med": 38.9,
+     "spread": 5.6,
+     "GB/s": 270.5
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 1152,
+   "k": 4304,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 35.8,
+     "min": 35.8,
+     "med": 36.9,
+     "spread": 2.9,
+     "GB/s": 291.9
+    },
+    {
+     "name": "linear_out",
+     "us": 32.8,
+     "min": 32.8,
+     "med": 32.8,
+     "spread": 0.0,
+     "GB/s": 319.3
+    },
+    {
+     "name": "matmul_t",
+     "us": 36.9,
+     "min": 36.9,
+     "med": 36.9,
+     "spread": 0.0,
+     "GB/s": 283.8
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2304,
+   "k": 1152,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 29.7,
+     "spread": 3.6,
+     "GB/s": 185.4
+    },
+    {
+     "name": "linear_out",
+     "us": 23.6,
+     "min": 23.6,
+     "med": 24.6,
+     "spread": 4.3,
+     "GB/s": 225.7
+    },
+    {
+     "name": "matmul_t",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 179.0
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2304,
+   "k": 1152,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 29.7,
+     "spread": 0.0,
+     "GB/s": 179.9
+    },
+    {
+     "name": "linear_out",
+     "us": 24.6,
+     "min": 24.6,
+     "med": 25.6,
+     "spread": 4.2,
+     "GB/s": 217.4
+    },
+    {
+     "name": "matmul_t",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 179.9
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2304,
+   "k": 1152,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 29.7,
+     "spread": 3.6,
+     "GB/s": 197.2
+    },
+    {
+     "name": "linear_out",
+     "us": 24.6,
+     "min": 24.6,
+     "med": 25.6,
+     "spread": 4.2,
+     "GB/s": 230.1
+    },
+    {
+     "name": "matmul_t",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 190.4
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 640,
+   "kind": "block:128,128",
+   "m": 1,
+   "heuristic": [
+    16,
+    64,
+    128
+   ],
+   "rows": [
+    {
+     "name": "default",
+     "us": 80.9,
+     "min": 80.9,
+     "med": 82.9,
+     "spread": 2.5,
+     "GB/s": 20.3
+    }
+   ],
+   "dt": "fp8"
+  },
+  {
+   "n": 2560,
+   "k": 640,
+   "kind": "block:128,128",
+   "m": 5,
+   "heuristic": [
+    16,
+    64,
+    128
+   ],
+   "rows": [
+    {
+     "name": "default",
+     "us": 42.0,
+     "min": 42.0,
+     "med": 60.4,
+     "spread": 43.9,
+     "GB/s": 39.0
+    }
+   ],
+   "dt": "fp8"
+  },
+  {
+   "n": 2560,
+   "k": 640,
+   "kind": "block:128,128",
+   "m": 50,
+   "heuristic": [
+    64,
+    64,
+    128
+   ],
+   "rows": [
+    {
+     "name": "default",
+     "us": 59.4,
+     "min": 59.4,
+     "med": 60.4,
+     "spread": 1.7,
+     "GB/s": 27.6
+    }
+   ],
+   "dt": "fp8"
+  },
+  {
+   "n": 2560,
+   "k": 640,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 29.7,
+     "spread": 3.6,
+     "GB/s": 114.5
+    },
+    {
+     "name": "linear_out",
+     "us": 23.6,
+     "min": 23.6,
+     "med": 24.6,
+     "spread": 4.3,
+     "GB/s": 139.4
+    },
+    {
+     "name": "matmul_t",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 110.6
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 640,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 29.7,
+     "spread": 3.6,
+     "GB/s": 115.4
+    },
+    {
+     "name": "linear_out",
+     "us": 23.6,
+     "min": 23.6,
+     "med": 24.6,
+     "spread": 4.3,
+     "GB/s": 140.5
+    },
+    {
+     "name": "matmul_t",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 30.7,
+     "spread": 7.1,
+     "GB/s": 115.4
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 640,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 29.7,
+     "spread": 3.6,
+     "GB/s": 125.4
+    },
+    {
+     "name": "linear_out",
+     "us": 23.6,
+     "min": 23.6,
+     "med": 24.6,
+     "spread": 4.3,
+     "GB/s": 152.7
+    },
+    {
+     "name": "matmul_t",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 121.1
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 2560,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 33.8,
+     "min": 33.8,
+     "med": 34.8,
+     "spread": 3.0,
+     "GB/s": 388.2
+    },
+    {
+     "name": "linear_out",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 30.7,
+     "spread": 0.0,
+     "GB/s": 427.0
+    },
+    {
+     "name": "matmul_t",
+     "us": 33.8,
+     "min": 33.8,
+     "med": 34.8,
+     "spread": 3.0,
+     "GB/s": 388.2
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 2560,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 34.8,
+     "min": 34.8,
+     "med": 35.8,
+     "spread": 2.9,
+     "GB/s": 377.9
+    },
+    {
+     "name": "linear_out",
+     "us": 31.7,
+     "min": 31.7,
+     "med": 32.8,
+     "spread": 3.2,
+     "GB/s": 414.5
+    },
+    {
+     "name": "matmul_t",
+     "us": 35.8,
+     "min": 35.8,
+     "med": 35.8,
+     "spread": 0.0,
+     "GB/s": 367.1
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 2560,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 34.8,
+     "min": 34.8,
+     "med": 35.8,
+     "spread": 2.9,
+     "GB/s": 391.2
+    },
+    {
+     "name": "linear_out",
+     "us": 31.7,
+     "min": 31.7,
+     "med": 32.8,
+     "spread": 3.2,
+     "GB/s": 429.0
+    },
+    {
+     "name": "matmul_t",
+     "us": 35.8,
+     "min": 35.8,
+     "med": 35.8,
+     "spread": 0.0,
+     "GB/s": 380.0
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 4608,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 47.1,
+     "min": 47.1,
+     "med": 49.2,
+     "spread": 4.3,
+     "GB/s": 501.2
+    },
+    {
+     "name": "linear_out",
+     "us": 44.0,
+     "min": 44.0,
+     "med": 45.1,
+     "spread": 2.3,
+     "GB/s": 536.1
+    },
+    {
+     "name": "matmul_t",
+     "us": 49.2,
+     "min": 49.2,
+     "med": 50.2,
+     "spread": 2.1,
+     "GB/s": 480.3
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 4608,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 48.1,
+     "min": 48.1,
+     "med": 49.7,
+     "spread": 3.2,
+     "GB/s": 491.7
+    },
+    {
+     "name": "linear_out",
+     "us": 45.1,
+     "min": 45.1,
+     "med": 46.1,
+     "spread": 2.3,
+     "GB/s": 525.2
+    },
+    {
+     "name": "matmul_t",
+     "us": 49.2,
+     "min": 49.2,
+     "med": 50.2,
+     "spread": 2.1,
+     "GB/s": 481.5
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 4608,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 48.1,
+     "min": 48.1,
+     "med": 49.2,
+     "spread": 2.1,
+     "GB/s": 505.1
+    },
+    {
+     "name": "linear_out",
+     "us": 45.1,
+     "min": 45.1,
+     "med": 45.1,
+     "spread": 0.0,
+     "GB/s": 539.5
+    },
+    {
+     "name": "matmul_t",
+     "us": 48.1,
+     "min": 48.1,
+     "med": 49.2,
+     "spread": 2.1,
+     "GB/s": 505.1
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 6144,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 54.3,
+     "min": 54.3,
+     "med": 54.8,
+     "spread": 0.9,
+     "GB/s": 579.9
+    },
+    {
+     "name": "linear_out",
+     "us": 51.2,
+     "min": 51.2,
+     "med": 52.2,
+     "spread": 2.0,
+     "GB/s": 614.7
+    },
+    {
+     "name": "matmul_t",
+     "us": 54.3,
+     "min": 54.3,
+     "med": 55.3,
+     "spread": 1.9,
+     "GB/s": 579.9
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 6144,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 56.3,
+     "min": 56.3,
+     "med": 57.3,
+     "spread": 1.8,
+     "GB/s": 560.1
+    },
+    {
+     "name": "linear_out",
+     "us": 52.2,
+     "min": 52.2,
+     "med": 54.3,
+     "spread": 3.9,
+     "GB/s": 604.0
+    },
+    {
+     "name": "matmul_t",
+     "us": 57.3,
+     "min": 57.3,
+     "med": 58.4,
+     "spread": 1.8,
+     "GB/s": 550.1
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 2560,
+   "k": 6144,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 54.3,
+     "min": 54.3,
+     "med": 55.3,
+     "spread": 1.9,
+     "GB/s": 595.7
+    },
+    {
+     "name": "linear_out",
+     "us": 51.2,
+     "min": 51.2,
+     "med": 52.2,
+     "spread": 2.0,
+     "GB/s": 631.4
+    },
+    {
+     "name": "matmul_t",
+     "us": 55.3,
+     "min": 55.3,
+     "med": 56.3,
+     "spread": 1.9,
+     "GB/s": 584.6
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 3456,
+   "k": 1152,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 31.2,
+     "spread": 1.7,
+     "GB/s": 259.5
+    },
+    {
+     "name": "linear_out",
+     "us": 25.6,
+     "min": 25.6,
+     "med": 26.6,
+     "spread": 4.0,
+     "GB/s": 311.4
+    },
+    {
+     "name": "matmul_t",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 31.7,
+     "spread": 3.3,
+     "GB/s": 259.5
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 3456,
+   "k": 1152,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 29.7,
+     "spread": 3.6,
+     "GB/s": 279.3
+    },
+    {
+     "name": "linear_out",
+     "us": 25.6,
+     "min": 25.6,
+     "med": 25.6,
+     "spread": 0.0,
+     "GB/s": 312.8
+    },
+    {
+     "name": "matmul_t",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 269.7
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 3456,
+   "k": 1152,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 28.7,
+     "min": 28.7,
+     "med": 29.7,
+     "spread": 3.6,
+     "GB/s": 293.8
+    },
+    {
+     "name": "linear_out",
+     "us": 25.6,
+     "min": 25.6,
+     "med": 26.6,
+     "spread": 4.0,
+     "GB/s": 329.0
+    },
+    {
+     "name": "matmul_t",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 283.7
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 4304,
+   "k": 1152,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 334.3
+    },
+    {
+     "name": "linear_out",
+     "us": 26.6,
+     "min": 26.6,
+     "med": 27.6,
+     "spread": 3.8,
+     "GB/s": 372.9
+    },
+    {
+     "name": "matmul_t",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 31.7,
+     "spread": 3.3,
+     "GB/s": 323.2
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 4304,
+   "k": 1152,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 31.7,
+     "spread": 3.3,
+     "GB/s": 324.6
+    },
+    {
+     "name": "linear_out",
+     "us": 27.6,
+     "min": 27.6,
+     "med": 28.7,
+     "spread": 3.7,
+     "GB/s": 360.6
+    },
+    {
+     "name": "matmul_t",
+     "us": 31.7,
+     "min": 31.7,
+     "med": 31.7,
+     "spread": 0.0,
+     "GB/s": 314.1
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 4304,
+   "k": 1152,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 30.7,
+     "spread": 0.0,
+     "GB/s": 340.6
+    },
+    {
+     "name": "linear_out",
+     "us": 26.6,
+     "min": 26.6,
+     "med": 27.6,
+     "spread": 3.8,
+     "GB/s": 393.0
+    },
+    {
+     "name": "matmul_t",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 31.7,
+     "spread": 3.3,
+     "GB/s": 340.6
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 4608,
+   "k": 4608,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 60.4,
+     "min": 60.4,
+     "med": 61.4,
+     "spread": 1.7,
+     "GB/s": 703.2
+    },
+    {
+     "name": "linear_out",
+     "us": 57.3,
+     "min": 57.3,
+     "med": 57.3,
+     "spread": 0.0,
+     "GB/s": 740.9
+    },
+    {
+     "name": "matmul_t",
+     "us": 60.4,
+     "min": 60.4,
+     "med": 61.4,
+     "spread": 1.7,
+     "GB/s": 703.2
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 4608,
+   "k": 4608,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 60.4,
+     "min": 60.4,
+     "med": 61.4,
+     "spread": 1.7,
+     "GB/s": 704.4
+    },
+    {
+     "name": "linear_out",
+     "us": 57.3,
+     "min": 57.3,
+     "med": 58.4,
+     "spread": 1.8,
+     "GB/s": 742.2
+    },
+    {
+     "name": "matmul_t",
+     "us": 61.4,
+     "min": 61.4,
+     "med": 62.5,
+     "spread": 1.7,
+     "GB/s": 692.7
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 4608,
+   "k": 4608,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 60.4,
+     "min": 60.4,
+     "med": 61.4,
+     "spread": 1.7,
+     "GB/s": 718.2
+    },
+    {
+     "name": "linear_out",
+     "us": 57.3,
+     "min": 57.3,
+     "med": 58.4,
+     "spread": 1.8,
+     "GB/s": 756.6
+    },
+    {
+     "name": "matmul_t",
+     "us": 61.4,
+     "min": 61.4,
+     "med": 62.5,
+     "spread": 1.7,
+     "GB/s": 706.2
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 6144,
+   "k": 2560,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 51.2,
+     "min": 51.2,
+     "med": 52.2,
+     "spread": 2.0,
+     "GB/s": 614.7
+    },
+    {
+     "name": "linear_out",
+     "us": 48.1,
+     "min": 48.1,
+     "med": 49.2,
+     "spread": 2.1,
+     "GB/s": 654.0
+    },
+    {
+     "name": "matmul_t",
+     "us": 52.2,
+     "min": 52.2,
+     "med": 53.2,
+     "spread": 2.0,
+     "GB/s": 602.7
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 6144,
+   "k": 2560,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 52.2,
+     "min": 52.2,
+     "med": 53.2,
+     "spread": 2.0,
+     "GB/s": 604.0
+    },
+    {
+     "name": "linear_out",
+     "us": 49.2,
+     "min": 49.2,
+     "med": 50.2,
+     "spread": 2.1,
+     "GB/s": 641.8
+    },
+    {
+     "name": "matmul_t",
+     "us": 53.2,
+     "min": 53.2,
+     "med": 54.3,
+     "spread": 1.9,
+     "GB/s": 592.4
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 6144,
+   "k": 2560,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 52.2,
+     "min": 52.2,
+     "med": 54.3,
+     "spread": 3.9,
+     "GB/s": 619.0
+    },
+    {
+     "name": "linear_out",
+     "us": 49.2,
+     "min": 49.2,
+     "med": 51.2,
+     "spread": 4.2,
+     "GB/s": 657.7
+    },
+    {
+     "name": "matmul_t",
+     "us": 41.0,
+     "min": 41.0,
+     "med": 54.3,
+     "spread": 32.5,
+     "GB/s": 789.3
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 10240,
+   "k": 320,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 221.4
+    },
+    {
+     "name": "linear_out",
+     "us": 24.6,
+     "min": 24.6,
+     "med": 25.6,
+     "spread": 4.2,
+     "GB/s": 267.5
+    },
+    {
+     "name": "matmul_t",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 31.7,
+     "spread": 3.3,
+     "GB/s": 214.0
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 10240,
+   "k": 320,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 224.2
+    },
+    {
+     "name": "linear_out",
+     "us": 25.6,
+     "min": 25.6,
+     "med": 25.6,
+     "spread": 0.0,
+     "GB/s": 260.1
+    },
+    {
+     "name": "matmul_t",
+     "us": 30.7,
+     "min": 30.7,
+     "med": 30.7,
+     "spread": 0.0,
+     "GB/s": 216.8
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 10240,
+   "k": 320,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 29.7,
+     "spread": 0.0,
+     "GB/s": 256.2
+    },
+    {
+     "name": "linear_out",
+     "us": 25.6,
+     "min": 25.6,
+     "med": 26.6,
+     "spread": 4.0,
+     "GB/s": 297.3
+    },
+    {
+     "name": "matmul_t",
+     "us": 29.7,
+     "min": 29.7,
+     "med": 30.7,
+     "spread": 3.4,
+     "GB/s": 256.2
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 10240,
+   "k": 2560,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 70.7,
+     "min": 70.7,
+     "med": 71.7,
+     "spread": 1.4,
+     "GB/s": 742.4
+    },
+    {
+     "name": "linear_out",
+     "us": 67.6,
+     "min": 67.6,
+     "med": 68.6,
+     "spread": 1.5,
+     "GB/s": 776.1
+    },
+    {
+     "name": "matmul_t",
+     "us": 70.7,
+     "min": 70.7,
+     "med": 72.7,
+     "spread": 2.9,
+     "GB/s": 742.4
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 10240,
+   "k": 2560,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 73.7,
+     "min": 73.7,
+     "med": 80.9,
+     "spread": 9.7,
+     "GB/s": 712.8
+    },
+    {
+     "name": "linear_out",
+     "us": 76.8,
+     "min": 76.8,
+     "med": 77.8,
+     "spread": 1.3,
+     "GB/s": 684.3
+    },
+    {
+     "name": "matmul_t",
+     "us": 73.7,
+     "min": 73.7,
+     "med": 81.9,
+     "spread": 11.1,
+     "GB/s": 712.8
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 10240,
+   "k": 2560,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 79.9,
+     "min": 79.9,
+     "med": 81.9,
+     "spread": 2.6,
+     "GB/s": 672.4
+    },
+    {
+     "name": "linear_out",
+     "us": 76.8,
+     "min": 76.8,
+     "med": 77.8,
+     "spread": 1.3,
+     "GB/s": 699.3
+    },
+    {
+     "name": "matmul_t",
+     "us": 80.9,
+     "min": 80.9,
+     "med": 81.9,
+     "spread": 1.3,
+     "GB/s": 663.9
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 12288,
+   "k": 2560,
+   "kind": "none",
+   "m": 1,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 79.9,
+     "min": 79.9,
+     "med": 80.9,
+     "spread": 1.3,
+     "GB/s": 788.1
+    },
+    {
+     "name": "linear_out",
+     "us": 76.8,
+     "min": 76.8,
+     "med": 77.3,
+     "spread": 0.7,
+     "GB/s": 819.6
+    },
+    {
+     "name": "matmul_t",
+     "us": 80.9,
+     "min": 80.9,
+     "med": 81.9,
+     "spread": 1.3,
+     "GB/s": 778.1
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 12288,
+   "k": 2560,
+   "kind": "none",
+   "m": 5,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 80.9,
+     "min": 80.9,
+     "med": 81.9,
+     "spread": 1.3,
+     "GB/s": 779.6
+    },
+    {
+     "name": "linear_out",
+     "us": 77.8,
+     "min": 77.8,
+     "med": 78.8,
+     "spread": 1.3,
+     "GB/s": 810.3
+    },
+    {
+     "name": "matmul_t",
+     "us": 81.9,
+     "min": 81.9,
+     "med": 82.9,
+     "spread": 1.3,
+     "GB/s": 769.8
+    }
+   ],
+   "dt": "bf16"
+  },
+  {
+   "n": 12288,
+   "k": 2560,
+   "kind": "none",
+   "m": 50,
+   "heuristic": null,
+   "rows": [
+    {
+     "name": "F.linear",
+     "us": 81.9,
+     "min": 81.9,
+     "med": 82.9,
+     "spread": 1.3,
+     "GB/s": 786.1
+    },
+    {
+     "name": "linear_out",
+     "us": 77.8,
+     "min": 77.8,
+     "med": 78.8,
+     "spread": 1.3,
+     "GB/s": 827.5
+    },
+    {
+     "name": "matmul_t",
+     "us": 81.9,
+     "min": 81.9,
+     "med": 84.0,
+     "spread": 2.5,
+     "GB/s": 786.1
+    }
+   ],
+   "dt": "bf16"
+  }
+ ]
+}

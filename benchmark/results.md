@@ -665,6 +665,28 @@ at first step), fixed-salt cell x3 with stepwatch, reboot unpatched,
 x3 again, compare decode step_ms medians. Upside case: single-digit
 percent. Null case, pre-registered: split-KV touches disjoint tiles
 and index overlap across draft iterations is too small to matter.
+
+#### L2 experiment 1: FAILED - not a miss, a corruption class. REVERTED
+
+Patched boot, fixed-salt 7770 cells: acceptance 1.59/1.67/1.60
+(unpatched reference 4.75-4.91 on identical prompts), decode ~71-74
+tok/s while steps ran FASTER (~15 ms) because collapsed acceptance
+empties the verify pipeline. A cache hint that changes values is a
+driver/hardware story, and this silicon already owns one documented
+load-path quirk (Xid 31 first-touch MMU faults on the unlocked GSP
+stack). Verdict: eviction-priority PTX hints corrupt loads on this
+box; the entire L2 poaching line is CLOSED - KV evict_last, and by
+extension the planned hc.py/indexer trials and any evict-first
+variant. Revert = checkout qsa.py; post-revert fixed-salt acceptance
+must return to ~4.9.
+Rule extracted, permanent: on modified-driver GPUs, every kernel-level
+trial reads fixed-salt ACCEPTANCE first, timing second - timing can
+look great while values rot. Budget consequence: the 40% latency/
+state share of the step now has no cheap lever left; the only
+informed next move for it is phase-level instrumentation (a real
+tool, scheduled deliberately), or nothing.
+Capture: logs/sw-l2-patched.jsonl (364 KB, with clocks - first nvml
+run).
 ### Salt law (2026-10-12, supersedes "post-idle" and "bimodal machine")
 
 Fixed-salt triples: acc 4.90/4.91/4.75, decode 208-215 (+-1.5%).
