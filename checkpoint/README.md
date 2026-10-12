@@ -99,8 +99,10 @@ batches.
 Dense rel-RMS: mean 0.64 %, max 0.74 % across the 228. Verification: zero
 failures on 152,089 tensors, twice (v1 and v2 layouts). Measured on the
 4x-1m lane, two boots per side, against the official FP8 tree: single-stream
-decode +3.1 to +5.0 %, prefill (prompt/TTFT) -1.7 to -2.5 %, KV pool
-+23,220 tokens, acceptance 3.86-3.95 unchanged. Quality gate
+decode +15 % at MTP-4 with the fixed v3 gate (216-226 tok/s vs 190-192 at
+depth 3), prefill (prompt/TTFT) -1.7 to -2.5 %, KV pool +23,220 tokens at
+depth 3 (+17k net at depth 4 after block rounding), acceptance unchanged
+at depth 3. Quality gate
 (`benchmark/logprob_capture.py` + `benchmark/quality_diff.py`, captures in
 `benchmark/quality/`): top-1 flip rate 8.1 % against a machine
 non-reproducibility floor of 7.3 % measured both within and across boots.
