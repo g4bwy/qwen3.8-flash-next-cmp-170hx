@@ -607,6 +607,17 @@ Raw: `bench-fix-*.json`, `bench-fixd4-*.json`, `bench-d5*.json`,
   int8. Prefill also did NOT regress at depth 4 on the official tree
   (10.35k vs the 10.1-10.2k d3 band), so the lane's "-2 % prefill" is a
   lane-vs-official delta (Marlin unpack), not a depth cost.
+  Batch control added same session: 100/4 median of three = wall
+  386.3 s (vs 392-393 official d3, 399-405 lane d4), TTFT 235-237,
+  acceptance 3.59-4.90 median 4.36 vs the small-head 2.93-2.98. The
+  depth gate combination is the best 4-stream wall this box has
+  recorded on the official tree.
+  Corollary for lane selection: at batch full-fill the official tree
+  now beats the int8 lane (386 s vs 399-405 s) - the Marlin prefill
+  tax dominates where prefill is the wall and extra resident bytes do
+  not pay. Lane profile, stated plainly: it wins single-stream and
+  low-concurrency deep context (+6% over official at identical depth),
+  and loses ~4% at 4x1M full fill. Choose by workload, not by headline.
 - Ship depth 4: best real-content profile at T=0, neutral-to-better
   elsewhere, +15% synthetic single-stream over d3, +20% vs the official
   FP8 tree's 181-184.
