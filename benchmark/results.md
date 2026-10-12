@@ -627,6 +627,19 @@ Raw: `bench-fix-*.json`, `bench-fixd4-*.json`, `bench-d5*.json`,
   first cell after long idle; two boots of d5 would have been misread
   without this.
 
+### Salt law (2026-10-12, supersedes "post-idle" and "bimodal machine")
+
+Fixed-salt triples: acc 4.90/4.91/4.75, decode 208-215 (+-1.5%).
+Time-salted triples on the same config: acc 3.2-4.9, decode 145-213.
+The scatter this session kept blaming on the box (post-idle cells, the
+176<->216 flips, the v3 "2.44") is the prompt lottery at depth 4+:
+acceptance carries the content, clocks do not. TTFT never moved.
+Protocol, final form: comparisons pin --salt; headline ranges rotate
+salt and quote the band; identical fixed salt re-uses the prefix cache
+(itself now demonstrated: 1M-token re-prompt at 4.8 s TTFT, 103k
+tok/s in, vs 90.7 s cold). The old "first cell after idle" folklore is
+retired - the cells were never identical to begin with.
+
 #### Indexer sharing across draft steps: voided, retest pending
 
 Retest 2026-10-12, fixed d4 stack (depth 4, Marlin, 40k head, warmup
