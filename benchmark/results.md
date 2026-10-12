@@ -510,10 +510,14 @@ maki-session text at the clients' own sampling defaults (T=1.0, top_k=20),
   the gate is free), but its expected win on real sessions is ~0, and
   2.31 is the number to hold v3 against, not 3.9.
 
-#### v3 dual-head: measured
+#### v3 dual-head: measured (numbers voided by f660b7e, see depth ladder)
 
 Boot 2026-10-11 22:08, W8A16 lane, Humming kernel, 40k vocab, tree
-9a7a4cd46e. Pool 2,620,743, identical to v2 to the token: the full head
+9a7a4cd46e. VOID NOTE: this boot carried the broken gate predicate, so
+"v3" here behaved as always-full-head; the 3.73-3.92 acceptances match
+the dv-off control because they WERE dv-off behavior, and the "2.44
+outlier" was the post-idle first-cell artifact identified 2026-10-12.
+The gate's real validation is the depth-ladder section below. Pool 2,620,743, identical to v2 to the token: the full head
 lives in rank 3's slack, exactly as designed. Raw: `bench-v3-100n4-short
 /r2/r3.json`, `bench-v3-50n4.json`, `quality/corpus_v3_*.json`.
 
@@ -571,7 +575,49 @@ group sizes"), so `--prefix-cache-retention-interval` must track it
   after trailing rejections", the megakernel project does this) would
   be the honest version of this feature; TODO-listed, not scheduled.
 
-#### Indexer sharing across draft steps: negative on this config
+#### The depth ladder on the fixed stack: ship 4 (2026-10-12)
+
+All numbers post f660b7e (correct gate predicate), Marlin lane, W8A16 +
+v3 dual-head + 40k draft vocab, same stack across depths, cooldowns
+between cells. Two boots at depth 5, one at 3 and 4.
+Raw: `bench-fix-*.json`, `bench-fixd4-*.json`, `bench-d5*.json`,
+`quality/corpus-*d5*.json`, `quality/corpus-fixd4-*.json`.
+
+| profile | d3 | d4 | d5 |
+|---|---:|---:|---:|
+| 100/1 tok/s | 192.2 | 226.2 | 233.6 / 241.0 |
+| 50/1 tok/s | 190.2 | 216.6 | 237.9 |
+| E synthetic | 3.94 | 4.88 | 5.59-5.80 |
+| 100/4 wall s | ~404 | ~400 | 400.5 |
+| 100/4 win avg | 45-54 | 48-53 | 66.0 |
+| corpus T=1 rates | ~63 | ~64 | ~65 (neutral x3) |
+| corpus greedy rates | not measured | 101-124 | 74-113 / 79-100 (mean ~89, x2) |
+| pool tokens | 2,619,195 | 2,594,720 | 2,573,208 |
+
+- Depth pays only on greedy/low-temp content; sampled real traffic is
+  flat from 3 to 5 (E ~2.1-2.4, rates ~63-65). The gain is not free:
+  real-text greedy loses ~15% going 4->5 (fifth iteration never pays on
+  content where the chain dies at position 2-3), and each depth costs
+  ~1% pool plus the block/ring config dance (d5 needs --block-size 1632
+  for the QSA ring, retention 16320).
+- Ship depth 4: best real-content profile at T=0, neutral-to-better
+  elsewhere, +15% synthetic single-stream over d3, +20% vs the official
+  FP8 tree's 181-184.
+- PROTOCOL, new: the first heavy decode cell after a long idle can
+  collapse acceptance (d5 boot2: E 1.19 / 51.8 tok/s; v3 boot's 2.44 the
+  same species). Immediate rerun restored 241.0 / E 5.80. Discard the
+  first cell after long idle; two boots of d5 would have been misread
+  without this.
+
+#### Indexer sharing across draft steps: voided, retest pending
+
+NOTE (2026-10-12): this section's measurements ran on the broken v3 gate
+(full head on every round, f660b7e era predecessor). Flag-on 175.9 and
+clean-Humming 176.9 were both the bug, not the flag. The conclusion
+below stands only as history; a valid retest on the fixed depth-4 stack
+is the next queued experiment.
+
+Original text follows.
 
 The upstream `index_share_for_mtp_iteration` flag (hooks implemented in
 `qwen4_exp/nvidia/mtp.py`, driven by the MTP speculator) is the free

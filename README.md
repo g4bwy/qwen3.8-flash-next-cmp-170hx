@@ -140,8 +140,8 @@ Patch 8 makes the MTP drafter score a small head instead of the 248k-row
 lm_head per draft step, worth ~9% single-stream. It keeps the full head
 resident too and drafts mixed prefill+decode windows (a stream joining or
 growing while others decode) with it, because that is where the small head
-costs acceptance: greedy short-tail 4-stream cells moved from 2.93-2.98 to
-3.73-3.76 with the dual head, pool unchanged. Uniform decode rounds replay
+costs acceptance: greedy short-tail 4-stream cells read 3.7-4.3 at depth 4
+on the fixed gate, versus 2.9 with the small head everywhere. Uniform decode rounds replay
 the graphed small head and keep the win. Sampled corpus traffic shows no
 measurable effect either way. Artifact commands and the measured story:
 [checkpoint/README.md](checkpoint/README.md). Engages only when the
@@ -301,9 +301,10 @@ set to 2048` comes from MTP-3.
 `checkpoint/` builds a variant of the official FP8 tree that stores the 228
 main-body dense matrices as int8 (group-32, weight-only) instead of bf16.
 Serving it needs patch 10 and no other change; point `MODEL=` at the built
-directory. Two boots per side on 4x-1m: single-stream decode 187-192 tok/s
-(+3.1 to +5.0 %), prefill -1.7 to -2.5 %, KV pool +23,220 tokens,
-acceptance 3.86-3.95 unchanged. The quality gate (166k scored positions,
+directory. Two boots per side on 4x-1m: single-stream decode 216-226 tok/s
+at MTP-4 (+15 % over this lane's 190-192 at depth 3; +20 % over the
+official FP8 tree's 181-184), prefill -1.7 to -2.5 %, KV pool +17k net at
+depth 4, acceptance unchanged. The quality gate (166k scored positions,
 two captures per boot, four boots): top-1 flip 8.1 % against a 7.3 %
 machine non-reproducibility floor measured within and across boots, so
 about one position in 130 moves because of the quantization. Full tables:

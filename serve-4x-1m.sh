@@ -60,13 +60,14 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --moe-backend humming \
     --enable-prefix-caching \
     --mamba-cache-mode align \
-    --prefix-cache-retention-interval 16000 \
+    --prefix-cache-retention-interval 16160 \
+    --block-size 1616 \
     --prefix-match-unit 16 \
     --gpu-memory-utilization 0.94 \
     --max-model-len 1000000 \
     --hf-overrides '{"text_config":{"max_position_embeddings":1000000,"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":262144}}}' \
     --max-num-seqs 8 \
-    --speculative-config '{"method":"mtp","num_speculative_tokens":3}' \
+    --speculative-config '{"method":"mtp","num_speculative_tokens":4}' \
     -cc.cudagraph_mode=FULL_AND_PIECEWISE \
     --no-enable-flashinfer-autotune \
     --enable-auto-tool-choice \
