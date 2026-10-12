@@ -2,6 +2,7 @@
 
 Patches over vLLM mainline, running with uv venv.
 No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nonsense.
+The thing's basically debugging and optimizing itself, so expect some slop, but trying to avoid it as much as possible.
 
 - Box: 4x NVIDIA CMP 170HX (GA100, unlocked to 64 GB and 74 SM), one NUMA node,
   PLE n-gram table in pinned host RAM. Every number here is at a 200 W per-card
