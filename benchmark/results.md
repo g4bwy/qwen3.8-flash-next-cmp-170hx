@@ -627,6 +627,26 @@ Raw: `bench-fix-*.json`, `bench-fixd4-*.json`, `bench-d5*.json`,
   first cell after long idle; two boots of d5 would have been misread
   without this.
 
+### Budget sweep v1 (2026-10-12): partial by construction, two columns
+missing
+
+`logs/budget-d4.json`, min-composed, m=1/5/50. Findings:
+- bf16 dense big shapes (12288x2560, 10240x2560, 4608^2, 6144x2560) run
+  580-790 GB/s solo = 60-78% of the 1.1 TB/s ceiling: the bandwidth
+  regime where halving bytes pays.
+- Everything <= ~1.6M elements pins at 24-30 us across m=1..50: solo
+  launch-latency floor. In-graph pipelining hides most of this; only a
+  production A/B can price L2 policy here.
+- The dense fp8-block rows (27-39 GB/s, 2-3x slower than bf16 on the
+  SAME tiles) measure a path production never calls (experts run
+  grouped). Kept as the grouped kernel's tuning cousin to test, not as
+  a budget line.
+- Verdict: the step budget cannot be closed from this file. Missing
+  columns: grouped-MoE expert GEMM (the actual expert path) and int8
+  pack-quantized Marlin (the lane's dense path). Bench extension
+  underway; until then L2-vs-kernel priorities are claims without a
+  map.
+
 ### Salt law (2026-10-12, supersedes "post-idle" and "bimodal machine")
 
 Fixed-salt triples: acc 4.90/4.91/4.75, decode 208-215 (+-1.5%).
