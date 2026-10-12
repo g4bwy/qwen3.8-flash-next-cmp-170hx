@@ -647,6 +647,24 @@ missing
   underway; until then L2-vs-kernel priorities are claims without a
   map.
 
+
+#### L2 experiment 1: QSA KV evict-last (experiments/0009)
+
+The 60/40 split (bytes vs latency/state, from the budget sweep plus
+ceiling arithmetic) says attack the 40% in production rather than
+extend the microbench. The megakernel recipe inverts on our stack:
+their weights lived in their kernels, ours live in cuBLAS/humming/
+Marlin where loads cannot be tagged - so the poachable policy is the
+opposite end: mark the QSA sparse-paged attention kernel's KV loads
+evict_last so the 2048-token working window survives L2 across the
+four draft iterations and five verify rows instead of being flushed
+by the gigabytes of GEMM streaming around it.
+
+Protocol: apply to the serving tree (python-only; Triton recompiles
+at first step), fixed-salt cell x3 with stepwatch, reboot unpatched,
+x3 again, compare decode step_ms medians. Upside case: single-digit
+percent. Null case, pre-registered: split-KV touches disjoint tiles
+and index overlap across draft iterations is too small to matter.
 ### Salt law (2026-10-12, supersedes "post-idle" and "bimodal machine")
 
 Fixed-salt triples: acc 4.90/4.91/4.75, decode 208-215 (+-1.5%).

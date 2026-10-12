@@ -1,0 +1,20 @@
+diff --git a/vllm/models/qwen4_exp/nvidia/ops/qsa.py b/vllm/models/qwen4_exp/nvidia/ops/qsa.py
+index 401048e02c..09101af176 100644
+--- a/vllm/models/qwen4_exp/nvidia/ops/qsa.py
++++ b/vllm/models/qwen4_exp/nvidia/ops/qsa.py
+@@ -140,6 +140,7 @@ def _qsa_sparse_paged_gqa_splitk_kernel(
+             + dim_offsets[:, None],
+             mask=valid[None, :],
+             other=0.0,
++            eviction_policy="evict_last",
+         )
+         values = tl.load(
+             v_cache_ptr
+@@ -149,6 +150,7 @@ def _qsa_sparse_paged_gqa_splitk_kernel(
+             + dim_offsets[None, :],
+             mask=valid[:, None],
+             other=0.0,
++            eviction_policy="evict_last",
+         )
+         if IS_FP8:
+             # e4m3 -> Q dtype is exact; keep the QK dot in Q's dtype (fp8 QK
