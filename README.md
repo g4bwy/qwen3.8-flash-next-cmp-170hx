@@ -1,4 +1,4 @@
-# Qwen3.8-Flash-Next-FP8 (official checkpoint) on 3x or 4x CMP170HX / PP=3 or PP=4 / MTP-3, MTP-4 on the W8A16 lane
+# Qwen3.8-Flash-Next-FP8 (official checkpoint) on 4x CMP170HX / PP=4 / MTP-4, optional W8A16 lane
 
 Patches over vLLM mainline, running with uv venv.
 No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nonsense.
@@ -11,7 +11,7 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
   puts every pair at NODE distance. A ring is only as wide as its narrowest
   card, so budget about 2 GB/s between any two GPUs, not 8. NCCL needs
   `NCCL_P2P_LEVEL=SYS` to use peer DMA here at all.
-- Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve scripts pull this tag by default. Override with `MODEL=/local/path`. All serve scripts default to MTP-4; the fast lane builds an int8-dense variant with `checkpoint/` (+6 % on top of depth, +20 % over official MTP-3).
+- Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve script pulls this tag by default; override with `MODEL=/local/path`. MTP-4 is the shipped depth; the fast lane builds an int8-dense variant with `checkpoint/` (+6 % on top of depth, +20 % over MTP-3).
 - Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
 - 10 patches: eight ours, two adopted from pending upstream PRs (#56444 as
   patch 2, #58094 as patch 7). After
@@ -29,7 +29,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout 155488d853a0bc42df227dbfc74005b3fd488e94
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # c51f4b08fcc2ae527826ebac5ef77be77201ebd6
+git rev-parse 'HEAD^{tree}'   # 1de2b16fd7b10bd552577667f88399bc3cea22ed
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
@@ -78,55 +78,36 @@ python -c "import vllm; print(vllm.__file__)"   # must be your checkout, not a s
 
 ## Run
 
-Six launch scripts: three context sizes, two GPU sets. Same tree, same port,
-one at a time:
-
-| script | gpus | context | RoPE | pool headroom |
-|---|---|---|---|---|
-| `serve-3x.sh` | 3 | 262,144 | none, native window | 4.39x, best multi-stream decode |
-| `serve-3x-512k.sh` | 3 | 524,288 | static YaRN 2.0 | 2.30x |
-| `serve-3x-1m.sh` | 3 | 1,000,000 | static YaRN 4.0 | 1.21x, one request fits |
-| `serve-4x.sh` | 4 | 262,144 | none, native window | 9.24x, best prefill and TTFT |
-| `serve-4x-512k.sh` | 4 | 524,288 | static YaRN 2.0 | 4.87x |
-| `serve-4x-1m.sh` | 4 | 1,000,000 | static YaRN 4.0 | 2.60x |
-
-Headroom is the measured KV pool divided by one full-context request, so it
-counts how many such requests fit at once. `--max-num-seqs 8` limits admission
-below it on the 4x 262k row. Choose PP=3 when streams decode side by side. It
-pays one fewer hop per step and holds 457 against 405 tok/s at four streams on
-262k. Choose PP=4 for long prompts, where prefill reaches 9.9k against 9.3k
-tok/s and time to first token drops from 28.5 s to 22.1 s.
+One service script, the shipped state:
 
 ```bash
 ./serve-4x-1m.sh       # MODEL=/local/path overrides the checkpoint tag
 ```
 
-`serve-4x-1m-tp.sh` is a seventh script, kept for reference and not run. It
-swaps PP=4 for TP=4 with `--enable-expert-parallel`, and loses: 1,434 against
-9,012 tok/s prefill, 111.7 against 185.1 tok/s single-stream decode, 1.74x
-against 2.60x KV pool. TP puts roughly 100 collectives in every decode step, so
-the x4 links above are the wall. Peer DMA adds 20% there. At PP=4 it costs 2 to
-3% of prefill with decode unchanged, so the shipped scripts keep
-`NCCL_P2P_DISABLE=1`. Tables: benchmark/results.md.
+4x cards, PP=4, partition `13,12,12,11`, 1,000,000 context at static YaRN 4.0,
+MTP-4 draft depth, KV pool 2.57x one full request. Prefix it with `PROF=1` to
+arm the capped torch profiler for step-anatomy runs (benchmark/phase_probe.py).
+Retired configs live in [archive/](archive/README.md): the 3-card set, the
+262k and 512k lanes, and the rejected TP=4+EP trial, each with its tables.
 
-All six scripts share these settings:
+What the script carries, and why:
 
-- MTP-3 spec decode, and the PLE n-gram table offloaded to pinned host RAM
+- MTP-4 spec decode, and the PLE n-gram table offloaded to pinned host RAM
   (`--engram-config '{"cpu_offload": true}'`).
-- Prefix caching with `--mamba-cache-mode align` and `--prefix-cache-retention-interval
-  16000`, plus `--prefix-match-unit 16` on the three 4-card lanes. The 3-card set
-  is historical and does not carry the match unit, so its reuse numbers still
-  reflect the 1,600-token floor. See Prefix caching.
-- NCCL IB off (single node, no fabric). NCCL P2P is off in every script except
-  `serve-4x-1m.sh`, which drops `NCCL_P2P_DISABLE=1` after the 2026-10-09
-  driver upgrade made peer access available on this box. Unmeasured so far.
+- Prefix caching with `--mamba-cache-mode align`,
+  `--prefix-cache-retention-interval 16160` and `--prefix-match-unit 16`.
+  MTP-4 forces a 1616 scheduler block (1600 + 16 per extra draft row) and the
+  retention interval is a multiple of it; the match unit drops the hit floor
+  from 1,600 to 32 tokens. See Prefix caching.
+- NCCL IB off (single node, no fabric). NCCL P2P off as well: peer DMA
+  measured 2 to 3% off prefill with decode unchanged, so the shipped path
+  stays host-staged.
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, which stops allocator-OOM
   retries. vLLM forbids it only with KV connectors, and we run none.
-- Layer partitions `13,12,12,11` on all three 4-card lanes, and `16,17,15` on
-  the 3-card scripts. The 3-card set is kept for historical comparison and is
-  not tuned further. See the 4-card notes below.
+- `VLLM_SAFETENSORS_DROP_CACHE=1` (patch 9): consumed shards leave the page
+  cache, so the 173 GiB boot read does not evict reusable cache.
 
-Startup checks for the YaRN lanes:
+Startup checks for the YaRN lane:
 
 1. `Using max model len <N>` appears twice, once for the target and once for
    the `Qwen4ExpMTP` draft. A second, smaller number means patch 7 is missing,
@@ -224,80 +205,59 @@ warmup rather than steady decode.
 
 ### Pool and weights at boot
 
-| lane | context | KV pool | headroom | weights per rank (GiB) | KV per rank (GiB) |
-|---|---|---:|---:|---|---|
-| 3 cards | 262,144 | 1,150,599 | 4.39x | 43.81 / 46.27 / 45.02 | 13.23 |
-| 3 cards | 524,288 YaRN 2.0 | 1,204,810 | 2.30x | 43.94 / 46.39 / 45.14 | 13.03 |
-| 3 cards | 1M YaRN 4.0 | 1,208,978 | 1.21x | 44.19 / 46.64 / 45.39 | 12.76 |
-| 4 cards | 262,144 | 2,423,060 | 9.24x | 36.88 / 34.21 / 34.21 / 35.46 | 20.89 / 24.99 / 24.99 / 23.65 |
-| 4 cards | 524,288 YaRN 2.0 | 2,550,833 | 4.87x | 37.02 / 34.41 / 34.41 / 35.68 | 20.73 / 24.77 / 24.77 / 23.42 |
-| 4 cards | 1M YaRN 4.0 | 2,595,975 | 2.60x | 36.61 / 34.02 / 34.02 / 35.29 | 20.48 / 24.52 / 24.52 / 23.15 |
+| lane | context | KV pool | headroom |
+|---|---|---:|---:|
+| 4 cards, official FP8, MTP-4 | 1M YaRN 4.0 | 2,572,981 | 2.57x |
+| 4 cards, W8A16 dense, MTP-4 | 1M YaRN 4.0 | 2,594,720 | 2.59x |
 
-The 3-card column is one value because the pipeline splits there differ by only a
-few blocks. Each YaRN step adds 0.25 GiB per rank of weights. The cos/sin cache is
-`4 x 262144 x factor` fp32 rows, allocated before profiling, so it comes out of the
-KV pool.
+Per-rank weight and KV columns, and the retired 3-card / 262k / 524k rows:
+[archive/README.md](archive/README.md). The YaRN cos/sin cache
+(`4 x 262144 x factor` fp32 rows) is allocated before profiling and comes out
+of the KV pool; each YaRN step adds 0.25 GiB per rank of weights.
 
 ### Throughput
 
-Rates are tok/s unless the cell shows a duration.
+Rates are tok/s unless the cell shows a duration. All rows: 74 SMs, partition
+`13,12,12,11`, draft-vocab head, decode 1024, repetition-task prompts.
 
 | lane | TTFT, full window | prefill peak | 1 stream | 4 streams, full fill |
 |---|---:|---:|---:|---|
-| 3 cards, 262k | 28.5 s | 9.3k | 163-167 | 457, 4 of 4 resident |
-| 3 cards, 524k | 58.9 s | 9.2k | 163-166 | ~304, 2 of 4 |
-| 3 cards, 1M | 119.1 s | 9.2k | 161-165 | 163-164, 1 of 4 |
-| 4 cards, 262k | 22.1 s | 9.9k | 151-165 | 405, 4 of 4 |
-| 4 cards, 524k | 46.0 s | 10.5k | 163-168 | 367, 4 of 4 |
-| 4 cards, 1M | 91.9 s | 10.4k | 181-184 | 325, 2-3 of 4 |
-| 4 cards, 1M, official, MTP-4 | 90.6 s | 10.4k | 205-215 (median of 3) | sust 301, wall 386 s (median of 3), 2-3 of 4 resident |
+| 4 cards, 1M, MTP-3 | 91.9 s | 10.4k | 181-184 | 325, 2-3 of 4 |
+| 4 cards, 1M, official, MTP-4 | 90.6 s | 10.4k | 205-215 (median 212) | wall 386 s at 100/4, 2-3 of 4 resident |
 | 4 cards, 1M, W8A16 lane, MTP-4 | 93.5 s | 10.1k | 217-226 | 400 s wall at 100/4, batch-neutral |
 
-- Provenance: the 4-card 1M row is 74 SMs, partition 13,12,12,11, tree dev649
-  with the draft-vocab head. The other 4-card rows and every 3-card row carry
-  70-SM numbers measured on 12,12,12,12 or 16,17,15. Single-stream decode
-  moved 161-169 to 181-184 because of the draft-vocab head, not the silicon;
-  prefill and TTFT did not move when the SMs did, because the 200 W cap binds.
-  The sustained column is a 1.5 s peak that typically lands in the wind-down
-  of the run; compare grids on wall or out tok/s. Grids, repeat runs and the
-  batch-acceptance open question: [benchmark/results.md](benchmark/results.md).
-- Pool sets capacity. At 262k, 4 cards hold nine full streams against four on
-  3 cards, which is the whole argument for the wider pipeline.
-- Prefill paces at the heaviest stage, not the sum, so four balanced stages beat
-  `16,17,15` by about 20%. Single-stream decode barely moves between the two
-  widths, because the 200 W cap binds first.
-- Batched decode pays for the extra hop. At 262k full fill, four streams fall from
-  457 on 3 cards to 405 on 4. That 8-11% gap repeats across three methods: bench
-  cells, deep plateau 452 against 405, shallow plateau 468 against 431. At 524k
-  with two streams it repeats 304 against 265.
-- 524k on 3 cards never batches four streams, because the pool holds two, the rest
-  queue, and TTFT lands in serial multiples. On shallow 8k prompts the same box
-  reached 468 aggregate at four streams, where residency is not the limit.
-- MTP acceptance holds at 3.7-4.0 of the 4.0 ceiling at every depth, including
-  full 1M positions. A few short-window cells read 3.25-3.3, because the window
-  still holds drafter warmup. Acceptance that decays with depth means patch 7 is
-  missing.
-- Oversubscription never preempted at either width. The scheduler gates admission,
+- The sustained column is a 1.5 s peak that typically lands in the wind-down
+  of the run; compare grids on wall or out tok/s. Full grids, repeat runs and
+  the salt law: [benchmark/results.md](benchmark/results.md).
+- Single-stream decode at MTP-4 sits at this checkpoint's roofline on this
+  silicon. The step anatomy (results.md, 2026-10-13) puts 66% of step time in
+  GEMM traffic at the measured 580-790 GB/s solo band and the rest in
+  per-layer state machinery and glue; the visible NCCL time is structural PP
+  bubble that only concurrency reclaims. What remains: batch residency (2-3
+  full streams fit at 1M), fewer bytes, or a different checkpoint.
+- MTP acceptance: 4.75-4.9 mean length at MTP-4 on pinned salt, 3.7-4.0 at
+  MTP-3, stable to full 1M depth. Acceptance that decays with depth means
+  patch 7 is missing. Cell-to-cell scatter on rotating prompts is the content
+  lottery at depth 4+: pin `--salt` for comparisons, rotate it for ranges.
+- Oversubscription never preempted in any grid. The scheduler gates admission,
   extra streams queue, and preemptions stayed 0 in every concurrency cell.
 
 ### Why these layer splits
 
 The pool caps at min_r (rank KV bytes / rank layer count). The model has one
-PLE layer, at decoder index 1, so rank 0 needs at least two layers, and a layer
-costs rank 0 0.80 GiB of KV against 2.04 GiB on a mid rank. All three 4-card
-lanes run `13,12,12,11`. Measured on all three lanes, that split beats an equal
-`12,12,12,12` by 2.13% of pool at 1M, 2.17% at 524k and 2.33% at 262k. The
-extra layer costs
+PLE layer, at decoder index 1, so rank 0 needs at least two layers, and a
+layer costs rank 0 0.80 GiB of KV against 2.04 GiB on a mid rank. The 4-card
+lane runs `13,12,12,11`: +2.13% pool at 1M against an equal `12,12,12,12`,
+and the same margin repeats at 524k and 262k (archive). The extra layer costs
 rank 0 2.53 GiB of weights while rank 3, which also carries the MTP drafter,
-gets the room back. Rank 0 is now the binding stage, so a second shifted layer
-has nowhere useful to go. Prefill, single-stream decode and four-stream decode
-did not move outside their boot-to-boot spread. The 3-card set is historical,
-so `16,17,15` stands unmeasured by choice.
+gets the room back. Rank 0 is now the binding stage, so a second shifted
+layer has nowhere useful to go. Prefill, single-stream decode and four-stream
+decode did not move outside their boot-to-boot spread.
 
 Two boot warnings are normal and cost you nothing. The 7
 `expandable_segments: memory mapping failed` messages fall inside CUDA graph
-capture, none after `Application startup complete`. `max_num_scheduled_tokens is
-set to 2048` comes from MTP-3.
+capture, none after `Application startup complete`. `max_num_scheduled_tokens
+is set to 2048` comes from the MTP drafter's window.
 
 ## Optional lane: W8A16 dense checkpoint
 
@@ -341,13 +301,15 @@ about one position in 130 moves because of the quantization. Full tables:
   unscaled RoPE at length. Nesting merges per key, so `mrope_section` survives
   and vLLM builds `MRotaryEmbedding` with yarn scaling.
 - On 1M, transformers warns that factor 4.0 does not match the implicit ratio
-  3.81. Nothing is wrong: 1,000,000 is not 4 x 262,144, and the explicit factor
-  wins. The 512k lane stays quiet, because 524,288 = 2 x 262,144 exactly.
-- The first MTP decode step compiles `_fill_num_accepted_kernel` and stalls.
-  Drop the first cell of any sweep.
-- One 1M request leaves about 200k tokens of pool slack on 3 cards. A second
-  queues behind it. If both outgrow the pool, the scheduler preempts one, and
-  that request replays its whole prompt under Mamba align mode, roughly 2 min.
+  3.81. Nothing is wrong: 1,000,000 is not 4 x 262,144, and the explicit
+  factor wins.
+- The first MTP decode step compiles `_fill_num_accepted_kernel` and stalls;
+  warm up before the first measured cell. Scatter after that is content, not
+  the machine: pinned-salt repeats land within ~2%, rotating salts draw the
+  prompt lottery at depth 4+ (see the salt law in results.md).
+- The 1M pool holds 2.57 full requests. A third queues behind them. If
+  residency is exceeded mid-decode, the preempted request replays its whole
+  prompt under Mamba align mode, roughly 2 min per 1M.
 - A long prefill that lands during decode starves every stream to under
   20 tok/s until it finishes. Schedule long prefills early, not between decodes.
 - A bench fill of 100% means (ctx - decode) x 0.99. Anything larger is a plain
@@ -358,9 +320,14 @@ about one position in 130 moves because of the quantization. Full tables:
 ```
 patchset-qwen38-pp/
   patches/0001-*.patch .. 0010-*.patch   the series, git am
+  serve-4x-1m.sh                         the service lane: 4 gpus, 1M, YaRN 4.0 (PROF=1 arms the profiler)
+  archive/                               retired lanes, the 3-card set, the TP=4 trial, and their tables
   benchmark/results.md                   full benchmark tables and how to reproduce
   benchmark/bench.py                     fill sweep x concurrency -> table
   benchmark/sustained_decode.py          batched-decode capacity -> table
+  benchmark/stepwatch.py                 per-step telemetry from /metrics (+ stepwatch_report.py, run on the serving box)
+  benchmark/phase_probe.py               profiled decode cell for the step anatomy
+  benchmark/phase_report.py              profiler traces -> per-rank step budget
   benchmark/mtp_ab_probe.py              acceptance A/B, also the shared lib
   benchmark/prefix_cache_probe.py        prompt reuse per turn -> cached/recomputed
   benchmark/prefix_state_check.py        cache-hit state check, exits non-zero
@@ -369,13 +336,6 @@ patchset-qwen38-pp/
   benchmark/quality/*.jsonl.gz           raw captures behind the W8A16 quality gate
   benchmark/*.json                       raw results behind the tables in results.md
   checkpoint/                            artifact builders: W8A16 dense tree + draft-vocab, see its README
-  serve-3x.sh                            3 gpus, 262,144 native
-  serve-3x-512k.sh                       3 gpus, 524,288, YaRN 2.0
-  serve-3x-1m.sh                         3 gpus, 1,000,000, YaRN 4.0
-  serve-4x.sh                            4 gpus, 262,144 native
-  serve-4x-512k.sh                       4 gpus, 524,288, YaRN 2.0, benched
-  serve-4x-1m.sh                         4 gpus, 1,000,000, YaRN 4.0, benched
-  serve-4x-1m-tp.sh                      4 gpus, 1,000,000, TP=4 + EP, rejected, reference only
   README.md                              this file
   TODO.md                                open items, in priority order, with the check that closes each
 ```
