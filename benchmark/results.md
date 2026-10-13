@@ -688,6 +688,23 @@ tool, scheduled deliberately), or nothing.
 Capture: logs/sw-l2-patched.jsonl (364 KB, with clocks - first nvml
 run).
 
+### Rebase certification (2026-10-13): base 183625d4f9, 7-patch series
+
+Boot banner dev41+g5cddeba8a (base dev34 + 7 local am), fender tree replayed
+to the scrubbed patches. One behavior delta from +504 upstream commits: the
+pool budgets CUDA graph memory now, 2,572,981 -> 2,423,913 tokens
+(2.57x -> 2.42x); --gpu-memory-utilization 0.94 is otherwise unchanged.
+Fixed-salt 7770 cells, decode 1024, same protocol as the old-base controls:
+single-stream sust 209/212/211 (control 208-215), acceptance 4.93/4.84/4.93
+(control 4.75-4.91), cold TTFT 91.8 s and warm 4.8 s repeats (salt law
+reproduced). 100/4 triple wall 301/388/388 (cell 1 prefix-cache-warm from
+the preceding run), median 388 s against the 386 s control (+0.5%),
+sust 300-315, acceptance 4.83-4.86, zero preempts. Verdict: rebased series
+performs identically within noise; the smaller pool costs nothing measured
+at 1M so far. Raw: logs/rebase-7770-c{1,2,3}.json,
+logs/rebase-1004-c{1,2,3}.json. Utilization bump deliberately NOT applied;
+revisit if a 3-stream-resident scenario ever matters.
+
 ### Decode step anatomy (2026-10-13): the 60/40 question is closed
 
 Tooling: PROF=1 gate in serve-4x-1m.sh (torch profiler armed with

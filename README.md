@@ -218,7 +218,7 @@ warmup rather than steady decode.
 
 | lane | context | KV pool | headroom |
 |---|---|---:|---:|
-| 4 cards, official FP8, MTP-4 | 1M YaRN 4.0 | 2,572,981 | 2.57x |
+| 4 cards, official FP8, MTP-4 | 1M YaRN 4.0 | 2,423,913 | 2.42x |
 | 4 cards, W8A16 dense, MTP-4 | 1M YaRN 4.0 | 2,594,720 | 2.59x |
 
 Per-rank weight and KV columns, and the retired 3-card / 262k / 524k rows:
