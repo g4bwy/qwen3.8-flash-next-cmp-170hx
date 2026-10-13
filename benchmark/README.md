@@ -2,23 +2,23 @@
 
 Measurement tools and the record behind the numbers in the top-level README.
 Everything here is stdlib Python talking HTTP to a running server, except the
-kernel-level benches noted below. Reproduce commands live at the end of
+kernel-level benches noted below. Reproduce commands are at the end of
 [results.md](results.md).
 
 ## The record
 
 - `results.md` - the full chronicle: grids, methodology, verdicts, salt law,
-  step anatomy, reproduce commands. README.md summarizes; this file proves.
+  step anatomy, reproduce commands. README.md summarizes. This file proves.
 - `bench-*.json`, `mtp-4x1m-*.json`, `sustained-decode.json` - raw per-cell
   dumps (bench.py `--json`) behind those tables. Names carry the config they
-  measured; stale-looking names are history, kept for provenance.
+  measured. Stale-looking names are history, kept for provenance.
 - `quality/*.jsonl.gz` - raw logprob captures behind the W8A16 quality gate.
 
 ## Load cells
 
 - `bench.py` - fill sweep x concurrency -> the table with TTFT, prefill,
   wall, out tok/s, sustained, acceptance, preempts. Salt is time-derived by
-  default; pin `--salt` for comparisons, rotate for headline ranges (salt
+  default. Pin `--salt` for comparisons and rotate it for headline ranges (salt
   law). Dumps per-cell JSON and a live progress line.
 - `sustained_decode.py` - batched-decode capacity plateaus at chosen depth
   and stream counts.
