@@ -10,6 +10,7 @@ The service lane is `serve-4x-1m.sh` at the repo root. Full raw grids for
 everything below: [../benchmark/results.md](../benchmark/results.md)
 (sections "262k (native RoPE, no YaRN)", "524k (YaRN 2.0)", "4-card set",
 "3-card" tables) and `logs/boot-256k.log`, `logs/boot-512k.log` on the box.
+Patch numbers quoted inside archived scripts are the OLD series numbering.
 
 ## The launch matrix these lanes used
 

@@ -16,11 +16,11 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
   `MODEL=/local/path`.
 - Depths: MTP-4 is the shipped depth. The fast lane builds an int8-dense
   variant with `checkpoint/` (+6 % on top of depth, +20 % over MTP-3).
-- Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
-- 10 patches: eight ours, two adopted from pending upstream PRs (#56444 as
-  patch 2, #58094 as patch 7). After
+- Base commit: `183625d4f9f49968218ffbe43242877ead72d569` (vllm-project/vllm main, 2026-10-13).
+- 7 patches: five ours, two adopted from upstream PRs (#56444 as
+  patch 2, #58094 as patch 4). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `1de2b16fd7b10bd552577667f88399bc3cea22ed`. If it does not, you applied
+  `c20c6ee90b69c2b7f0d76664dd86ed0a18b45002`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
@@ -31,13 +31,13 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
 ```bash
 git clone https://github.com/vllm-project/vllm
 cd vllm
-git checkout 155488d853a0bc42df227dbfc74005b3fd488e94
+git checkout 183625d4f9f49968218ffbe43242877ead72d569
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # 1de2b16fd7b10bd552577667f88399bc3cea22ed
+git rev-parse 'HEAD^{tree}'   # c20c6ee90b69c2b7f0d76664dd86ed0a18b45002
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
-155488d853`), then re-run the `git am`.
+183625d4f9`), then re-run the `git am`.
 
 ## Build
 
@@ -46,7 +46,7 @@ Python 3.12, `uv` on PATH ([install](https://docs.astral.sh/uv/)).
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=155488d853a0bc42df227dbfc74005b3fd488e94 \
+VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=183625d4f9f49968218ffbe43242877ead72d569 \
   uv pip install -e . --torch-backend=auto
 ```
 
@@ -58,7 +58,7 @@ that commit must satisfy two rules:
    `https://wheels.vllm.ai/<sha>/cu130/vllm/metadata.json` and stops on 404.
    Wheel CI lags main by hours, so walk down from the tip and take the newest
    commit that answers 200. The wheel for this base:
-   `0.30.1rc1.dev640+g155488d85`, cp38-abi3, x86_64. Match the
+   `0.32.0rc1.dev34+g183625d4f`, cp38-abi3, x86_64. Match the
    `+g<sha>` tail to your base. Ignore the leading number, which only tracks
    upstream packaging.
 2. Pass that 40-hex sha in `VLLM_PRECOMPILED_WHEEL_COMMIT`. Without it, a
@@ -107,21 +107,21 @@ The script sets:
   to 3% of prefill with decode unchanged, so the shipped path is host-staged.
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, which stops allocator-OOM
   retries. vLLM forbids it only with KV connectors, and we run none.
-- `VLLM_SAFETENSORS_DROP_CACHE=1` (patch 9): consumed shards leave the page
+- `VLLM_SAFETENSORS_DROP_CACHE=1` (patch 6): consumed shards leave the page
   cache, so the 173 GiB boot read does not evict reusable cache.
 
 Startup checks for the YaRN lane:
 
 1. `Using max model len <N>` appears twice, once for the target and once for
-   the `Qwen4ExpMTP` draft. A second, smaller number means patch 7 is missing,
+   the `Qwen4ExpMTP` draft. A second, smaller number means patch 4 is missing,
    and MTP acceptance falls as context deepens.
 2. The log prints `Maximum concurrency for <N> tokens per request: X.XXx`.
    Below 1.0 the box cannot serve its own context length, so lower
    `--max-model-len`.
 
-### Draft vocabulary head (patch 8)
+### Draft vocabulary head (patch 5)
 
-Patch 8 makes the MTP drafter score a small head instead of the 248k-row
+Patch 5 makes the MTP drafter score a small head instead of the 248k-row
 lm_head per draft step. The saving is ~9% single-stream. The patch keeps the
 full head in memory as well, and mixed prefill+decode windows (a stream
 joining or growing while others decode) draft with it, because that is where
@@ -248,7 +248,7 @@ Rates are tok/s unless the cell shows a duration. All rows: 74 SMs, partition
   full streams fit at 1M), fewer bytes, or a different checkpoint.
 - MTP acceptance: 4.75-4.9 mean length at MTP-4 on pinned salt, 3.7-4.0 at
   MTP-3, stable to full 1M depth. Acceptance that decays with depth means
-  patch 7 is missing. Cell-to-cell scatter on rotating prompts is the content
+  patch 4 is missing. Cell-to-cell scatter on rotating prompts is the content
   lottery at depth 4+. Pin `--salt` for comparisons and rotate it for ranges.
 - Oversubscription never preempted in any grid. The scheduler gates admission,
   extra streams queue, and preemptions stayed 0 in every concurrency cell.
@@ -274,7 +274,7 @@ is set to 2048` comes from the MTP drafter's window.
 
 `checkpoint/` builds a variant of the official FP8 tree that stores the 228
 main-body dense matrices as int8 (group-32, weight-only) instead of bf16.
-Serving it needs patch 10 and no other change. Point `MODEL=` at the built
+Serving it needs patch 7 and no other change. Point `MODEL=` at the built
 directory. Two boots per side on 4x-1m: single-stream decode 216-226 tok/s
 at MTP-4 (+15 % over this lane's 190-192 at depth 3, and +20 % over the
 official FP8 tree's 181-184), prefill -1.7 to -2.5 %, KV pool +17k net at
@@ -290,14 +290,11 @@ about one position in 130 moves because of the quantization. Full tables:
 |---|---|
 | 1 | Qwen4Exp MTP forward branches on `intermediate_tensors is None` rather than PP rank, so the last-rank drafter takes the embedding path |
 | 2 | upstream PR #56444, adopted: carry PLE input ids (int32, +4 B/token/hop) inside the PP intermediate tensors, so PLE is pipeline-rank-free. Replaces our rank-0 confinement. Its three new tests got process-isolation guards locally |
-| 3 | V2: resolve deferred mamba state copies by request slot |
-| 4 | mamba: seed the align state column with the real mamba block size |
-| 5 | Qwen4Exp: gather pinned PLE rows as raw bytes (Ampere has no `fp8e4nv`) |
-| 6 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
-| 7 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our old patch 7 used |
-| 8 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Dual-head: eager mixed prefill windows draft with the full head, graphed uniform decode rounds keep the small one. Needs artifacts, build commands in checkpoint/README |
-| 9 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts), so the 173 GiB read-once load does not evict reusable cache at every boot |
-| 10 | Qwen4Exp PLE embedding honors fp8 n-gram tables inside compressed-tensors checkpoints: resolve the scheme (none -> unquantized, float8 -> fp8, else raise) instead of falling through to the Fp8Config-only gate |
+| 3 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
+| 4 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our earlier local version used |
+| 5 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Dual-head: eager mixed prefill windows draft with the full head, graphed uniform decode rounds keep the small one. Needs artifacts, build commands in checkpoint/README |
+| 6 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts), so the 173 GiB read-once load does not evict reusable cache at every boot |
+| 7 | Qwen4Exp PLE embedding honors fp8 n-gram tables inside compressed-tensors checkpoints: resolve the scheme (none -> unquantized, float8 -> fp8, else raise) instead of falling through to the Fp8Config-only gate |
 
 ## Gotchas
 

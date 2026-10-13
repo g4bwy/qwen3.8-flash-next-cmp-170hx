@@ -1,7 +1,7 @@
-From 4070c3c0f8b11610644be6a60dbf86fd54b9c128 Mon Sep 17 00:00:00 2001
+From ab2365138af2b49d73b6f1588f8e6699b79cb751 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 10 Sep 2026 22:12:29 +0200
-Subject: [PATCH 06/10] [Bugfix][Core] Build KV cache tensors from a group's
+Subject: [PATCH 3/7] [Bugfix][Core] Build KV cache tensors from a group's
  projected layers
 
 A pipeline stage that owns none of a KV cache group's layers keeps that
@@ -18,25 +18,28 @@ Take each layer's spec from the group instead, which is what the
 bytes-per-block accounting already does, so a group contributes tensors
 only for the layers it actually holds on this stage.
 ---
- tests/v1/core/test_kv_cache_utils.py | 84 ++++++++++++++++++++++++++++
- vllm/v1/core/kv_cache_utils.py       | 11 ++--
- 2 files changed, 89 insertions(+), 6 deletions(-)
+ tests/v1/core/test_kv_cache_utils.py | 87 ++++++++++++++++++++++++++++
+ vllm/v1/core/kv_cache_planning.py    | 12 ++--
+ 2 files changed, 93 insertions(+), 6 deletions(-)
 
 diff --git a/tests/v1/core/test_kv_cache_utils.py b/tests/v1/core/test_kv_cache_utils.py
-index 7923e34d0f..7a059c74ea 100644
+index 1489315ec2..dbd08785a4 100644
 --- a/tests/v1/core/test_kv_cache_utils.py
 +++ b/tests/v1/core/test_kv_cache_utils.py
-@@ -1806,6 +1806,90 @@ def test_project_kv_cache_groups_to_worker():
-     assert set(proj_spec.kv_cache_specs.keys()) == {"layer1", "layer3"}
+@@ -2156,3 +2156,90 @@ def test_wrapped_mamba_group_requires_block_zeroing():
+     )
  
- 
+     assert config.needs_kv_cache_zeroing
++
++
 +def test_get_kv_cache_config_pp_projection_tensors_stay_local(monkeypatch):
 +    """A stage that owns no layer of a group must get no tensor of that group.
 +
-+    Projection keeps a group's spec even when the stage owns none of its layers,
-+    so tensors built from the spec rather than from ``layer_names`` name layers
-+    living on another stage. ``allocate_kv_cache`` resolves each tensor's group
-+    through ``tensor.layers[0]`` and raises ``StopIteration`` on such a layer.
++    Projection keeps a group's spec even when the stage owns none of its
++    layers, so tensors built from the spec rather than from ``layer_names``
++    name layers on another stage. ``allocate_kv_cache`` resolves each
++    tensor's group through ``tensor.layers[0]`` and raises ``StopIteration``
++    on such a layer.
 +    """
 +    from vllm.config import ParallelConfig
 +    from vllm.distributed.utils import get_pp_indices
@@ -93,13 +96,15 @@ index 7923e34d0f..7a059c74ea 100644
 +            for name, spec in kv_cache_spec.items()
 +            if name == "layers.0.ple" or start <= int(name.split(".")[1]) < end
 +        }
-+        projected = kv_cache_utils._project_kv_cache_groups_to_worker(
++        projected = kv_cache_planning._project_kv_cache_groups_to_worker(
 +            groups, worker_spec
 +        )
 +        assert sum(len(group.layer_names) for group in projected) == len(worker_spec)
 +
-+        bytes_per_block = kv_cache_utils._pool_bytes_per_block(projected)
-+        kv_cache_config = kv_cache_utils.get_kv_cache_config_from_groups(
++        bytes_per_block = kv_cache_planning._pool_bytes_per_block(
++            vllm_config, projected
++        )
++        kv_cache_config = kv_cache_planning.get_kv_cache_config_from_groups(
 +            vllm_config, projected, bytes_per_block * 32
 +        )
 +        layer_to_group = {
@@ -112,25 +117,19 @@ index 7923e34d0f..7a059c74ea 100644
 +            group = layer_to_group.get(tensor.layers[0])
 +            assert group is not None, f"rank {rank}: orphan layer {tensor.layers[0]}"
 +            assert set(tensor.layers) <= set(group.layer_names)
-+
-+
- @pytest.mark.parametrize("sliding_window", [None, 256])
- @pytest.mark.parametrize("disable_hybrid", [False, True])
- @pytest.mark.parametrize("pcp_size", [1, 4])
-diff --git a/vllm/v1/core/kv_cache_utils.py b/vllm/v1/core/kv_cache_utils.py
-index 46934d530b..bc3280040b 100644
---- a/vllm/v1/core/kv_cache_utils.py
-+++ b/vllm/v1/core/kv_cache_utils.py
-@@ -1800,15 +1800,14 @@ def get_kv_cache_config_from_groups(
-     # group 0: | A [ blk 0 | blk 1 | ... ] | B [ blk 0 | blk 1 | ... ] |
-     # group 1: | C [ blk 0 | blk 1 | ... ] | D [ blk 0 | blk 1 | ... ] |
+diff --git a/vllm/v1/core/kv_cache_planning.py b/vllm/v1/core/kv_cache_planning.py
+index 6e258a68a9..26d8629bf2 100644
+--- a/vllm/v1/core/kv_cache_planning.py
++++ b/vllm/v1/core/kv_cache_planning.py
+@@ -652,13 +652,13 @@ def get_kv_cache_config_from_groups(
  
-+    # Tensors are keyed off the group's own layers: under pipeline parallelism a
-+    # group projected onto a stage that owns none of its layers keeps the global
-+    # UniformTypeKVCacheSpecs, whose layers would be handed to the wrong worker.
      kv_cache_tensors = []
      for group in kv_cache_groups:
 -        group_spec = group.kv_cache_spec
++        # Tensors are keyed off the group's own layers: under pipeline
++        # parallelism a group projected onto a stage that owns none of its
++        # layers keeps the global UniformTypeKVCacheSpecs, whose layers would
++        # be handed to the wrong worker.
          layers_by_spec: defaultdict[KVCacheSpec, list[str]] = defaultdict(list)
 -        if isinstance(group_spec, UniformTypeKVCacheSpecs):
 -            for layer_name, spec in group_spec.kv_cache_specs.items():
@@ -142,3 +141,6 @@ index 46934d530b..bc3280040b 100644
  
          byte_offset = 0
          for spec, layer_names in layers_by_spec.items():
+-- 
+2.55.0
+
