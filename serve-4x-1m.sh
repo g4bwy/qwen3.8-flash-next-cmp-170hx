@@ -46,13 +46,29 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # patches/0009-safetensors-drop-pagecache.patch.
 export VLLM_SAFETENSORS_DROP_CACHE=1
 
+# PROF=1 arms the torch profiler (auto-stops after max_iterations engine
+# steps, needs no code patch): boot with PROF=1, then POST /start_profile
+# mid-decode. Traces land in logs/prof NEXT TO THIS SCRIPT'S OWN COPY
+# (dirname of $0). Note: a copy under /ssd is invisible to the container;
+# move the trace files into the repo afterwards, or set PROF_DIR to a
+# path both sides see. Do not widen the window beyond ~150 steps -
+# results.md, unbounded runs swap the machine.
+PROF_ARGS=()
+if [ "${PROF:-0}" = "1" ]; then
+    export VLLM_CUSTOM_SCOPES_FOR_PROFILING=1  # gpu_model_runner phase spans
+    PROF_DIR="${PROF_DIR:-$(cd "$(dirname "$0")" && pwd)/logs/prof}"
+    mkdir -p "$PROF_DIR"
+    PROF_ARGS=(--profiler-config "{\"profiler\":\"torch\",\"torch_profiler_dir\":\"$PROF_DIR\",\"torch_profiler_with_stack\":false,\"ignore_frontend\":true,\"max_iterations\":150}")
+fi
+
 # The default prefix match granularity is the GCD of the cacheable KV group
 # block sizes, 1600 here, so a hit could not land finer than 1,600 tokens no
-# matter how often a prompt repeated. --prefix-match-unit 16 drops the floor
+# matter how often a prompt repeats. --prefix-match-unit 16 drops the floor
 # to 32 tokens with the MTP block drop: repeats and appends hit 99.8%+, the
 # one-shot shallow anomaly is gone, pool and decode unchanged. Retention
 # controls how often states are stored; this controls where hits land.
 exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
+    ${PROF_ARGS[@]+"${PROF_ARGS[@]}"} \
     --served-model-name qwen3.8-flash-next-fp8 \
     --port 8000 \
     --pipeline-parallel-size 4 \

@@ -7,3 +7,4 @@ benchmark/picked.json
 benchmark/sampler.py
 prof-1m/
 benchmark/mtp-4x1m-*.json
+logs/prof/
