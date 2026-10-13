@@ -1,0 +1,78 @@
+4 rank traces; real decode steps per rank: r0=37, r1=37, r2=37, r3=37 (draft-wave spans excluded: r0=113, r1=113, r2=113, r3=113)
+budgets below divide by the per-rank real step count; n_ref=37
+
+== cadence per rank: period | GPU busy (incl spin) | true gap | waiters ==
+rank |steps |period_ms |busy_ms |gap_ms |spin_ms |waiter_kernels/step
+   0 |   37 |     25.50 |   25.03 |   0.47 |   19.38 |  2.0 (wait-time kernels >2ms)
+   1 |   37 |     25.52 |   25.47 |   0.05 |   33.70 |  3.0 (wait-time kernels >2ms)
+   2 |   37 |     25.26 |   25.20 |   0.06 |   28.27 |  3.0 (wait-time kernels >2ms)
+   3 |   37 |     25.21 |   25.02 |   0.19 |   16.64 |  1.0 (wait-time kernels >2ms)
+
+== kernel time per real step, ms per rank (nccl-spin = GPU occupied waiting, not data movement; PP step ~ sum of compute columns) ==
+category           r0      r1      r2      r3     tot
+nccl-spin       19.38   33.70   28.27   16.64   97.99
+moe              0.37    0.34    0.34    0.43    1.48
+qsa-attn         0.45    0.46    0.48    0.91    2.29
+gdn/state        0.46    0.41    0.43    0.45    1.75
+humming          1.97    1.89    1.89    1.84    7.59
+gemm-bf16        2.26    2.03    2.03    3.84   10.16
+marlin-int8      0.00    0.00    0.00    0.00    0.00
+sampler          0.00    0.00    0.00    0.02    0.02
+copy/memset      0.16    0.16    0.30    0.38    1.00
+reduce/norm      0.28    0.26    0.27    0.38    1.18
+elementwise      0.12    0.12    0.20    0.24    0.67
+other            0.13    0.08    0.15    0.39    0.75
+
+== compute kernel duration histogram (nccl excluded) ==
+rank | kt/s | <2us |2-5us |5-20 |20-100 |>100 | ms<5us | ms>100us | med_us
+   0 |  602 |  114 |  258 |  158 |    70 |    2 |   0.92 |     0.22 |  3.14
+   1 |  538 |   68 |  257 |  147 |    62 |    4 |   0.86 |     0.41 |  3.33
+   2 |  538 |   65 |  222 |  185 |    62 |    4 |   0.73 |     0.43 |  3.58
+   3 |  860 |  166 |  378 |  225 |    85 |    6 |   1.39 |     1.40 |  3.23
+
+== top 8 kernels, rank 0 (us per real step) ==
+     1247  x 13.0  void humming<MmaOpClass, Shape<0u, 1280u, 2560u>, Shape<16u,
+      929  x 27.0  ampere_bf16_s16816gemm_bf16_64x64_sliced1x2_ldg8_f2f_stages_
+      725  x 13.0  void humming<MmaOpClass, Shape<0u, 2560u, 640u>, Shape<16u, 
+      611  x 65.0  void cutlass::Kernel2<cutlass_80_tensorop_s16816gemm_bf16_64
+      449  x 13.0  ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_64x3_tn
+      253  x 26.0  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616g
+      218  x 10.0  void (anonymous namespace)::gdn_decode_post_conv_mtp_kernel<
+      171  x  3.0  void vllm::persistent::persistent_topk_kernel<512, 4u>(vllm:
+
+== top 8 kernels, rank 1 (us per real step) ==
+     1194  x 12.0  void humming<MmaOpClass, Shape<0u, 1280u, 2560u>, Shape<16u,
+      810  x 24.0  ampere_bf16_s16816gemm_bf16_64x64_sliced1x2_ldg8_f2f_stages_
+      698  x 12.0  void humming<MmaOpClass, Shape<0u, 2560u, 640u>, Shape<16u, 
+      568  x 60.0  void cutlass::Kernel2<cutlass_80_tensorop_s16816gemm_bf16_64
+      414  x 12.0  ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_64x3_tn
+      235  x 24.0  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616g
+      199  x  9.0  void (anonymous namespace)::gdn_decode_post_conv_mtp_kernel<
+      174  x  3.0  void vllm::persistent::persistent_topk_kernel<512, 4u>(vllm:
+
+== top 8 kernels, rank 2 (us per real step) ==
+     1195  x 12.0  void humming<MmaOpClass, Shape<0u, 1280u, 2560u>, Shape<16u,
+      810  x 24.0  ampere_bf16_s16816gemm_bf16_64x64_sliced1x2_ldg8_f2f_stages_
+      696  x 12.0  void humming<MmaOpClass, Shape<0u, 2560u, 640u>, Shape<16u, 
+      567  x 60.0  void cutlass::Kernel2<cutlass_80_tensorop_s16816gemm_bf16_64
+      414  x 12.0  ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_64x3_tn
+      235  x 24.0  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616g
+      199  x  9.0  void (anonymous namespace)::gdn_decode_post_conv_mtp_kernel<
+      175  x  3.0  void vllm::persistent::persistent_topk_kernel<512, 4u>(vllm:
+
+== top 8 kernels, rank 3 (us per real step) ==
+     1779  x 36.0  ampere_bf16_s16816gemm_bf16_64x64_sliced1x2_ldg8_f2f_stages_
+     1153  x 15.0  void humming<MmaOpClass, Shape<0u, 1280u, 2560u>, Shape<16u,
+      683  x 15.0  void humming<MmaOpClass, Shape<0u, 2560u, 640u>, Shape<16u, 
+      582  x 62.0  void cutlass::Kernel2<cutlass_80_tensorop_s16816gemm_bf16_64
+      575  x  7.0  ampere_bf16_s16816gemm_bf16_64x64_ldg8_f2f_stages_64x5_tn
+      413  x 12.0  ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_64x3_tn
+      340  x  7.0  _qsa_mqa_paged_uniform_kernel
+      339  x 35.0  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616g
+
+reading guide: (1) wall time per step ~= cadence column; the compute-column sums
+approximate it because PP stages are serial for one stream. (2) spin/bubble is
+structural for single-stream PP and shrinks as concurrency fills the pipeline; do not
+optimize it directly. (3) the actionable numbers are the compute columns and the
+histogram: byte-side categories (gemm/humming/marlin) vs latency/state-side
+(qsa/gdn/moe-align/copy/norm/other).
