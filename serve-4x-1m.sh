@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# 1M context variant of serve-4x.sh. YaRN factor 4.0, the vendor's own
-# recipe. Expect "Using max model len 1000000" for the drafter too.
-# The override rules and the patch 7 startup check are in serve-4x-512k.sh.
+# 1M context variant of the (now archived) 4-card 262k script. YaRN factor
+# 4.0, the vendor's own recipe. Expect "Using max model len 1000000" for the
+# drafter too. The override rules and the patch 7 startup check are in
+# archive/serve-4x-512k.sh.
 # Apply the patch series first: git am --keep-non-patch patches/00*.patch
 # Details and measured numbers: README.md.
 #
 # PP=3 held 1.21x here: one 1M request at a time. PP=4 adds a fourth
-# card's KV, roughly 1.4-1.5x by the pool math in serve-4x-512k.sh. A
+# card's KV, roughly 1.4-1.5x by the pool math in archive/serve-4x-512k.sh. A
 # second full-length request then fits, but admission gating still runs it
 # at half speed, and a Mamba align-mode preemption replays its whole
 # prompt, about 2 min. Keep other traffic short until measured.
