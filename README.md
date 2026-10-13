@@ -322,19 +322,7 @@ patchset-qwen38-pp/
   patches/0001-*.patch .. 0010-*.patch   the series, git am
   serve-4x-1m.sh                         the service lane: 4 gpus, 1M, YaRN 4.0 (PROF=1 arms the profiler)
   archive/                               retired lanes, the 3-card set, the TP=4 trial, and their tables
-  benchmark/results.md                   full benchmark tables and how to reproduce
-  benchmark/bench.py                     fill sweep x concurrency -> table
-  benchmark/sustained_decode.py          batched-decode capacity -> table
-  benchmark/stepwatch.py                 per-step telemetry from /metrics (+ stepwatch_report.py, run on the serving box)
-  benchmark/phase_probe.py               profiled decode cell for the step anatomy
-  benchmark/phase_report.py              profiler traces -> per-rank step budget
-  benchmark/mtp_ab_probe.py              acceptance A/B, also the shared lib
-  benchmark/prefix_cache_probe.py        prompt reuse per turn -> cached/recomputed
-  benchmark/prefix_state_check.py        cache-hit state check, exits non-zero
-  benchmark/logprob_capture.py           quality fingerprint: top-1 logprobs + greedy tails
-  benchmark/quality_diff.py              diff two fingerprints -> flips, drift, agreement
-  benchmark/quality/*.jsonl.gz           raw captures behind the W8A16 quality gate
-  benchmark/*.json                       raw results behind the tables in results.md
+  benchmark/                             measurement tools, raw results, and the full record, see its README
   checkpoint/                            artifact builders: W8A16 dense tree + draft-vocab, see its README
   README.md                              this file
   TODO.md                                open items, in priority order, with the check that closes each
