@@ -746,6 +746,30 @@ taken from trace launch args):
 - _qsa_mqa_paged_uniform grid [1,3939] block 64: 51 us x 13/rank/step at
   1M depth - check against the splitk variant and the byte SOL.
 
+Follow-up, same day (microbench replays, container venv, server idle but
+co-resident; raw json logs/bench-micro-ms5.json):
+- bf16 splitK suspect: REJECTED. m=1, 5 and 25 timings are identical to
+  within 1-2% on every dense shape; big shapes land at 568-767 GB/s, the
+  established solo band. cuBLAS handles decode-m fine.
+- humming grouped column: CLOSED within physics. The distinct-variant dump
+  shows exactly two grouped kernels per layer-step (gate_up 1280x2560 at
+  96 us, down 2560x640 at 56 us), both persistent grid=74. At 4.92 MB per
+  fp8-block expert, that time budget cannot exceed ~20 unique experts per
+  layer-step (512 experts, topk 10, 50 slots; the 5-row greedy draft chain
+  evidently overlaps routing heavily). That puts grouped execution at
+  325-650 GB/s - consistent with near-SOL, no 20x lever. The 26-35 GB/s
+  dense fp8 single-tile rows are the dead path again; do not quote them as
+  production. Exact unique-expert count would need an instrumented call on
+  the serving tree; the ceiling bound stands on its own.
+- qsa replay: deferred; needs the current tree (container vllm is
+  pre-patchset).
+Net verdict: single-stream 212 tok/s is the roofline of this checkpoint on
+4x170HX@200W at d4. The step is 66% byte-side at solo band, 34% diffuse
+state/glue (fusion ceiling ~2-3 ms, gated behind the acceptance rule), and
+the visible "NCCL" time is structural PP bubble. Remaining levers: batch
+concurrency (shipped), byte-reducing quantization (declined below int8),
+or a different checkpoint. No further instrumentation owes.
+
 ### Salt law (2026-10-12, supersedes "post-idle" and "bimodal machine")
 
 Fixed-salt triples: acc 4.90/4.91/4.75, decode 208-215 (+-1.5%).
