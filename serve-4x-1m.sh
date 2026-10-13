@@ -21,7 +21,10 @@
 #   OOM retries repeating during inference
 #     -> transient peaks have nowhere to go. Lower
 #        --gpu-memory-utilization, or drop --speculative-config.
-# 0.94 sits between the two. expandable_segments is the first defense against
+# 0.94 sat between the two; since base 183625d4f9 the memory profiler
+# budgets CUDA graph memory before sizing the pool, so 0.9453 restores the
+# same effective pool the old 0.94 had (boot log prints the per-rank
+# equivalence). expandable_segments is the first defense against
 # the second mode.
 set -euo pipefail
 
@@ -80,7 +83,7 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --prefix-cache-retention-interval 16160 \
     --block-size 1616 \
     --prefix-match-unit 16 \
-    --gpu-memory-utilization 0.94 \
+    --gpu-memory-utilization 0.9453 \
     --max-model-len 1000000 \
     --hf-overrides '{"text_config":{"max_position_embeddings":1000000,"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":262144}}}' \
     --max-num-seqs 8 \

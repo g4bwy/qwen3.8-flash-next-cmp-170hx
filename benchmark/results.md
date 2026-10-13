@@ -702,8 +702,13 @@ the preceding run), median 388 s against the 386 s control (+0.5%),
 sust 300-315, acceptance 4.83-4.86, zero preempts. Verdict: rebased series
 performs identically within noise; the smaller pool costs nothing measured
 at 1M so far. Raw: logs/rebase-7770-c{1,2,3}.json,
-logs/rebase-1004-c{1,2,3}.json. Utilization bump deliberately NOT applied;
-revisit if a 3-stream-resident scenario ever matters.
+logs/rebase-1004-c{1,2,3}.json. Follow-up same day: utilization raised to
+0.9453 (the boot log's CUDA-graph-equivalence suggestion for the binding
+rank) to restore the pre-rebase pool. Three full 1M streams resident is
+NOT reachable on 4x64 GiB with these weights: the need is ~2.98M tokens
+and even 0.99 utilization with a perfect split tops out near 2.9M; 0.9453
+buys back the ~2.57x and nothing more. Re-verification cells owed after
+the boot: fixed-salt 7770 x3 and 100/4 x3.
 
 ### Decode step anatomy (2026-10-13): the 60/40 question is closed
 
