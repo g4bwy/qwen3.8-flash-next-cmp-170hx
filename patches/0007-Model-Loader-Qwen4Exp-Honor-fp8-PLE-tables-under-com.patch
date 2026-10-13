@@ -1,7 +1,7 @@
-From d2ec769b2acb65a888131deef367dd8337aa6989 Mon Sep 17 00:00:00 2001
+From bfd584c98e1ad8841f7604f37082e0e7dcf1ac7b Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 9 Oct 2026 20:51:39 +0200
-Subject: [PATCH 10/10] [Model Loader] Qwen4Exp: Honor fp8 PLE tables under
+Subject: [PATCH 7/7] [Model Loader] Qwen4Exp: Honor fp8 PLE tables under
  compressed-tensors
 
 The compressed-tensors branch of Qwen4ExpPLEEmbeddingMethod
@@ -20,10 +20,10 @@ Co-authored-by: Maki <agent@local>
  1 file changed, 15 insertions(+), 5 deletions(-)
 
 diff --git a/vllm/models/qwen4_exp/common/ngram_embedding.py b/vllm/models/qwen4_exp/common/ngram_embedding.py
-index 919bc8179f..1b26d58726 100644
+index 85a382c5ec..936249f7e7 100644
 --- a/vllm/models/qwen4_exp/common/ngram_embedding.py
 +++ b/vllm/models/qwen4_exp/common/ngram_embedding.py
-@@ -185,11 +185,21 @@ class Qwen4ExpPLEEmbeddingMethod(QuantizeMethodBase):
+@@ -190,11 +190,21 @@ class Qwen4ExpPLEEmbeddingMethod(QuantizeMethodBase):
              quant_config, ModelOptQuantConfigBase
          ) and quant_config.is_layer_excluded(prefix):
              return Qwen4ExpPLEUnquantizedEmbeddingMethod()
@@ -47,6 +47,9 @@ index 919bc8179f..1b26d58726 100644
 +                "Qwen4Exp PLE embedding supports only float8 weights in "
 +                f"compressed-tensors config, got {weights}"
 +            )
-         if not isinstance(quant_config, Fp8Config):
-             raise NotImplementedError(
-                 "Qwen4Exp PLE embedding does not support quantization config "
+         if (
+             isinstance(quant_config, INCConfig)
+             and not quant_config.config_parser.resolve(None, prefix).quantized
+-- 
+2.55.0
+

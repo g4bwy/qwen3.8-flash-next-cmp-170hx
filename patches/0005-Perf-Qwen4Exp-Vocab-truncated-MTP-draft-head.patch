@@ -1,7 +1,7 @@
-From c912c2c010726044e9cfc70cb36b7227f4b50d14 Mon Sep 17 00:00:00 2001
+From a089280000eb66312a16f90dc1ea4a1ea422a918 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
-Subject: [PATCH 08/10] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
+Subject: [PATCH 5/7] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
 
 Every draft token of MTP speculation runs compute_logits with the full
 248,320-row lm_head: on sm_80 at the ~1.1 TB/s measured for these cards
@@ -33,8 +33,8 @@ Co-authored-by: Maki <agent@local>
 ---
  .../models/qwen4_exp/test_mtp_draft_vocab.py  | 29 +++++++
  vllm/models/qwen4_exp/nvidia/mtp.py           | 78 ++++++++++++++++++-
- .../spec_decode/autoregressive/speculator.py  |  9 +++
- 3 files changed, 115 insertions(+), 1 deletion(-)
+ .../target_dependent_ar/speculator.py         |  7 ++
+ 3 files changed, 113 insertions(+), 1 deletion(-)
  create mode 100644 tests/models/qwen4_exp/test_mtp_draft_vocab.py
 
 diff --git a/tests/models/qwen4_exp/test_mtp_draft_vocab.py b/tests/models/qwen4_exp/test_mtp_draft_vocab.py
@@ -73,7 +73,7 @@ index 0000000000..dddb7c8f81
 +    assert _remap_mtp_weight_name("mtp.draft_lm_head.weight") == "draft_lm_head.weight"
 +    assert _remap_mtp_weight_name("mtp.shared_head.head.weight") == "lm_head.weight"
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index fc307d4c77..89be0a2c7c 100644
+index 306c67a7ff..763cd3219f 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -13,6 +13,7 @@ The MTP draft model reuses the Qwen4Exp backbone (PLE/HC/MoE) but:
@@ -84,15 +84,15 @@ index fc307d4c77..89be0a2c7c 100644
  from collections.abc import Iterable
  
  import regex as re
-@@ -22,6 +23,7 @@ from transformers import Qwen4ExpTextConfig
- 
+@@ -24,6 +25,7 @@ from vllm import envs
  from vllm.config import VllmConfig, replace, set_current_vllm_config
  from vllm.distributed import get_pp_group
+ from vllm.forward_context import get_forward_context, is_forward_context_available
 +from vllm.logger import init_logger
  from vllm.model_executor.layers.fused_moe.utils import (
      is_model_fused_shared_expert_compatible,
  )
-@@ -86,6 +88,23 @@ def _remap_quantized_layers(
+@@ -94,6 +96,23 @@ def _remap_quantized_layers(
      }
  
  
@@ -116,7 +116,7 @@ index fc307d4c77..89be0a2c7c 100644
  def _remap_mtp_weight_name(name: str) -> str | None:
      """Map Qwen4Exp checkpoint paths into the standalone draft model."""
      for checkpoint_prefix in (
-@@ -100,6 +119,8 @@ def _remap_mtp_weight_name(name: str) -> str | None:
+@@ -108,6 +127,8 @@ def _remap_mtp_weight_name(name: str) -> str | None:
          name = f"model.{name}"
      if name.startswith("model.mtp."):
          name = name.removeprefix("model.")
@@ -125,7 +125,7 @@ index fc307d4c77..89be0a2c7c 100644
      if name.startswith("mtp.shared_head.head."):
          return name.replace("mtp.shared_head.head.", "lm_head.", 1)
      if name.startswith("model.shared_head.head."):
-@@ -386,8 +407,48 @@ class Qwen4ExpMTP(nn.Module, SupportsPP, Qwen4ExpMixtureOfExperts):
+@@ -426,8 +447,48 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
              prefix=maybe_prefix(prefix, "mtp"),
          )
  
@@ -175,7 +175,7 @@ index fc307d4c77..89be0a2c7c 100644
                  self.lm_head = self.model.embed_tokens
              else:
                  self.lm_head = ParallelLMHead(
-@@ -429,11 +490,26 @@ class Qwen4ExpMTP(nn.Module, SupportsPP, Qwen4ExpMixtureOfExperts):
+@@ -469,11 +530,26 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
      def compute_logits(
          self, hidden_states: torch.Tensor, spec_step_idx: int = 0
      ) -> torch.Tensor | None:
@@ -202,11 +202,11 @@ index fc307d4c77..89be0a2c7c 100644
                  remapped_name = _remap_mtp_weight_name(name)
                  if remapped_name is not None:
                      yield remapped_name, weight
-diff --git a/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py b/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
-index 897e7af8de..367b1af947 100644
---- a/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
-+++ b/vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py
-@@ -302,6 +302,15 @@ class AutoRegressiveSpeculator(DraftModelSpeculator):
+diff --git a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
+index fdbedd78f6..13d5dfbaf9 100644
+--- a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
+@@ -273,6 +273,13 @@ class TargetDependentARSpeculator(DraftModelSpeculator):
  
          self._prepare_eplb_forward(num_tokens)
  
@@ -215,10 +215,11 @@ index 897e7af8de..367b1af947 100644
 +        # graph captured with this flag False, so the small head stays in
 +        # the hot path.
 +        if hasattr(self.model, "full_head_window"):
-+            self.model.full_head_window = (
-+                max_query_len > self.num_speculative_steps + 1
-+            )
++            self.model.full_head_window = max_query_len > self.num_speculative_steps + 1
 +
          self.on_prefill_begin(num_reqs)
          if prefill_batch_desc.cg_mode == CUDAGraphMode.FULL:
              # Replay the full graph for draft prefill.
+-- 
+2.55.0
+

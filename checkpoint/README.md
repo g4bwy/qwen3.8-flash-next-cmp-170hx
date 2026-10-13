@@ -2,10 +2,10 @@
 
 Two builders live here. Both write into a model directory and both
 are described at full length below: the draft-vocab pair that feeds
-patch 8, and the W8A16 dense tree builder that turns the official FP8
+patch 5, and the W8A16 dense tree builder that turns the official FP8
 release into an int8-dense variant.
 
-## Draft vocabulary head (patch 8)
+## Draft vocabulary head (patch 5)
 
 Patch 8 makes the MTP drafter score a small head instead of the 248k-row
 lm_head per draft step, worth ~9% single-stream. Measured history: 4-stream
@@ -36,7 +36,7 @@ checkpoint directory carries the artifacts, and they take two commands:
    borrowed frequency list covering 92% costs back more in rejections than
    the head saves.
 2. Build the artifacts in place (adds ~200 MB to the model dir and one
-   index entry, applied AFTER patch 8 or draft weight loading fails):
+   index entry, applied AFTER patch 5 or draft weight loading fails):
 
    ```bash
    ./checkpoint/build_draft_vocab.py \
@@ -120,7 +120,7 @@ Full tables: [benchmark/results.md](../benchmark/results.md).
   method's `weight_scale_inv`. The encoder keeps the ckpt name; the
   rename is header-only (pad to original header length, data never moves).
   The shipped encoder writes `weight_scale` directly.
-- Serving this checkpoint needs series patch 10: the PLE method only
+- Serving this checkpoint needs series patch 7: the PLE method only
   recognized fp8 tables through the Fp8Config gate.
 - `pack-quantized` int8 stores `uint8b128` (value + 128), four bytes per
   int32 along the input dim, plus bf16 `weight_scale` [N, K/32] and int64

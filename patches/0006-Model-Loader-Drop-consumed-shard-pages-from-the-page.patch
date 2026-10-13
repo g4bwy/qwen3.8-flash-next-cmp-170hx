@@ -1,7 +1,7 @@
-From 497b9377ab5db592143d0fb9ba834a5025ecb45d Mon Sep 17 00:00:00 2001
+From 202f6da7205286c7493b732bbc9753a566148d83 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 12:16:26 +0200
-Subject: [PATCH 09/10] [Model Loader] Drop consumed shard pages from the page
+Subject: [PATCH 6/7] [Model Loader] Drop consumed shard pages from the page
  cache
 
 Set VLLM_SAFETENSORS_DROP_CACHE=1 to posix_fadvise(FADV_DONTNEED) each
@@ -21,18 +21,18 @@ tensor copies are already independent of the file.
 
 Co-authored-by: Maki <agent@local>
 ---
- .../test_safetensors_drop_cache.py            | 61 +++++++++++++++++++
+ .../test_safetensors_drop_cache.py            | 63 +++++++++++++++++++
  vllm/envs.py                                  |  9 +++
  .../model_loader/weight_utils.py              | 37 +++++++++++
- 3 files changed, 107 insertions(+)
+ 3 files changed, 109 insertions(+)
  create mode 100644 tests/model_executor/model_loader/test_safetensors_drop_cache.py
 
 diff --git a/tests/model_executor/model_loader/test_safetensors_drop_cache.py b/tests/model_executor/model_loader/test_safetensors_drop_cache.py
 new file mode 100644
-index 0000000000..b919bcd2eb
+index 0000000000..47f5db0486
 --- /dev/null
 +++ b/tests/model_executor/model_loader/test_safetensors_drop_cache.py
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,63 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +"""VLLM_SAFETENSORS_DROP_CACHE releases shard pages after consumption."""
@@ -60,12 +60,16 @@ index 0000000000..b919bcd2eb
 +
 +
 +@pytest.mark.cpu_test
-+@pytest.mark.parametrize("iterator", [
-+    lambda files: safetensors_weights_iterator(files, use_tqdm_on_load=False),
-+    lambda files: multi_thread_safetensors_weights_iterator(
-+        files, use_tqdm_on_load=False
-+    ),
-+], ids=["single", "multi-thread"])
++@pytest.mark.parametrize(
++    "iterator",
++    [
++        lambda files: safetensors_weights_iterator(files, use_tqdm_on_load=False),
++        lambda files: multi_thread_safetensors_weights_iterator(
++            files, use_tqdm_on_load=False
++        ),
++    ],
++    ids=["single", "multi-thread"],
++)
 +def test_drop_cache_calls_fadvise_per_shard(tmp_path, monkeypatch, iterator):
 +    files = _make_shards(tmp_path)
 +    calls = []
@@ -83,9 +87,7 @@ index 0000000000..b919bcd2eb
 +    files = _make_shards(tmp_path, n=1)
 +    calls = []
 +    monkeypatch.setattr(wu.envs, "VLLM_SAFETENSORS_DROP_CACHE", False)
-+    monkeypatch.setattr(
-+        os, "posix_fadvise", lambda *a: calls.append(a)
-+    )
++    monkeypatch.setattr(os, "posix_fadvise", lambda *a: calls.append(a))
 +    list(safetensors_weights_iterator(files, use_tqdm_on_load=False))
 +    assert calls == []
 +
@@ -95,7 +97,7 @@ index 0000000000..b919bcd2eb
 +    monkeypatch.setattr(wu.envs, "VLLM_SAFETENSORS_DROP_CACHE", True)
 +    assert wu._drop_file_cache(str(tmp_path / "missing.safetensors")) is None
 diff --git a/vllm/envs.py b/vllm/envs.py
-index f51100fe8b..ae501eb1ab 100755
+index bb1c03a9da..69a556693e 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -123,6 +123,7 @@ if TYPE_CHECKING:
@@ -106,7 +108,7 @@ index f51100fe8b..ae501eb1ab 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1134,6 +1135,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1138,6 +1139,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_FASTSAFETENSORS_QUEUE_SIZE": lambda: int(
          os.getenv("VLLM_FASTSAFETENSORS_QUEUE_SIZE", "0")
      ),
@@ -122,10 +124,10 @@ index f51100fe8b..ae501eb1ab 100755
      "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/model_executor/model_loader/weight_utils.py b/vllm/model_executor/model_loader/weight_utils.py
-index 12d557fa1c..f72bda4074 100644
+index 0a834cd90c..1dc3cacbab 100644
 --- a/vllm/model_executor/model_loader/weight_utils.py
 +++ b/vllm/model_executor/model_loader/weight_utils.py
-@@ -1031,6 +1031,26 @@ def _prefetch_all_checkpoints(
+@@ -1076,6 +1076,26 @@ def _prefetch_all_checkpoints(
      threading.Thread(target=_run_prefetch, daemon=True).start()
  
  
@@ -152,7 +154,7 @@ index 12d557fa1c..f72bda4074 100644
  def safetensors_weights_iterator(
      hf_weights_files: list[str],
      use_tqdm_on_load: bool,
-@@ -1117,6 +1137,9 @@ def safetensors_weights_iterator(
+@@ -1162,6 +1182,9 @@ def safetensors_weights_iterator(
          )
  
      leftover_state_dict: dict[str, torch.Tensor] = {}
@@ -162,7 +164,7 @@ index 12d557fa1c..f72bda4074 100644
      for st_file in tqdm(
          sorted_files,
          desc=loading_desc,
-@@ -1166,6 +1189,18 @@ def safetensors_weights_iterator(
+@@ -1211,6 +1234,18 @@ def safetensors_weights_iterator(
                          continue
                      param = f.get_tensor(name)
                      yield name, param
@@ -181,7 +183,7 @@ index 12d557fa1c..f72bda4074 100644
  
  
  def multi_thread_safetensors_weights_iterator(
-@@ -1177,6 +1212,8 @@ def multi_thread_safetensors_weights_iterator(
+@@ -1222,6 +1257,8 @@ def multi_thread_safetensors_weights_iterator(
  
      def _load_file(st_file: str):
          result = load_file(st_file, device="cpu")
@@ -190,3 +192,6 @@ index 12d557fa1c..f72bda4074 100644
          return result
  
      with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+-- 
+2.55.0
+
