@@ -325,5 +325,4 @@ patchset-qwen38-pp/
   benchmark/                             measurement tools, raw results, and the full record, see its README
   checkpoint/                            artifact builders: W8A16 dense tree + draft-vocab, see its README
   README.md                              this file
-  TODO.md                                open items, in priority order, with the check that closes each
 ```
