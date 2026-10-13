@@ -3,7 +3,7 @@
 Kept for reference. Nothing here is maintained: the scripts in this directory
 last booted clean on the 9-patch series at base `155488d853` (2026-10-05),
 before patch 10 and before the MTP-4/retention-16160 ship state. Expect the
-current series to need small flag adjustments on them; the tree pin and apply
+current series to need small flag adjustments on them. The tree pin and apply
 flow in the top-level README belong to the active series, not to these.
 
 The service lane is `serve-4x-1m.sh` at the repo root. Full raw grids for
@@ -54,7 +54,7 @@ Rates are tok/s unless the cell shows a duration. Rows carry 70-SM numbers on
 | 4 cards, 262k | 22.1 s | 9.9k | 151-165 | 405, 4 of 4 |
 | 4 cards, 524k | 46.0 s | 10.5k | 163-168 | 367, 4 of 4 |
 
-Findings that lived in these lanes:
+Findings measured in these lanes:
 
 - Pool sets capacity. At 262k, 4 cards hold nine full streams against four on
   3 cards, which was the argument for the wider pipeline.
@@ -77,7 +77,7 @@ Findings that lived in these lanes:
   pool at 1M, 2.17% at 524k and 2.33% at 262k, measured on all three 4-card
   lanes 2026-09-30.
 - On YaRN bookkeeping: at 512k the factor-2.0 scaling matches exactly
-  (524,288 = 2 x 262,144), so transformers stays quiet; at 1M the explicit
+  (524,288 = 2 x 262,144), so transformers stays quiet. At 1M the explicit
   factor 4.0 wins over the implicit 3.81 ratio and the warning is harmless.
 
 ## TP=4 + EP trial (`serve-4x-1m-tp.sh`, rejected)
@@ -85,7 +85,7 @@ Findings that lived in these lanes:
 Swaps PP=4 for TP=4 with `--enable-expert-parallel`, and loses: 1,434 against
 9,012 tok/s prefill, 111.7 against 185.1 tok/s single-stream decode, 1.74x
 against 2.60x KV pool. TP puts roughly 100 collectives in every decode step on
-x4 links. Peer DMA adds 20% there; at PP=4 it costs 2 to 3% of prefill with
+x4 links. Peer DMA adds 20% there. At PP=4 it costs 2 to 3% of prefill with
 decode unchanged, which is why the shipped path keeps `NCCL_P2P_DISABLE=1`.
 Tables: [../benchmark/results.md](../benchmark/results.md)
 ("TP=4 + EP, 1M: rejected").

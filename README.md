@@ -11,7 +11,11 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
   puts every pair at NODE distance. A ring is only as wide as its narrowest
   card, so budget about 2 GB/s between any two GPUs, not 8. NCCL needs
   `NCCL_P2P_LEVEL=SYS` to use peer DMA here at all.
-- Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8) (official FP8). The serve script pulls this tag by default; override with `MODEL=/local/path`. MTP-4 is the shipped depth; the fast lane builds an int8-dense variant with `checkpoint/` (+6 % on top of depth, +20 % over MTP-3).
+- Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8)
+  (official FP8). The serve script pulls this tag by default. Override with
+  `MODEL=/local/path`.
+- Depths: MTP-4 is the shipped depth. The fast lane builds an int8-dense
+  variant with `checkpoint/` (+6 % on top of depth, +20 % over MTP-3).
 - Base commit: `155488d853a0bc42df227dbfc74005b3fd488e94` (vllm-project/vllm main, 2026-10-04).
 - 10 patches: eight ours, two adopted from pending upstream PRs (#56444 as
   patch 2, #58094 as patch 7). After
@@ -87,21 +91,20 @@ One service script, the shipped state:
 4x cards, PP=4, partition `13,12,12,11`, 1,000,000 context at static YaRN 4.0,
 MTP-4 draft depth, KV pool 2.57x one full request. Prefix it with `PROF=1` to
 arm the capped torch profiler for step-anatomy runs (benchmark/phase_probe.py).
-Retired configs live in [archive/](archive/README.md): the 3-card set, the
+Retired configs are in [archive/](archive/README.md): the 3-card set, the
 262k and 512k lanes, and the rejected TP=4+EP trial, each with its tables.
 
-What the script carries, and why:
+The script sets:
 
 - MTP-4 spec decode, and the PLE n-gram table offloaded to pinned host RAM
   (`--engram-config '{"cpu_offload": true}'`).
 - Prefix caching with `--mamba-cache-mode align`,
   `--prefix-cache-retention-interval 16160` and `--prefix-match-unit 16`.
   MTP-4 forces a 1616 scheduler block (1600 + 16 per extra draft row) and the
-  retention interval is a multiple of it; the match unit drops the hit floor
+  retention interval is a multiple of it. The match unit drops the hit floor
   from 1,600 to 32 tokens. See Prefix caching.
-- NCCL IB off (single node, no fabric). NCCL P2P off as well: peer DMA
-  measured 2 to 3% off prefill with decode unchanged, so the shipped path
-  stays host-staged.
+- NCCL IB off (single node, no fabric). NCCL P2P stays off: peer DMA cost 2
+  to 3% of prefill with decode unchanged, so the shipped path is host-staged.
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, which stops allocator-OOM
   retries. vLLM forbids it only with KV connectors, and we run none.
 - `VLLM_SAFETENSORS_DROP_CACHE=1` (patch 9): consumed shards leave the page
@@ -111,7 +114,7 @@ Startup checks for the YaRN lane:
 
 1. `Using max model len <N>` appears twice, once for the target and once for
    the `Qwen4ExpMTP` draft. A second, smaller number means patch 7 is missing,
-   and MTP acceptance rots with context depth.
+   and MTP acceptance falls as context deepens.
 2. The log prints `Maximum concurrency for <N> tokens per request: X.XXx`.
    Below 1.0 the box cannot serve its own context length, so lower
    `--max-model-len`.
@@ -119,29 +122,33 @@ Startup checks for the YaRN lane:
 ### Draft vocabulary head (patch 8)
 
 Patch 8 makes the MTP drafter score a small head instead of the 248k-row
-lm_head per draft step, worth ~9% single-stream. It keeps the full head
-resident too and drafts mixed prefill+decode windows (a stream joining or
-growing while others decode) with it, because that is where the small head
-costs acceptance: greedy short-tail 4-stream cells read 3.7-4.3 at depth 4
-on the fixed gate, versus 2.9 with the small head everywhere. Uniform decode rounds replay
-the graphed small head and keep the win. Sampled corpus traffic shows no
-measurable effect either way. Artifact commands and the measured story:
-[checkpoint/README.md](checkpoint/README.md). Engages only when the
-checkpoint directory carries the artifacts. Startup proof:
-`MTP drafter scores a 40000-token draft vocabulary`.
+lm_head per draft step. The saving is ~9% single-stream. The patch keeps the
+full head in memory as well, and mixed prefill+decode windows (a stream
+joining or growing while others decode) draft with it, because that is where
+the small head loses acceptance: greedy short-tail 4-stream cells read 3.7-4.3
+at depth 4 with the fixed gate, versus 2.9 with the small head everywhere.
+Uniform decode rounds replay the graphed small head and keep the win. Sampled
+corpus traffic shows no measurable effect either way. Artifact commands and
+the measured story: [checkpoint/README.md](checkpoint/README.md). The head
+engages only when the checkpoint directory carries the artifacts. Startup
+proof: `MTP drafter scores a 40000-token draft vocabulary`.
 
 ## Prefix caching
 
 This model mixes linear and full attention, so vLLM runs the Mamba cache in `align`
-mode: a later request resumes from a retained state snapshot. Two knobs control
-reuse, and they are independent. `--prefix-cache-retention-interval` sets how often
+mode: a later request resumes from a retained state snapshot. Two independent knobs
+control reuse. `--prefix-cache-retention-interval` sets how often
 states are stored. `--prefix-match-unit` sets the token boundaries a hit can land
-on. vLLM ships both badly defaulted for this model.
+on. Both defaults suit other models, not this one.
 
-**Retention.** The interval defaults to `0`, which keeps almost nothing, and a
-growing session then re-prefills most of its history each turn. The scripts set
-16,000. A 120,000-token prompt, then the same prompt plus two characters, 4-card
-1M lane, before the match unit existed:
+### Retention
+
+The interval defaults to `0`, which keeps almost nothing. A
+growing session then re-prefills most of its history each turn. The serve
+script sets 16,160, a multiple of the MTP-4 block. The grid below ran on
+16,000 with the MTP-3 block of 1,600, before the match unit existed, sending
+a 120,000-token prompt and then the same prompt plus two characters on the
+4-card 1M lane:
 
 | interval | send | cached | recomputed | wall |
 |---|---|---:|---:|---:|
@@ -151,13 +158,15 @@ growing session then re-prefills most of its history each turn. The scripts set
 | 16,000 | 120,000 again | 96,000 | 24,000 | 2.57 s |
 | 16,000 | 120,001, plus two chars | 112,000 | 8,001 | 1.24 s |
 
-**Match unit.** The default is the GCD of the cacheable KV group block sizes, 1,600
-tokens here, so no hit could land finer than 1,600. That made prompts under 1,600
+### Match unit
+
+The default is the GCD of the cacheable KV group block sizes, 1,600
+tokens here, so no hit landed finer than 1,600. That made prompts under 1,600
 dead and left one-shot reuse shallower than the retention grid predicted. The
 number came from the fork wtdcode/vllm-backport, which calls the flag effectively
-mandatory. `--prefix-match-unit 16` (16 divides the block sizes; 64 is rejected)
-drops the floor to 32 tokens with the MTP block drop. Same lane, probe lengths,
-after the flag:
+mandatory. `--prefix-match-unit 16` drops the floor to 32 tokens with the MTP
+block drop. 16 divides the block sizes, and 64 is rejected. Same lane and probe
+lengths, after the flag:
 
 | send | cached | recomputed | hit |
 |---|---:|---:|---:|
@@ -169,13 +178,14 @@ after the flag:
 
 - Repeats and appends now hit at 99.8-99.9% at any length above the floor, below
   one retention interval included. The pool line is untouched: granularity changes
-  hashing, not allocation. Decode is unchanged (single stream 165.6-165.8 tok/s).
+  hashing, not allocation. Decode was unchanged in that grid (single stream
+  165.6-165.8 tok/s).
 - A grown turn resumes from the previous turn's end junction while that snapshot
-  survives pool pressure, recomputing about 20 tokens. When it does not survive,
+  survives pool pressure. It recomputes about 20 tokens. When it does not survive,
   the turn falls back to a coarser stored snapshot, about 3,100 tokens, or 0.3 s.
-  Worst case is therefore far below the 8,001-token cost of the retention-only fix.
-- Dense per-block retention, as the fork pairs with the flag for its LMCache tier,
-  is unnecessary without one and unmeasured here.
+  The worst case is far below the 8,001-token cost of the retention-only fix.
+- The fork also pairs the flag with dense per-block retention for its LMCache
+  tier. That pairing is unmeasured here, and the flag works without it.
 - Chunk size is still not the lever. `--max-num-batched-tokens 9600` moved no reuse
   number and cost 10% of the pool, so the scripts do not set it.
 - `enable_mamba_shared_prefix_checkpoint` stays off and unmeasured. The flag now
@@ -185,17 +195,18 @@ Measure reuse with `./benchmark/prefix_cache_probe.py --lengths 64000`. That cou
 tokens, so it cannot say whether the resumed state is right.
 `benchmark/prefix_state_check.py` does. It hides two hex needles, one in the first
 block and one at half depth, then compares cold, warm and grown answers. A second
-phase runs several sessions at once. All lanes pass, and the 4-card 1M lane passed
-again with the match unit set: warm 20k rows recompute 17-18 tokens with both
-needles intact, and a 4-session round fell from 82,978 recomputed tokens cold to
-1,682 warm, zero cross-session leakage.
+phase runs several sessions at once. All lanes passed, and the 4-card 1M lane
+passed again with the match unit set. Warm 20k rows recomputed 17-18 tokens with
+both needles intact. A 4-session round fell from 82,978 recomputed tokens cold to
+1,682 warm, with zero cross-session leakage.
 
-## Measured, this box, FP8 checkpoint, single stream
+## Measured on this box
+
 The cards are CMP 170HX (GA100). They run unlocked with the
 [amoghmunikote/cmpunlocker](https://github.com/amoghmunikote/cmpunlocker) module,
 which restores SM compute, the 64 GB HBM2e geometry, PCIe Gen 2 speed and BAR1.
-On the current unlock revision each card exposes the full GA100 die, 74 SMs;
-an earlier revision left 4 masked, so the 70-SM tables are marked where they
+On the current unlock revision each card exposes the full GA100 die, 74 SMs.
+An earlier revision left 4 masked, so the 70-SM tables stay marked where they
 still stand.
 The link is x4 here, about 2 GB/s per card in each direction. Nothing else is
 tuned. Each card is capped at 200 W.
@@ -213,7 +224,7 @@ warmup rather than steady decode.
 Per-rank weight and KV columns, and the retired 3-card / 262k / 524k rows:
 [archive/README.md](archive/README.md). The YaRN cos/sin cache
 (`4 x 262144 x factor` fp32 rows) is allocated before profiling and comes out
-of the KV pool; each YaRN step adds 0.25 GiB per rank of weights.
+of the KV pool. Each YaRN step adds 0.25 GiB per rank of weights.
 
 ### Throughput
 
@@ -227,18 +238,18 @@ Rates are tok/s unless the cell shows a duration. All rows: 74 SMs, partition
 | 4 cards, 1M, W8A16 lane, MTP-4 | 93.5 s | 10.1k | 217-226 | 400 s wall at 100/4, batch-neutral |
 
 - The sustained column is a 1.5 s peak that typically lands in the wind-down
-  of the run; compare grids on wall or out tok/s. Full grids, repeat runs and
+  of the run. Compare grids on wall or out tok/s. Full grids, repeat runs and
   the salt law: [benchmark/results.md](benchmark/results.md).
 - Single-stream decode at MTP-4 sits at this checkpoint's roofline on this
   silicon. The step anatomy (results.md, 2026-10-13) puts 66% of step time in
   GEMM traffic at the measured 580-790 GB/s solo band and the rest in
-  per-layer state machinery and glue; the visible NCCL time is structural PP
+  per-layer state machinery and glue. The visible NCCL time is structural PP
   bubble that only concurrency reclaims. What remains: batch residency (2-3
   full streams fit at 1M), fewer bytes, or a different checkpoint.
 - MTP acceptance: 4.75-4.9 mean length at MTP-4 on pinned salt, 3.7-4.0 at
   MTP-3, stable to full 1M depth. Acceptance that decays with depth means
   patch 7 is missing. Cell-to-cell scatter on rotating prompts is the content
-  lottery at depth 4+: pin `--salt` for comparisons, rotate it for ranges.
+  lottery at depth 4+. Pin `--salt` for comparisons and rotate it for ranges.
 - Oversubscription never preempted in any grid. The scheduler gates admission,
   extra streams queue, and preemptions stayed 0 in every concurrency cell.
 
@@ -247,8 +258,8 @@ Rates are tok/s unless the cell shows a duration. All rows: 74 SMs, partition
 The pool caps at min_r (rank KV bytes / rank layer count). The model has one
 PLE layer, at decoder index 1, so rank 0 needs at least two layers, and a
 layer costs rank 0 0.80 GiB of KV against 2.04 GiB on a mid rank. The 4-card
-lane runs `13,12,12,11`: +2.13% pool at 1M against an equal `12,12,12,12`,
-and the same margin repeats at 524k and 262k (archive). The extra layer costs
+lane runs `13,12,12,11`, worth +2.13% pool at 1M against an equal
+`12,12,12,12`. The same margin repeats at 524k and 262k ([archive](archive/README.md)). The extra layer costs
 rank 0 2.53 GiB of weights while rank 3, which also carries the MTP drafter,
 gets the room back. Rank 0 is now the binding stage, so a second shifted
 layer has nowhere useful to go. Prefill, single-stream decode and four-stream
@@ -263,9 +274,9 @@ is set to 2048` comes from the MTP drafter's window.
 
 `checkpoint/` builds a variant of the official FP8 tree that stores the 228
 main-body dense matrices as int8 (group-32, weight-only) instead of bf16.
-Serving it needs patch 10 and no other change; point `MODEL=` at the built
+Serving it needs patch 10 and no other change. Point `MODEL=` at the built
 directory. Two boots per side on 4x-1m: single-stream decode 216-226 tok/s
-at MTP-4 (+15 % over this lane's 190-192 at depth 3; +20 % over the
+at MTP-4 (+15 % over this lane's 190-192 at depth 3, and +20 % over the
 official FP8 tree's 181-184), prefill -1.7 to -2.5 %, KV pool +17k net at
 depth 4, acceptance unchanged. The quality gate (166k scored positions,
 two captures per boot, four boots): top-1 flip 8.1 % against a 7.3 %
@@ -278,14 +289,14 @@ about one position in 130 moves because of the quantization. Full tables:
 | # | does |
 |---|---|
 | 1 | Qwen4Exp MTP forward branches on `intermediate_tensors is None` rather than PP rank, so the last-rank drafter takes the embedding path |
-| 2 | upstream PR #56444, adopted: carry PLE input ids (int32, +4 B/token/hop) inside the PP intermediate tensors, so PLE is pipeline-rank-free; replaces our rank-0 confinement; its three new tests got process-isolation guards locally |
+| 2 | upstream PR #56444, adopted: carry PLE input ids (int32, +4 B/token/hop) inside the PP intermediate tensors, so PLE is pipeline-rank-free. Replaces our rank-0 confinement. Its three new tests got process-isolation guards locally |
 | 3 | V2: resolve deferred mamba state copies by request slot |
 | 4 | mamba: seed the align state column with the real mamba block size |
 | 5 | Qwen4Exp: gather pinned PLE rows as raw bytes (Ampere has no `fp8e4nv`) |
 | 6 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
 | 7 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our old patch 7 used |
 | 8 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Dual-head: eager mixed prefill windows draft with the full head, graphed uniform decode rounds keep the small one. Needs artifacts, build commands in checkpoint/README |
-| 9 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts): 173 GiB of read-once weight bytes should not evict reusable cache at every boot |
+| 9 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts), so the 173 GiB read-once load does not evict reusable cache at every boot |
 | 10 | Qwen4Exp PLE embedding honors fp8 n-gram tables inside compressed-tensors checkpoints: resolve the scheme (none -> unquantized, float8 -> fp8, else raise) instead of falling through to the Fp8Config-only gate |
 
 ## Gotchas
