@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 1M context variant of the (now archived) 4-card 262k script. YaRN factor
 # 4.0, the vendor's own recipe. Expect "Using max model len 1000000" for the
-# drafter too. The override rules and the patch 7 startup check are in
+# drafter too. The override rules and the patch 4 startup check are in
 # archive/serve-4x-512k.sh.
 # Apply the patch series first: git am --keep-non-patch patches/00*.patch
 # Details and measured numbers: README.md.
@@ -44,7 +44,7 @@ export NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # The 173 GiB checkpoint is read once into VRAM; drop its page cache as each
 # shard is consumed so the load does not evict cache worth keeping. Requires
-# patches/0009-safetensors-drop-pagecache.patch.
+# patches/0006-Model-Loader-Drop-consumed-shard-pages-from-the-page.patch.
 export VLLM_SAFETENSORS_DROP_CACHE=1
 
 # PROF=1 arms the torch profiler (auto-stops after max_iterations engine

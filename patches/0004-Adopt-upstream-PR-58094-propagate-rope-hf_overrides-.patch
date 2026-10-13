@@ -1,8 +1,8 @@
-From 8b662bca9eabfd36cac5da6635e70da111df4d66 Mon Sep 17 00:00:00 2001
+From 3c4d7523a93b11b1d49ab22e8e2f707d3a417769 Mon Sep 17 00:00:00 2001
 From: gokay-ai <60583610+gokay-ai@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 07/10] Adopt upstream PR #58094: propagate rope hf_overrides
- to MTP draft
+Subject: [PATCH 4/7] Adopt upstream PR #58094: propagate rope hf_overrides to
+ MTP draft
 
 Covers our --hf-overrides YaRN path (nested text_config.rope_parameters
 and max_position_embeddings forwarded, applied before arch mapping).
@@ -22,7 +22,7 @@ Upstream-PR: vllm-project/vllm#58094 (gokay-ai, pending)
  3 files changed, 177 insertions(+), 17 deletions(-)
 
 diff --git a/tests/config/test_speculative_draft_hf_overrides.py b/tests/config/test_speculative_draft_hf_overrides.py
-index e7014faa47..30fa4d75d0 100644
+index 39ebd7924b..65d9af5020 100644
 --- a/tests/config/test_speculative_draft_hf_overrides.py
 +++ b/tests/config/test_speculative_draft_hf_overrides.py
 @@ -9,6 +9,11 @@ draft belonging to a large target model is instantiated at full size even
@@ -37,7 +37,7 @@ index e7014faa47..30fa4d75d0 100644
  """
  
  import functools
-@@ -20,6 +25,16 @@ from transformers import PreTrainedConfig
+@@ -20,6 +25,16 @@ from transformers import Glm5NextConfig, PreTrainedConfig
  from vllm.config.parallel import ParallelConfig
  from vllm.config.speculative import SpeculativeConfig
  
@@ -155,11 +155,11 @@ index e7014faa47..30fa4d75d0 100644
  def test_callable_overrides_reach_the_draft_config():
      """A callable override (config-to-config transform) composes with the
 diff --git a/vllm/config/model.py b/vllm/config/model.py
-index 538bdcc834..8e35a088ae 100644
+index c4016e82bc..a3dfd760b2 100644
 --- a/vllm/config/model.py
 +++ b/vllm/config/model.py
-@@ -510,8 +510,8 @@ class ModelConfig:
-             factors["language_model_only"] = self.multimodal_config.language_model_only
+@@ -513,8 +513,8 @@ class ModelConfig:
+             )
          return hash_factors(factors)
  
 +    @staticmethod
@@ -168,7 +168,7 @@ index 538bdcc834..8e35a088ae 100644
          target: PreTrainedConfig | dict[str, Any],
          updates: dict[str, Any],
      ) -> None:
-@@ -529,7 +529,7 @@ class ModelConfig:
+@@ -532,7 +532,7 @@ class ModelConfig:
                      isinstance(nested_target, dict)
                      or hasattr(nested_target, "__dict__")
                  ):
@@ -177,7 +177,7 @@ index 538bdcc834..8e35a088ae 100644
                      continue
  
              # Set the value (base case)
-@@ -538,8 +538,8 @@ class ModelConfig:
+@@ -541,8 +541,8 @@ class ModelConfig:
              else:
                  setattr(target, key, value)
  
@@ -187,7 +187,7 @@ index 538bdcc834..8e35a088ae 100644
          config: PreTrainedConfig,
          overrides: dict[str, Any],
      ) -> None:
-@@ -550,7 +550,7 @@ class ModelConfig:
+@@ -553,7 +553,7 @@ class ModelConfig:
              attr = getattr(config, key, None)
              if attr is not None and isinstance(attr, PreTrainedConfig):
                  # It's a nested config - recursively update it
@@ -197,10 +197,10 @@ index 538bdcc834..8e35a088ae 100644
                  # It's a dict-valued parameter - set it directly
                  setattr(config, key, value)
 diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
-index 47ffb3b7f7..4cee2e6d7a 100644
+index b916d7da2b..f704dbefc6 100644
 --- a/vllm/config/speculative.py
 +++ b/vllm/config/speculative.py
-@@ -36,6 +36,30 @@ else:
+@@ -35,6 +35,30 @@ else:
  
  logger = init_logger(__name__)
  
@@ -231,7 +231,7 @@ index 47ffb3b7f7..4cee2e6d7a 100644
  MTPModelTypes = Literal[
      "deepseek_mtp",
      "dots3_note_mtp",
-@@ -1074,6 +1098,36 @@ class SpeculativeConfig:
+@@ -1080,6 +1104,36 @@ class SpeculativeConfig:
          hf_config = SpeculativeConfig.hf_config_override(hf_config)
          return target_hf_overrides(hf_config)
  
@@ -268,7 +268,7 @@ index 47ffb3b7f7..4cee2e6d7a 100644
      @staticmethod
      def compose_draft_hf_overrides(
          target_hf_overrides: HfOverrides | None,
-@@ -1084,8 +1138,14 @@ class SpeculativeConfig:
+@@ -1090,8 +1144,14 @@ class SpeculativeConfig:
          (e.g. test harnesses shrinking ``num_hidden_layers``) and must also
          reach the draft config — otherwise a draft belonging to a large
          target is instantiated at full size even when the target is shrunk.
@@ -285,7 +285,7 @@ index 47ffb3b7f7..4cee2e6d7a 100644
  
          The composed override must stay picklable: the draft ``ModelConfig``
          is sent to spawned engine-core processes, so a local closure would
-@@ -1093,11 +1153,22 @@ class SpeculativeConfig:
+@@ -1099,11 +1159,22 @@ class SpeculativeConfig:
          target via ``functools.partial`` over a module-referenceable static
          method instead.
          """
@@ -310,7 +310,7 @@ index 47ffb3b7f7..4cee2e6d7a 100644
          )
  
      @staticmethod
-@@ -1274,9 +1345,9 @@ class SpeculativeConfig:
+@@ -1280,9 +1351,9 @@ class SpeculativeConfig:
                  if self.method == "medusa":
                      draft_hf_overrides = {"model_type": "medusa"}
                  else:
@@ -323,3 +323,6 @@ index 47ffb3b7f7..4cee2e6d7a 100644
                      draft_hf_overrides = SpeculativeConfig.compose_draft_hf_overrides(
                          self.target_model_config.hf_overrides
                      )
+-- 
+2.55.0
+
