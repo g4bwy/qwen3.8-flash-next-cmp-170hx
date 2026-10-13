@@ -60,6 +60,9 @@ kernel-level benches noted below. Reproduce commands are at the end of
   `--base-url http://fender.lan:8000` when the server is the remote box.
 - Do not touch the server (no curls, no scrapes beyond the tool itself)
   while a bench cell is in flight.
+- Do not start a bench cell while the box runs other jobs. PP decode is
+  CPU-sensitive (ZMQ hop RPCs between stages), so external load silently
+  inflates step time. The owner says when the machine is quiet.
 - Kernel-level changes read fixed-salt acceptance FIRST, timing second:
   timing can look great while values rot (L2 eviction incident, results.md).
 - `sampler.py`, `picked.json`, `decode_probe.py` are untracked local scratch.
