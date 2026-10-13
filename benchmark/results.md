@@ -687,6 +687,65 @@ informed next move for it is phase-level instrumentation (a real
 tool, scheduled deliberately), or nothing.
 Capture: logs/sw-l2-patched.jsonl (364 KB, with clocks - first nvml
 run).
+
+### Decode step anatomy (2026-10-13): the 60/40 question is closed
+
+Tooling: PROF=1 gate in serve-4x-1m.sh (torch profiler armed with
+max_iterations=150 so the window self-closes, no stacks, frontend ignored),
+benchmark/phase_probe.py (runs the salt-7770 100%-fill cell and triggers
+/start_profile in steady decode), benchmark/phase_report.py (parses the
+four per-rank chrome traces). The runner phase spans came back empty:
+serving uses the V2 model runner (boot log "Using V2 Model Runner"), whose
+files lack the record_function markers - the gpu_model_runner: ones are V1.
+Kernel-level attribution turned out richer anyway. Capture: logs/prof/
+(4 rank traces + profiler_out_*.txt), summary at logs/phase-report-7770.txt.
+
+Window facts: 150 worker steps in 0.93 s = 37 real decode steps
+(execute_context_0(0)_generation_1(5)) interleaved with 113 empty-batch
+draft-wave spans (~3 per step, the drafter's extra worker steps at d4; rank
+3 replays 5 CUDA graphs per step, ranks 0-2 one). CUPTI inflates cadence
+21.6 -> 25.5 ms; read ratios, not absolutes. Acceptance held 4.98 through
+the window: profiling cost nothing measurable.
+
+| per real step | r0 | r1 | r2 | r3 | sum |
+|---|---:|---:|---:|---:|---:|
+| compute, ms | 6.20 | 5.76 | 6.08 | 8.87 | 26.9 |
+| nccl-spin, ms | 19.4 | 33.7 | 28.3 | 16.6 | 98.0 |
+| true GPU gap, ms | 0.47 | 0.05 | 0.06 | 0.19 | 0.8 |
+
+1. The step IS the serial sum of per-rank compute (26.9 ms ~ the inflated
+   cadence; clean sum ~22.9 vs 21.6 observed). NCCL kernels occupy the
+   GPUs to WAIT (one >2 ms broadcast per step per rank is the whole
+   bubble; actual send/recv payload measures 0.2 ms/step). The PP bubble
+   is structural for single-stream and shrinks with concurrency. There is
+   no comms lever. Confirmed dead: any "reduce NCCL overhead" idea.
+2. The 40% latency/state side, now attributed (ms/step summed over ranks):
+   byte-side gemm-bf16 10.2 + humming 7.6 = 17.8 (66%); the rest is
+   qsa-attn 2.3, gdn/state 1.8, moe-routing (gating/align/sort) 1.5,
+   norm 1.2, copy/memset 1.0, elementwise+other 2.1, sampler 0.02. No
+   single monster - it is the per-layer state machinery and glue, ~40
+   kernels x ~5 us per layer.
+3. Rank 3 (attention head + drafter) is the critical path: 8.9 vs ~6.0 ms.
+   Its excess is draft gemms (ampere 64x64 x36/step) plus double qsa.
+   PP re-partition cannot help: wall = SUM of stage compute; balancing
+   moves the same total. Only shrinking total compute works.
+4. Launch-tax ceiling is modest: 2540 compute kernels/step across the
+   pipeline, median 3.2 us, but everything <5 us sums to only 3.9 ms/step
+   and <2 us to 1.3. Perfect glue fusion cannot beat ~2-3 ms/step
+   (~10%), and it is exactly the kernel-mod class that requires the
+   fixed-salt acceptance check.
+
+Concrete microbench targets (the two missing budget-sweep columns, shapes
+taken from trace launch args):
+- humming grouped GEMM Shape<0,1280,2560> tile 16x256x128, grid 74
+  (= SM count, persistent), 95 us, 13/step/rank = 1.25 ms/rank/step, plus
+  its Shape<0,2560,640> sibling at 56 us. Replay at true m=5-rows/topk
+  expert mix; compare to the 580-790 GB/s solo band.
+- ampere_bf16_s16816gemm_64x64_sliced1x2, grid 256, 63 us x 27/step/rank:
+  splitK at m=5 smells like a reduction round-trip tax; solo replay.
+- _qsa_mqa_paged_uniform grid [1,3939] block 64: 51 us x 13/rank/step at
+  1M depth - check against the splitk variant and the byte SOL.
+
 ### Salt law (2026-10-12, supersedes "post-idle" and "bimodal machine")
 
 Fixed-salt triples: acc 4.90/4.91/4.75, decode 208-215 (+-1.5%).
@@ -1043,4 +1102,6 @@ short decode window measures drafter warmup, not steady decode:
 ./benchmark/sustained_decode.py --base-url http://<host>:8000
 ./benchmark/sustained_decode.py --base-url http://<host>:8000 \
     --concurrencies 4 --depth 257000 --decode 4096   # the deep batched plateau
+./benchmark/phase_probe.py --base-url http://<host>:8000   # PROF=1 boot required; profiled salt-7770 cell (~3 min)
+python3 benchmark/phase_report.py --dir logs/prof          # parse the 4-rank traces into the step anatomy tables
 ```
