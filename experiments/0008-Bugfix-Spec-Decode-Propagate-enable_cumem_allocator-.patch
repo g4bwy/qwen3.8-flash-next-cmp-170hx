@@ -1,0 +1,46 @@
+From 91c4801353832db89ca0962e0c34f0c0ce5775e8 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Tue, 13 Oct 2026 14:50:45 +0200
+Subject: [PATCH 08/10] [Bugfix][Spec Decode] Propagate enable_cumem_allocator
+ to the draft ModelConfig
+
+The draft ModelConfig is rebuilt field by field from the target. Flags
+outside that list read as defaults once the drafter builders re-inject
+the draft copy into the parent VllmConfig via replace(), which re-runs
+full VllmConfig validation. With a KV connector configured and
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True, the KV-transfer
+compatibility gate reads enable_cumem_allocator from the draft copy,
+sees False, and aborts the worker even though the engine config
+properly enabled the cumem allocator.
+
+Copy the flag onto the draft config at construction, the same place
+dtype and quantization already mirror from the target.
+---
+ vllm/config/speculative.py | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
+index d9c6b8a0b6..f847d01925 100644
+--- a/vllm/config/speculative.py
++++ b/vllm/config/speculative.py
+@@ -1389,6 +1389,17 @@ class SpeculativeConfig:
+                     hf_overrides=draft_hf_overrides,
+                     config_format=self.target_model_config.config_format,
+                 )
++                # Memory-model flags must match the target: the draft config
++                # is re-injected into the parent VllmConfig (replace() in the
++                # drafter builders), which re-runs full validation. A flag
++                # set on the target but absent from this field list then
++                # looks disabled to any check that reads it from
++                # model_config, e.g. the KV-connector compatibility gate
++                # that exempts the cumem allocator from its
++                # expandable_segments rejection.
++                self.draft_model_config.enable_cumem_allocator = (
++                    self.target_model_config.enable_cumem_allocator
++                )
+ 
+                 # Old-format Medusa checkpoints (e.g. FasterDecoding/medusa-*)
+                 # omit vocab_size in config.json, so MedusaConfig falls back to
+-- 
+2.55.0
+
