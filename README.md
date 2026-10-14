@@ -20,7 +20,7 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
 - 7 patches: five ours, two adopted from upstream PRs (#56444 as
   patch 2, #58094 as patch 4). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `c20c6ee90b69c2b7f0d76664dd86ed0a18b45002`. If it does not, you applied
+  `18e0ec8942f61f82fd3a13bd9d9c6b9ce67ad371`. If it does not, you applied
   something else or onto something else.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
@@ -33,7 +33,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout 183625d4f9f49968218ffbe43242877ead72d569
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # c20c6ee90b69c2b7f0d76664dd86ed0a18b45002
+git rev-parse 'HEAD^{tree}'   # 18e0ec8942f61f82fd3a13bd9d9c6b9ce67ad371
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
@@ -291,7 +291,7 @@ about one position in 130 moves because of the quantization. Full tables:
 | 1 | Qwen4Exp MTP forward branches on `intermediate_tensors is None` rather than PP rank, so the last-rank drafter takes the embedding path |
 | 2 | upstream PR #56444, adopted: carry PLE input ids (int32, +4 B/token/hop) inside the PP intermediate tensors, so PLE is pipeline-rank-free. Replaces our rank-0 confinement. Its three new tests got process-isolation guards locally |
 | 3 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
-| 4 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our earlier local version used |
+| 4 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Forwarding is gated to the MTP family: an independent draft model ships its own rope and target dicts must not resize it. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our earlier local version used |
 | 5 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Dual-head: eager mixed prefill windows draft with the full head, graphed uniform decode rounds keep the small one. Needs artifacts, build commands in checkpoint/README |
 | 6 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts), so the 173 GiB read-once load does not evict reusable cache at every boot |
 | 7 | Qwen4Exp PLE embedding honors fp8 n-gram tables inside compressed-tensors checkpoints: resolve the scheme (none -> unquantized, float8 -> fp8, else raise) instead of falling through to the Fp8Config-only gate |
