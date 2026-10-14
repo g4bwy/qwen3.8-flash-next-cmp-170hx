@@ -1,8 +1,8 @@
-From 783402abdab361a7a4dcc28a6fdaea773ce08025 Mon Sep 17 00:00:00 2001
+From 5131eb80d9f92b5ae157b352753561e8c8f466b3 Mon Sep 17 00:00:00 2001
 From: Vaishnavi220506 <183067453+Vaishnavi220506@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 2/7] Adopt upstream PR #56444: carry PLE input ids through PP
- intermediates
+Subject: [PATCH 02/10] Adopt upstream PR #56444: carry PLE input ids through
+ PP intermediates
 
 Makes PLE pipeline-rank-free by transporting int32 input_ids inside the
 existing intermediate tensors (+4 B/token per hop). Removes the PP>1

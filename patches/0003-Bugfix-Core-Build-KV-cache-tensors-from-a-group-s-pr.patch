@@ -1,7 +1,7 @@
-From ab2365138af2b49d73b6f1588f8e6699b79cb751 Mon Sep 17 00:00:00 2001
+From 3052f1abcaaa343518a62f3eb11a66093623b29f Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 10 Sep 2026 22:12:29 +0200
-Subject: [PATCH 3/7] [Bugfix][Core] Build KV cache tensors from a group's
+Subject: [PATCH 03/10] [Bugfix][Core] Build KV cache tensors from a group's
  projected layers
 
 A pipeline stage that owns none of a KV cache group's layers keeps that
