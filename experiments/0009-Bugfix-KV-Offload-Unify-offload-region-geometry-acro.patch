@@ -1,0 +1,98 @@
+From 4ae8d439dee7d2a9a3c781cbbba1501b58b04176 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Tue, 13 Oct 2026 15:25:53 +0200
+Subject: [PATCH 09/10] [Bugfix][KV Offload] Unify offload region geometry
+ across pipeline stages
+
+The CPU offload region is one shared /dev/shm file whose size and row
+stride every process derives from kv bytes per block. That derivation
+read the LOCAL stage's kv_cache_tensors[0], but under pipeline
+parallelism each stage projects a different config: uneven layer counts
+plus the PLE group on stage 0 and the drafter group on the last stage
+made the four values disagree by ~10 MB. The creator sized the file with
+its own number while a joiner waited for a larger one, so boot died on a
+30 s _wait_for_file_size timeout.
+
+The engine core already holds every stage's config before broadcasting
+them, so stamp the engine-wide max bytes-per-block onto all of them; the
+scheduler merge inherits it via the deep copy. Workers keep addressing
+their own tensors with local page sizes inside the now-uniform row
+stride, which the region's strided views already support.
+---
+ .../kv_connector/v1/offloading/config.py       | 10 ++++++++++
+ vllm/v1/engine/core.py                         | 18 ++++++++++++++++++
+ vllm/v1/kv_cache_interface.py                  |  8 ++++++++
+ 3 files changed, 36 insertions(+)
+
+diff --git a/vllm/distributed/kv_transfer/kv_connector/v1/offloading/config.py b/vllm/distributed/kv_transfer/kv_connector/v1/offloading/config.py
+index 186590b956..15202aa94e 100644
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/offloading/config.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/offloading/config.py
+@@ -145,6 +145,16 @@ def build_offloading_config(
+         # so its size is the total, not a per-tensor share.
+         total_gpu_kv_bytes = kv_cache_config.kv_cache_tensors[0].size
+         worker_kv_bytes_per_block = total_gpu_kv_bytes // kv_cache_config.num_blocks
++        if kv_cache_config.offload_worker_kv_bytes_per_block:
++            # Engine-wide max stamped by the engine core: under pipeline
++            # parallelism, stages hold different layer counts and the shared
++            # region requires one geometry everywhere. Local bytes never
++            # exceed the stamp by construction; worker views keep using the
++            # tensors' own page sizes within the uniform row stride.
++            worker_kv_bytes_per_block = max(
++                worker_kv_bytes_per_block,
++                kv_cache_config.offload_worker_kv_bytes_per_block,
++            )
+     elif kv_cache_config.num_blocks > 0:
+         worker_kv_bytes_per_block = sum(
+             _group_kv_bytes_per_block(group) for _, group in selected_groups
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+index d8c976ff69..40f2c27f75 100644
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -329,6 +329,24 @@ class EngineCore:
+         for kv_cache_config in kv_cache_configs:
+             kv_cache_config.kv_cache_layout = vllm_config.cache_config.kv_cache_layout
+ 
++        # The CPU KV offload region is one shared /dev/shm file sized from
++        # kv bytes per block; under pipeline parallelism each stage's local
++        # value differs (uneven layer counts, PLE on stage 0, drafter on the
++        # last), so stamp the engine-wide max onto every config -- workers
++        # index this list by rank and the scheduler merge deep-copies it --
++        # making all processes derive identical chunk geometry.
++        _kv_bytes = [
++            c.kv_cache_tensors[0].size // c.num_blocks
++            for c in kv_cache_configs
++            if c.num_blocks > 0 and c.kv_cache_tensors
++        ]
++        if _kv_bytes:
++            _max_kv_bytes_per_block = max(_kv_bytes)
++            for kv_cache_config in kv_cache_configs:
++                kv_cache_config.offload_worker_kv_bytes_per_block = (
++                    _max_kv_bytes_per_block
++                )
++
+         # If auto-fit reduced max_model_len, sync the new value to workers.
+         # This is needed because workers were spawned before memory profiling
+         # and have the original (larger) max_model_len cached.
+diff --git a/vllm/v1/kv_cache_interface.py b/vllm/v1/kv_cache_interface.py
+index 79e88ca91d..be60609f7d 100644
+--- a/vllm/v1/kv_cache_interface.py
++++ b/vllm/v1/kv_cache_interface.py
+@@ -1482,6 +1482,14 @@ class KVCacheConfig:
+     """Token granularity of prefix-cache hits, resolved by the engine core."""
+     hisparse_host_num_blocks: int | None = None
+     """Capacity of the dedicated HiSparse host-block manager, when enabled."""
++    offload_worker_kv_bytes_per_block: int | None = None
++    """Engine-wide max KV bytes per block per worker, stamped by the engine
++    core onto every stage's config before the scheduler merge. The CPU
++    offload connector shares one /dev/shm region across all workers, so all
++    processes must derive identical chunk geometry; under pipeline
++    parallelism the local stage's bytes-per-block differ (uneven layer
++    counts, PLE and drafter groups), which would otherwise desync region
++    sizes between creator and joiners."""
+ 
+     hisparse_host_block_stride: int | None = None
+     """Physical bytes between consecutive HiSparse host blocks."""
+-- 
+2.55.0
+

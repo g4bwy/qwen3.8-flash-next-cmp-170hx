@@ -1,0 +1,89 @@
+From 4741e2a94c5a7271d03161647c3da468da625c14 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 10:53:10 +0200
+Subject: [PATCH 10/10] [Bugfix][KV Offload] Add pin_region switch so the CPU
+ tier can fault lazily
+
+cudaHostRegister on the shared region commits and locks its entire
+capacity at worker startup, whether or not any session ever offloads.
+On constrained hosts that is a boot-time tax with no boot-time benefit.
+
+Add a pin_region extra-config key (default true, current behavior).
+With false, registration is skipped: pages fault as stores land,
+transfers run as pageable copies - documented upstream as correct,
+just slower - and the host keeps the memory until it is actually used.
+The is_pin_memory_available() path deliberately stays out of it;
+VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY governs weight offload only.
+---
+ docs/features/kv_offloading_usage.md | 1 +
+ vllm/v1/kv_offload/cpu/gpu_worker.py | 8 +++++++-
+ vllm/v1/kv_offload/cpu/spec.py       | 7 +++++++
+ 3 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/docs/features/kv_offloading_usage.md b/docs/features/kv_offloading_usage.md
+index 22a2350d80..f2fb8ce7c4 100644
+--- a/docs/features/kv_offloading_usage.md
++++ b/docs/features/kv_offloading_usage.md
+@@ -101,6 +101,7 @@ vllm serve <model> \
+ | --- | --- | --- | --- | --- |
+ | `spec_name` | no | `CPUOffloadingSpec` | both | Set to `TieringOffloadingSpec` for multi-tier. |
+ | `cpu_bytes_to_use` | yes | — | both | Total bytes of host memory reserved for the CPU tier across all workers (not per-worker). |
++| `pin_region` | no | `true` | worker | Register the shared region with the accelerator at startup: full-speed pinned DMA, but the whole region is committed and locked immediately. With `false` the region faults lazily, transfers run pageable, and untouched capacity costs no RAM. |
+ | `block_size` | no | GPU block size | both | Offloaded block size in tokens; must be a multiple of the GPU block size. Mutually exclusive with `blocks_per_chunk`. |
+ | `blocks_per_chunk` | no | `1` | both | Offloaded chunk size in GPU blocks; must be > 0. Alternative to `block_size` for models whose KV cache groups have different block sizes. |
+ | `eviction_policy` | no | `lru` | both | Primary tier policy: built-in `lru`/`arc`, or a custom `CachePolicy` name (see [Custom Eviction Policies](#custom-eviction-policies)). |
+diff --git a/vllm/v1/kv_offload/cpu/gpu_worker.py b/vllm/v1/kv_offload/cpu/gpu_worker.py
+index f6053480a7..26f877b645 100644
+--- a/vllm/v1/kv_offload/cpu/gpu_worker.py
++++ b/vllm/v1/kv_offload/cpu/gpu_worker.py
+@@ -776,6 +776,7 @@ class CPUOffloadingWorker(OffloadingWorker):
+         num_cpu_chunks: int,
+         mmap_region: SharedOffloadRegion | None = None,
+         canonical_layout: bool = False,
++        register_region: bool = True,
+     ):
+         assert not canonical_layout or mmap_region is not None
+         # The caller owns mmap_region until this constructor returns. After a
+@@ -784,8 +785,13 @@ class CPUOffloadingWorker(OffloadingWorker):
+         self._mmap_region = mmap_region
+         pin_memory = PIN_MEMORY
+         logger.info("Allocating %d CPU tensors...", len(kv_caches.tensors))
+-        if mmap_region is not None and pin_memory:
++        if mmap_region is not None and pin_memory and register_region:
+             pin_mmap_region(mmap_region)
++        elif mmap_region is not None and not register_region:
++            logger.info(
++                "Offload region left unregistered (pin_region=false): "
++                "pages fault lazily, transfers run pageable"
++            )
+         host_memory_is_pinned = pin_memory and (
+             mmap_region is None or mmap_region.is_pinned
+         )
+diff --git a/vllm/v1/kv_offload/cpu/spec.py b/vllm/v1/kv_offload/cpu/spec.py
+index c26cd32f97..6cdf6c0998 100644
+--- a/vllm/v1/kv_offload/cpu/spec.py
++++ b/vllm/v1/kv_offload/cpu/spec.py
+@@ -98,6 +98,12 @@ class CPUOffloadingSpec(OffloadingSpec):
+             raise Exception(
+                 "cpu_bytes_to_use must be specified in kv_connector_extra_config"
+             )
++        # cudaHostRegister commits and locks the entire region up front.
++        # Set pin_region=false for a lazily faulted, pageable region: RAM
++        # grows only as stores touch pages, transfers run as (correct but
++        # slower) pageable copies, and touched pages are reclaimable when
++        # the host has swap.
++        self.pin_region = bool(self.extra_config.get("pin_region", True))
+ 
+         world_size = config.parallel.world_size
+         self.num_chunks = 0
+@@ -187,6 +193,7 @@ class CPUOffloadingSpec(OffloadingSpec):
+                 blocks_per_chunk=self.blocks_per_chunk,
+                 num_cpu_chunks=self.num_chunks,
+                 mmap_region=mmap_region,
++                register_region=self.pin_region,
+             )
+         except Exception:
+             if mmap_region is not None:
+-- 
+2.55.0
+
