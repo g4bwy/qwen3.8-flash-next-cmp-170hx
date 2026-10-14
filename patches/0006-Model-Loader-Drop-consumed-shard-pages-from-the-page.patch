@@ -1,7 +1,7 @@
-From 202f6da7205286c7493b732bbc9753a566148d83 Mon Sep 17 00:00:00 2001
+From 721d098f349f375161cc59ed11348a35a305aba1 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 12:16:26 +0200
-Subject: [PATCH 6/7] [Model Loader] Drop consumed shard pages from the page
+Subject: [PATCH 06/10] [Model Loader] Drop consumed shard pages from the page
  cache
 
 Set VLLM_SAFETENSORS_DROP_CACHE=1 to posix_fadvise(FADV_DONTNEED) each

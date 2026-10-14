@@ -1,14 +1,22 @@
-From 3c4d7523a93b11b1d49ab22e8e2f707d3a417769 Mon Sep 17 00:00:00 2001
+From b88ab7d60ae2399fb566f890b28f473da362321f Mon Sep 17 00:00:00 2001
 From: gokay-ai <60583610+gokay-ai@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 4/7] Adopt upstream PR #58094: propagate rope hf_overrides to
- MTP draft
+Subject: [PATCH 04/10] [Bugfix][Spec Decode] Propagate rope hf_overrides to
+ the MTP draft
 
-Covers our --hf-overrides YaRN path (nested text_config.rope_parameters
-and max_position_embeddings forwarded, applied before arch mapping).
-Replaces our local patch 7; its wrapper-mirror leg was already dead at
-this base. Difference vs our version: forwards rope-keyed subsets for
-any draft, not full dicts for same-checkpoint drafts only.
+Covers the --hf-overrides YaRN path: nested text_config.rope_parameters
+and max_position_embeddings are forwarded to the draft ModelConfig and
+applied before the arch mapping. Replaces our local patch; its
+wrapper-mirror leg was already dead at this base. Upstream's own
+compose_draft_hf_overrides forwards callables only, so without this the
+MTP draft stays on native rope while the target runs YaRN and acceptance
+collapses past the draft's native window (#58080).
+
+Forwarding is restricted to the MTP family (method in MTPModelTypes):
+fused heads carry no rope of their own and must inherit the target's
+extension, while an independent draft model ships its own rope config
+and target dicts must not resize it (upstream
+test_independent_draft_model_keeps_its_own_limit pins that contract).
 
 Fixed from the PR as merged here: the annotations said PretrainedConfig
 (HF spelling), which this tree never imports; speculative.py raised
@@ -18,8 +26,8 @@ Upstream-PR: vllm-project/vllm#58094 (gokay-ai, pending)
 ---
  .../test_speculative_draft_hf_overrides.py    | 101 ++++++++++++++++--
  vllm/config/model.py                          |   8 +-
- vllm/config/speculative.py                    |  85 +++++++++++++--
- 3 files changed, 177 insertions(+), 17 deletions(-)
+ vllm/config/speculative.py                    |  94 ++++++++++++++--
+ 3 files changed, 185 insertions(+), 18 deletions(-)
 
 diff --git a/tests/config/test_speculative_draft_hf_overrides.py b/tests/config/test_speculative_draft_hf_overrides.py
 index 39ebd7924b..65d9af5020 100644
@@ -197,7 +205,7 @@ index c4016e82bc..a3dfd760b2 100644
                  # It's a dict-valued parameter - set it directly
                  setattr(config, key, value)
 diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
-index b916d7da2b..f704dbefc6 100644
+index b916d7da2b..d9c6b8a0b6 100644
 --- a/vllm/config/speculative.py
 +++ b/vllm/config/speculative.py
 @@ -35,6 +35,30 @@ else:
@@ -231,7 +239,7 @@ index b916d7da2b..f704dbefc6 100644
  MTPModelTypes = Literal[
      "deepseek_mtp",
      "dots3_note_mtp",
-@@ -1080,6 +1104,36 @@ class SpeculativeConfig:
+@@ -1080,9 +1104,40 @@ class SpeculativeConfig:
          hf_config = SpeculativeConfig.hf_config_override(hf_config)
          return target_hf_overrides(hf_config)
  
@@ -268,7 +276,11 @@ index b916d7da2b..f704dbefc6 100644
      @staticmethod
      def compose_draft_hf_overrides(
          target_hf_overrides: HfOverrides | None,
-@@ -1090,8 +1144,14 @@ class SpeculativeConfig:
++        forward_rope_dicts: bool = True,
+     ) -> Callable[[PreTrainedConfig], PreTrainedConfig]:
+         """Build the ``hf_overrides`` for the draft ``ModelConfig``.
+ 
+@@ -1090,8 +1145,16 @@ class SpeculativeConfig:
          (e.g. test harnesses shrinking ``num_hidden_layers``) and must also
          reach the draft config — otherwise a draft belonging to a large
          target is instantiated at full size even when the target is shrunk.
@@ -281,11 +293,13 @@ index b916d7da2b..f704dbefc6 100644
 +        reach the draft. Otherwise the target runs extended RoPE (YaRN)
 +        while the MTP draft stays on the native encoding, and acceptance
 +        drops to 0% past the draft's native ``max_position_embeddings``
-+        (#58080).
++        (#58080). Only fused-head drafters (the MTP family) take this leg:
++        an independent draft model ships its own rope config, and target
++        dicts must not resize it (``forward_rope_dicts=False``).
  
          The composed override must stay picklable: the draft ``ModelConfig``
          is sent to spawned engine-core processes, so a local closure would
-@@ -1099,11 +1159,22 @@ class SpeculativeConfig:
+@@ -1099,11 +1162,25 @@ class SpeculativeConfig:
          target via ``functools.partial`` over a module-referenceable static
          method instead.
          """
@@ -294,6 +308,9 @@ index b916d7da2b..f704dbefc6 100644
 +            return functools.partial(
 +                SpeculativeConfig._apply_composed_hf_override, target_hf_overrides
 +            )
++
++        if not forward_rope_dicts:
++            return SpeculativeConfig.hf_config_override
 +
 +        if not isinstance(target_hf_overrides, Mapping) or not target_hf_overrides:
 +            return SpeculativeConfig.hf_config_override
@@ -310,7 +327,7 @@ index b916d7da2b..f704dbefc6 100644
          )
  
      @staticmethod
-@@ -1280,9 +1351,9 @@ class SpeculativeConfig:
+@@ -1280,11 +1357,12 @@ class SpeculativeConfig:
                  if self.method == "medusa":
                      draft_hf_overrides = {"model_type": "medusa"}
                  else:
@@ -321,8 +338,12 @@ index b916d7da2b..f704dbefc6 100644
 +                    # (e.g. the test shrink) and rope-relevant dict keys
 +                    # (YaRN / RoPE). Other dict patches stay target-only.
                      draft_hf_overrides = SpeculativeConfig.compose_draft_hf_overrides(
-                         self.target_model_config.hf_overrides
+-                        self.target_model_config.hf_overrides
++                        self.target_model_config.hf_overrides,
++                        forward_rope_dicts=self.method in get_args(MTPModelTypes),
                      )
+                 self.draft_model_config = ModelConfig(
+                     model=self.model,
 -- 
 2.55.0
 

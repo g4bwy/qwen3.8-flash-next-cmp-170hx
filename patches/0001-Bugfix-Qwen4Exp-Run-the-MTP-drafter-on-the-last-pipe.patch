@@ -1,7 +1,7 @@
-From 3196fcacb3970830a24e3e5ec11bacd1f9a05f66 Mon Sep 17 00:00:00 2001
+From 1152af1c9885d0ae00e7a9a3299eceed5de6a145 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 10 Sep 2026 11:51:58 +0200
-Subject: [PATCH 1/7] [Bugfix][Qwen4Exp] Run the MTP drafter on the last
+Subject: [PATCH 01/10] [Bugfix][Qwen4Exp] Run the MTP drafter on the last
  pipeline rank
 
 The drafter is instantiated only on the last pipeline rank (model_runner
