@@ -332,5 +332,6 @@ patchset-qwen38-pp/
   archive/                               retired lanes, the 3-card set, the TP=4 trial, and their tables
   benchmark/                             measurement tools, raw results, and the full record, see its README
   checkpoint/                            artifact builders: W8A16 dense tree + draft-vocab, see its README
+  experiments/                           shelved work: candidate patches, probes, and their runbooks
   README.md                              this file
 ```
