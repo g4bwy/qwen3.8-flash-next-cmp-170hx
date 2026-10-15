@@ -1186,3 +1186,33 @@ sm_80 (second lever, bigger pool, separate gate); the bench.py conc=1
 warm-cell acceptance column has a known open bug (engine-side direct
 counter windows used here instead). Raw: logs/fp8kv-1004-c1.json,
 logs/fp8kv-1003-demo.json; refs benchmark/quality/capture_bf16ref_*.jsonl.gz.
+
+### Prefill GEMM shootout, kernel level (2026-10-16, container, GPU1)
+
+Shapes from the checkpoint tooling (hidden 2560; expert I=640 trace-derived);
+M=2048 = production prefill chunk; CUDA-event medians of 31; co-resident
+load, ratios only. Raw: logs/preshoot-dense.json, logs/preshoot-moe.json.
+
+- Marlin fp8 W8A16 - our CURRENT dense path - runs 0.40-0.81x of bf16 at
+  prefill batch on this box (per-tensor and block-128 within 5%).
+  The official fp8 checkpoint already pays a dense-GEMM prefill tax
+  versus bf16 on sm_80; fewer bytes buy nothing at compute-bound sizes.
+- CUTLASS W8A8 int8 wins its shapes outright: 1.29-1.68x vs bf16
+  INCLUDING per-token activation quant, 2.1-2.4x vs the Marlin fp8 we
+  run today, on all seven dense families plus lm_head (1.51x) and the
+  40k draft head (1.52x). Loses only below ~2M elements / skinny-K
+  (K<1024): keep those bf16, same guard shape as the M4G4MED plugin.
+- Triton int8 tl.dot: never wins (0.35-0.71x). Fallback only.
+- MoE grouped experts at the real condition (E_local=512) are bandwidth
+  bound: Marlin fp8 grouped 54.5 TF/s (748 GB/s) is the best available;
+  int8 experts carry identical bytes, so a requant buys nothing there -
+  and grouped int8 kernels (Triton) are 0.47-0.64x of it. Experts stay
+  fp8/Marlin in any lane.
+- Wiring gotcha: block scales are [N/128, K/128] for
+  prepare_fp8_layer_for_marlin(size_k_first=False); transposed spelling
+  = 10% error or hard throw.
+
+Ceiling arithmetic pending one input: the dense-GEMM SHARE of the 91.8 s
+bf16-KV cold prefill. Needs one PROF=1 boot (current boot lacks the armed
+profiler); /start_profile just before a fresh-salt cold 1M prefill, the
+150-iteration window covers ~one prefill.
