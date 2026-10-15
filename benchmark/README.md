@@ -45,8 +45,15 @@ kernel-level benches noted below. Reproduce commands are at the end of
   lib for the other probes.
 - `corpus_accept_probe.py` - acceptance over the real-text corpus
   (`../draft_corpus.jsonl`), greedy or sampled.
-- `logprob_capture.py` + `quality_diff.py` - the quality gate: top-1 logprob
-  fingerprints per tree, diffed into flip rates against the machine floor.
+- `logprob_capture.py` + `quality_diff.py` - the quality gate: teacher-forced
+  fingerprints per boot (top-1 by default, `--k 8` adds top-k sets so the diff
+  also reports union KL, and `--depths 8200,16400 --lp-stride 4` adds
+  long-context rows where a KV format change bites). Diff a boot against its own repeat
+  run first for the noise floor, then against the stored reference; threshold
+  flags make the diff exit non-zero. `--require-greedy-equal` is the
+  determinism mode (issue #54521 stress: same boot twice, all metrics must be
+  zero). `_selftest_quality_gate.py` exercises both files with a fake server,
+  no GPU needed.
 
 ## Prefix caching
 
