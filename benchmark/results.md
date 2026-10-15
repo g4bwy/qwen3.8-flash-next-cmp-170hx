@@ -1151,3 +1151,38 @@ short decode window measures drafter warmup, not steady decode:
 ./benchmark/phase_probe.py --base-url http://<host>:8000   # PROF=1 boot required; profiled salt-7770 cell (~3 min)
 python3 benchmark/phase_report.py --dir logs/prof          # parse the 4-rank traces into the step anatomy tables
 ```
+
+### FP8 KV cache on Ampere (2026-10-15): the capacity unlock, 1.93x pool
+
+Base #60602 (in the 183625d4f9 base) lets QSA store e4m3 KV in uint8 buffers
+and byte-decode inside its Triton kernels below sm_89. Boot: same 7-patch
+mainline, same 0.9453, one extra flag --kv-cache-dtype fp8.
+
+| Metric | bf16 KV boot | fp8 KV boot |
+|---|---|---|
+| Pool tokens | 2,636,645 (2.64x) | 5,095,522 (5.10x, 1.93x) |
+| Acceptance, salt 7770 direct cells | 4.68-4.90 | 4.79-4.88 |
+| Warm 1M single-stream cell wall | 9.2-9.7 s | 9.3-9.4 s |
+| Cold TTFT, two fresh salts (true cold prefill) | 91.8 s (10,777 tok/s) | 108.8 / 108.7 s (9,095 tok/s, +18.6% TTFT, -16% rate) |
+| 100/4 wall / preempt | 298-387 s / 0 | 398.9 s / 0 |
+| 3x 1M streams + 3072 decode each | impossible (3rd preempts) | resident, 0 preempts, sust 553 |
+| Needles / grown turns (prefix_state_check) | pass | pass, exit 0 |
+
+Quality gates against the engine's own noise floor (the value-jitter
+discovery of the same day set this floor): candidate-vs-reference top-1
+flips 7.7% / mean KL 0.081 / tails exact 44%, candidate repeat floor 7.3% /
+0.074 / 50%, bf16 self-floor 6.8% / 0.070 / 44%. The format signal is under
+machine noise; that bounds it, it does not prove it zero. Prefill pays a
+real tax: cold 1M TTFT +18.6% (108.8 s vs 91.8 s, reproducible to 0.1 s,
+not JIT). Cause: sm_80 stores fp8 in uint8 and loses the fused QSA
+prepare writer (Triton cannot lower fp8 pointers below sm_89), so
+quantize+norm run as extra passes. Load wall follows it (399 s vs the
+bf16 cold-scale cells). Decode itself: unchanged. The fp8 study prior
+for head_dim 256 feared 1.6x TTFT; we read 1.20x.
+
+Verdict: ship flag. Three simultaneous 1M contexts stop being a
+scheduling fiction. Caveats: indexer_kv_dtype fp8 remains untested on
+sm_80 (second lever, bigger pool, separate gate); the bench.py conc=1
+warm-cell acceptance column has a known open bug (engine-side direct
+counter windows used here instead). Raw: logs/fp8kv-1004-c1.json,
+logs/fp8kv-1003-demo.json; refs benchmark/quality/capture_bf16ref_*.jsonl.gz.
