@@ -1193,15 +1193,18 @@ Shapes from the checkpoint tooling (hidden 2560; expert I=640 trace-derived);
 M=2048 = production prefill chunk; CUDA-event medians of 31; co-resident
 load, ratios only. Raw: logs/preshoot-dense.json, logs/preshoot-moe.json.
 
-- Marlin fp8 W8A16 - our CURRENT dense path - runs 0.40-0.81x of bf16 at
-  prefill batch on this box (per-tensor and block-128 within 5%).
-  The official fp8 checkpoint already pays a dense-GEMM prefill tax
-  versus bf16 on sm_80; fewer bytes buy nothing at compute-bound sizes.
+- Marlin fp8 W8A16 runs 0.40-0.81x of bf16 at prefill batch on this box
+  (per-tensor and block-128 within 5%). ERRATUM 2026-10-16, from the first
+  profiled prefill (next section): production dense linears DO NOT use
+  Marlin. Traces show zero marlin/scaled_mm launches and 96k aten::mm ->
+  the fp8 dense weights run as bf16 cuBLAS after a load-time dequant
+  (W8A16 by dequant). This row prices a path we do not run.
 - CUTLASS W8A8 int8 wins its shapes outright: 1.29-1.68x vs bf16
-  INCLUDING per-token activation quant, 2.1-2.4x vs the Marlin fp8 we
-  run today, on all seven dense families plus lm_head (1.51x) and the
+  INCLUDING per-token activation quant, 2.1-2.4x vs Marlin fp8, on all
+  seven dense families plus lm_head (1.51x) and the
   40k draft head (1.52x). Loses only below ~2M elements / skinny-K
   (K<1024): keep those bf16, same guard shape as the M4G4MED plugin.
+  Real value vs the ACTUAL bf16-dequant dense path: the 1.3-1.7x column.
 - Triton int8 tl.dot: never wins (0.35-0.71x). Fallback only.
 - MoE grouped experts at the real condition (E_local=512) are bandwidth
   bound: Marlin fp8 grouped 54.5 TF/s (748 GB/s) is the best available;
@@ -1216,3 +1219,47 @@ Ceiling arithmetic pending one input: the dense-GEMM SHARE of the 91.8 s
 bf16-KV cold prefill. Needs one PROF=1 boot (current boot lacks the armed
 profiler); /start_profile just before a fresh-salt cold 1M prefill, the
 150-iteration window covers ~one prefill.
+
+### First profiled 1M prefill (2026-10-16): the family table, and the crash
+
+Boot: PROF=1 + --kv-cache-dtype fp8 (dev41+gce97fc109 = base+7). Fresh-salt
+cold prefill in flight; 150-step CUPTI window self-closed mid-prefill at
+~242k tokens; then the four ranks serialized their traces one after
+another (~40 s each, visible as cascading trace mtimes 00:47->00:51) while
+the lockstep pipeline stalled. EngineCore died with "RPC call to
+sample_tokens timed out" at 00:51:40. Data survived complete on all four
+ranks. RULE: profile with VLLM_RPC_TIMEOUT raised (or at <=300k context);
+flush x 4 ranks needs ~3-4 pipeline-minutes.
+
+Window reality check: 75 steps of context 2048 + 75 of context 1184 (this
+conversation's own chunked prompt - co-prefilling, not decode), 163 ms/
+step, 9.93k tok/s extrapolating to 99.6 s vs the 108.8 s anchor (+9%,
+later chunks pay attention). Device-time shares (4-rank sum, kineto +
+trace-verified classification, 135 kernels, 0 unclassified):
+
+| family | share of device time |
+|---|---|
+| nccl_comm (spin + hops) | 35.6% |
+| humming MoE experts | 24.3% (+1.0% routing) |
+| dense GEMM (bf16 cuBLAS, post-dequant) | 14.4% |
+| QSA attention pair (splitk prefix read + prefill) | 13.6% |
+| GDN chunked | 4.3% |
+| elementwise/norm/silu/HC | 4.9% |
+| PLE pinned lookup (rank0 only) | 0.6% |
+| quantization passes (incl fp8-KV write) | 0.5% |
+| spec-dec aux + memcpy + rest | ~1.5% |
+
+Reads:
+1. The fp8-KV +17 s tax is NOT the quantize-on-write or unfused prepare
+   (write kernel = 0.14% of device time). It lives in the attention READ
+   path (fp8 dequant inside QSA at head_dim 256, 13.6% base). #60992
+   (4-bytes-per-register e4m3 reads, merged upstream 10-14, one day past
+   our base) is the named fix candidate: cherry-pick, re-measure cold TTFT.
+2. Dense is already bf16 cuBLAS - the checkpoint's fp8 dense weights are
+   dequantized at load (zero Marlin launches in traces). CUTLASS int8
+   therefore projects 1.3-1.7x on 14.4% of device = ~8-12% wall prefill.
+   Real, but not the 2x the shootout's Marlin column suggested.
+3. Biggest single prefill number is the 35.6% pipeline spin. No kernel
+   swap touches it; the boot itself warns max_num_scheduled_tokens=2048
+   (capped by spec settings) is suboptimal. Chunk-size/PP-split tuning is
+   the untouched lever.
