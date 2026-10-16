@@ -1,7 +1,7 @@
-From 3052f1abcaaa343518a62f3eb11a66093623b29f Mon Sep 17 00:00:00 2001
+From efcf4f5fc54ffbd65a99e8a4b2767cb47c571489 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 10 Sep 2026 22:12:29 +0200
-Subject: [PATCH 03/10] [Bugfix][Core] Build KV cache tensors from a group's
+Subject: [PATCH 3/8] [Bugfix][Core] Build KV cache tensors from a group's
  projected layers
 
 A pipeline stage that owns none of a KV cache group's layers keeps that
@@ -23,13 +23,13 @@ only for the layers it actually holds on this stage.
  2 files changed, 93 insertions(+), 6 deletions(-)
 
 diff --git a/tests/v1/core/test_kv_cache_utils.py b/tests/v1/core/test_kv_cache_utils.py
-index 1489315ec2..dbd08785a4 100644
+index 6a0b6393a2..aeafc410b6 100644
 --- a/tests/v1/core/test_kv_cache_utils.py
 +++ b/tests/v1/core/test_kv_cache_utils.py
-@@ -2156,3 +2156,90 @@ def test_wrapped_mamba_group_requires_block_zeroing():
-     )
- 
-     assert config.needs_kv_cache_zeroing
+@@ -2174,3 +2174,90 @@ def test_null_head_len():
+         assert null_head_len(table) == expected
+     blocks = KVCacheBlocks(([null] * 4 + real, [null] + real[:1] + [null]))
+     assert blocks.get_unhashed_block_ids_all_groups() == [[1, 2, 3], [1]]
 +
 +
 +def test_get_kv_cache_config_pp_projection_tensors_stay_local(monkeypatch):
