@@ -6,11 +6,13 @@
 # Apply the patch series first: git am --keep-non-patch patches/00*.patch
 # Details and measured numbers: README.md.
 #
-# PP=3 held 1.21x here: one 1M request at a time. PP=4 adds a fourth
-# card's KV, roughly 1.4-1.5x by the pool math in archive/serve-4x-512k.sh. A
-# second full-length request then fits, but admission gating still runs it
-# at half speed, and a Mamba align-mode preemption replays its whole
-# prompt, about 2 min. Keep other traffic short until measured.
+# PP=4 with fp8 KV (2026-10-16): the QSA layers store e4m3 and decode it
+# in-kernel on sm_80 (upstream #60602 + #60992), so the pool roughly doubles,
+# 2.65M tokens (2.6x) -> 5.10M: four 1M streams resident together, where a
+# third used to evict the first. fp8 KV reads cost ~12 s on a cold 1M prompt;
+# the int8 handoff (patch 8 env below) gives back 13 s, so cold prefill wall
+# stays where bf16-KV was. A Mamba align-mode preemption still replays its
+# whole prompt (~2 min): watch the preempt column, not just capacity.
 #
 # YaRN costs VRAM before the pool is sized. The cos/sin cache is 1 GiB per
 # rank at factor 4.0, and it comes out of the KV pool. Two failure modes
@@ -39,7 +41,9 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 # drafter, gives the same back and gains the room. Rank 0 is now the
 # binding stage, so a second shifted layer has nowhere useful to go.
 export VLLM_PP_LAYER_PARTITION=13,12,12,11
-# No P2P between these cards. Every hop goes over the host bridge anyway.
+# P2P does work on these cards (CUMEM; measured 2026-10-16, and NCCL picks
+# it unprompted) - disabling it costs 2-8% per hop, an A/B boot is pending.
+# NCCL_IB_DISABLE keeps it off-box regardless.
 export NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1
 # Big transient shapes (248k-vocab logits) hit allocator-OOM retries on
 # near-full cards, and expandable segments serve them from fresh segments.
@@ -49,6 +53,13 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # shard is consumed so the load does not evict cache worth keeping. Requires
 # patches/0006-Model-Loader-Drop-consumed-shard-pages-from-the-page.patch.
 export VLLM_SAFETENSORS_DROP_CACHE=1
+
+# Ship the pipeline handoff as per-token per-stream int8 instead of the bf16
+# 4-stream hyper-connection state: halves hop bytes on a link that is the
+# prefill wall (cold 1M TTFT 91.8 -> 79.9 s). Series patch 8 reads this env;
+# one export here covers all four stages because this script execs a single
+# process tree. Without the env the engine is byte-identical to pre-patch.
+export VLLM_QWEN4EXP_PP_INT8_HOP=1
 
 # PROF=1 arms the torch profiler (auto-stops after max_iterations engine
 # steps, needs no code patch): boot with PROF=1, then POST /start_profile
@@ -83,6 +94,7 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --prefix-cache-retention-interval 16160 \
     --block-size 1616 \
     --prefix-match-unit 16 \
+    --kv-cache-dtype fp8 \
     --gpu-memory-utilization 0.9453 \
     --max-model-len 1000000 \
     --hf-overrides '{"text_config":{"max_position_embeddings":1000000,"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":262144}}}' \
