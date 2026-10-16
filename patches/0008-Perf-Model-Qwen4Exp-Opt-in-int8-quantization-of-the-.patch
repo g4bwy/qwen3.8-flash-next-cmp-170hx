@@ -1,0 +1,177 @@
+From f8a579218d4f1f7bf9ef9c67c885e0c164d0acd2 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 11:21:02 +0200
+Subject: [PATCH] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
+ pipeline handoff
+
+The hyper-connection model ships the materialized 4-stream state
+(hidden*hc_count bf16) across every stage hop: 42 MB per 2048-token
+chunk on this family. On CMP 170HX PCIe gen2 (~1.66 GB/s per pair
+measured) the wire is the prefill wall: the first profiled 1M-token
+prefill spends 35.6% of device time in nccl kernels whose 26.7 ms mean
+equals that payload over the link rate.
+
+VLLM_QWEN4EXP_PP_INT8_HOP=1 puts per-token, per-stream symmetric int8
+plus fp32 scales on the wire instead. Live measurement: cold 1M TTFT
+91.8 -> 79.9 s (x3 fresh salts), 100/4 wall 386 -> 346 s (x2), warm
+TTFT, decode rate, acceptance (4.79-4.86) and prefix-state needles
+unchanged; pool +12k from halved receive buffers. Flag-off is
+byte-identical to the pre-patch path on eager and CUDA-graph boots.
+
+Receiving stages raise instead of silently casting when a plain bf16
+handoff arrives with the flag set, so a half-enabled pipeline cannot
+corrupt values.
+
+Co-authored-by: Maki <agent@local>
+---
+ vllm/envs.py                          |  4 ++
+ vllm/models/qwen4_exp/nvidia/model.py | 66 ++++++++++++++++++++++++++-
+ 2 files changed, 68 insertions(+), 2 deletions(-)
+
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 69a556693e..cab0084fce 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -124,6 +124,7 @@ if TYPE_CHECKING:
+     VLLM_USE_TRITON_AWQ: bool = False
+     VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
+     VLLM_SAFETENSORS_DROP_CACHE: bool = False
++    VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
+     VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
+     VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
+     VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
+@@ -1147,6 +1148,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_SAFETENSORS_DROP_CACHE": lambda: (
+         os.getenv("VLLM_SAFETENSORS_DROP_CACHE", "0").lower() in ("1", "true")
+     ),
++    "VLLM_QWEN4EXP_PP_INT8_HOP": lambda: (
++        os.getenv("VLLM_QWEN4EXP_PP_INT8_HOP", "0").lower() in ("1", "true")
++    ),
+     # Timeout in seconds for keeping HTTP connections alive in API server
+     "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
+         os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
+diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
+index 9c63b35605..c9c56c4bc6 100644
+--- a/vllm/models/qwen4_exp/nvidia/model.py
++++ b/vllm/models/qwen4_exp/nvidia/model.py
+@@ -10,6 +10,7 @@ from torch import nn
+ from transformers import Qwen4ExpConfig, Qwen4ExpTextConfig
+ 
+ from vllm import envs
++from vllm.logger import init_logger
+ from vllm.config import VllmConfig
+ from vllm.distributed import get_pp_group
+ from vllm.forward_context import get_forward_context, is_forward_context_available
+@@ -87,6 +88,8 @@ from .ops.cute_dsl.hc_down_silu import request_hc_down_silu_warmup
+ from .ple_layer import Qwen4ExpPLELayer
+ from .qsa import Qwen4ExpQSAAttention
+ 
++logger = init_logger(__name__)
++
+ # Transformers v5.18 renamed `qwen_sparse_attention` to `indexed_attention`
+ # TODO: Delete qwen_... once Transformers 5.18.0 is the minimum required version.
+ _QSA_LAYER_TYPES = ("qwen_sparse_attention", "indexed_attention")
+@@ -410,6 +413,32 @@ class Qwen4ExpMixtureOfExperts(MixtureOfExperts):
+             moe.experts.update_expert_map()
+ 
+ 
++def _pp_hop_quantize(
++    hidden: torch.Tensor, hc_count: int
++) -> tuple[torch.Tensor, torch.Tensor]:
++    """Per-token, per-stream symmetric int8 for the PP handoff.
++
++    Rows hold hc streams concatenated ([s0|s1|s2|s3]); each stream is scaled
++    independently so one outlier stream cannot flatten the others.
++    """
++    streams = hidden.reshape(hidden.shape[0], hc_count, -1)
++    scale = (
++        streams.abs().amax(dim=-1).clamp_(min=1e-6).mul_(1.0 / 127.0).float()
++    )
++    q = (streams / scale.unsqueeze(-1)).round_().clamp_(-127.0, 127.0)
++    return q.to(torch.int8).reshape(hidden.shape), scale
++
++
++def _pp_hop_dequantize(
++    q: torch.Tensor, scale: torch.Tensor, dtype: torch.dtype
++) -> torch.Tensor:
++    streams = (
++        q.reshape(q.shape[0], scale.shape[1], -1).to(torch.float32)
++        * scale.unsqueeze(-1)
++    )
++    return streams.reshape(q.shape[0], -1).to(dtype)
++
++
+ class Qwen4ExpModel(nn.Module):
+     hf_to_vllm_mapper = Qwen3_5Model.hf_to_vllm_mapper | _EXTRA_WEIGHTS_MAPPER
+ 
+@@ -426,6 +455,13 @@ class Qwen4ExpModel(nn.Module):
+             vllm_config.parallel_config.use_sequence_parallel_moe
+         )
+         self.vocab_size = config.vocab_size
++        self._pp_int8_hop = envs.VLLM_QWEN4EXP_PP_INT8_HOP
++        self._pp_hop_dtype = vllm_config.model_config.dtype
++        if self._pp_int8_hop:
++            logger.info_once(
++                "Qwen4Exp PP int8 handoff ACTIVE (hop bytes halved; "
++                "every pipeline stage must set VLLM_QWEN4EXP_PP_INT8_HOP=1)"
++            )
+         self._qsa_layer_ids = frozenset(
+             layer_idx
+             for layer_idx, layer_type in enumerate(config.layer_types)
+@@ -500,10 +536,16 @@ class Qwen4ExpModel(nn.Module):
+         tensors = {
+             "hidden_states": torch.zeros(
+                 (batch_size, self.config.hidden_size * self.config.hc_count),
+-                dtype=dtype,
++                dtype=torch.int8 if self._pp_int8_hop else dtype,
+                 device=device,
+             )
+         }
++        if self._pp_int8_hop:
++            tensors["hidden_scale"] = torch.zeros(
++                (batch_size, self.config.hc_count),
++                dtype=torch.float32,
++                device=device,
++            )
+         if self.config.ple_layer_ids:
+             # PLE needs the raw token IDs on every pipeline stage. The model
+             # runner stores input IDs as int32, so preserve that compact dtype
+@@ -563,7 +605,23 @@ class Qwen4ExpModel(nn.Module):
+         else:
+             if intermediate_tensors is None:
+                 raise ValueError("pipeline stage requires intermediate tensors")
+-            hidden_states = intermediate_tensors["hidden_states"]
++            if self._pp_int8_hop:
++                hidden_q = intermediate_tensors["hidden_states"]
++                if hidden_q.dtype != torch.int8 or (
++                    "hidden_scale" not in intermediate_tensors.tensors
++                ):
++                    raise RuntimeError(
++                        "VLLM_QWEN4EXP_PP_INT8_HOP is set on this stage but "
++                        "the received handoff is not int8+scaled: enable the "
++                        "env on EVERY pipeline stage"
++                    )
++                hidden_states = _pp_hop_dequantize(
++                    hidden_q,
++                    intermediate_tensors["hidden_scale"],
++                    self._pp_hop_dtype,
++                )
++            else:
++                hidden_states = intermediate_tensors["hidden_states"]
+             if self.config.ple_layer_ids:
+                 input_ids = intermediate_tensors["input_ids"]
+ 
+@@ -632,6 +690,10 @@ class Qwen4ExpModel(nn.Module):
+                     hidden_states, block_output, injection
+                 )
+             intermediate = {"hidden_states": hidden_states}
++            if self._pp_int8_hop:
++                intermediate["hidden_states"], intermediate[
++                    "hidden_scale"
++                ] = _pp_hop_quantize(hidden_states, self.config.hc_count)
+             if self.config.ple_layer_ids:
+                 assert input_ids is not None
+                 intermediate["input_ids"] = input_ids
+-- 
+2.55.0
+
