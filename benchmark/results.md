@@ -1302,5 +1302,6 @@ Next stack to try: this + --kv-cache-dtype fp8 (predict cold ~97 s vs
 today's bf16 79.9 - the fp8 read tax stays; capacity +93%; at 100/4 five
 1M streams resident). Also NCCL_P2P_DISABLE=0 free-ish 2-8% of hops,
 one-env boot, and candidate upstream PR with acceptance+eval gates.
-Raw: logs/hop-1004-c{1,2}.json. Patch: experiments/pp-int8-hop.patch.v3
-(119-line diff, validated on replica, graphs-safe, guard-raised).
+Raw: logs/hop-1004-c{1,2}.json. Formalized as patches/0008 (series branch
+qwen38-pp-hop8 at f8a579218d; 8-patch replay tree
+6b311444b1affc4322ead78478896dcd6622943b, round-trip verified).
