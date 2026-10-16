@@ -1,7 +1,7 @@
-From f09e6fa75cb642b70e6c07413b10831dd6756129 Mon Sep 17 00:00:00 2001
+From cb6fd62e1c2a1c3107c90af6a0c8d3ddf5bd4aea Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 9 Oct 2026 20:51:39 +0200
-Subject: [PATCH 07/10] [Model Loader] Qwen4Exp: Honor fp8 PLE tables under
+Subject: [PATCH 7/8] [Model Loader] Qwen4Exp: Honor fp8 PLE tables under
  compressed-tensors
 
 The compressed-tensors branch of Qwen4ExpPLEEmbeddingMethod
@@ -20,10 +20,10 @@ Co-authored-by: Maki <agent@local>
  1 file changed, 15 insertions(+), 5 deletions(-)
 
 diff --git a/vllm/models/qwen4_exp/common/ngram_embedding.py b/vllm/models/qwen4_exp/common/ngram_embedding.py
-index 85a382c5ec..936249f7e7 100644
+index 0348b24224..e572866f0b 100644
 --- a/vllm/models/qwen4_exp/common/ngram_embedding.py
 +++ b/vllm/models/qwen4_exp/common/ngram_embedding.py
-@@ -190,11 +190,21 @@ class Qwen4ExpPLEEmbeddingMethod(QuantizeMethodBase):
+@@ -210,11 +210,21 @@ class Qwen4ExpPLEEmbeddingMethod(QuantizeMethodBase):
              quant_config, ModelOptQuantConfigBase
          ) and quant_config.is_layer_excluded(prefix):
              return Qwen4ExpPLEUnquantizedEmbeddingMethod()

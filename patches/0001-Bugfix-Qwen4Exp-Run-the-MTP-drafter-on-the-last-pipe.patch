@@ -1,7 +1,7 @@
-From 1152af1c9885d0ae00e7a9a3299eceed5de6a145 Mon Sep 17 00:00:00 2001
+From 70dd5a8f8ef36941305eca2c6300f164e8ac050d Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 10 Sep 2026 11:51:58 +0200
-Subject: [PATCH 01/10] [Bugfix][Qwen4Exp] Run the MTP drafter on the last
+Subject: [PATCH 1/8] [Bugfix][Qwen4Exp] Run the MTP drafter on the last
  pipeline rank
 
 The drafter is instantiated only on the last pipeline rank (model_runner
@@ -16,10 +16,10 @@ tensors that never arrive.
  2 files changed, 59 insertions(+), 1 deletion(-)
 
 diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
-index 818f515438..8fcb7ef2c3 100644
+index 177ebaf3f6..4ccd437176 100644
 --- a/tests/models/qwen4_exp/test_config.py
 +++ b/tests/models/qwen4_exp/test_config.py
-@@ -132,6 +132,60 @@ def test_qwen4_exp_mtp_returns_sample_and_multi_streams(use_sp: bool) -> None:
+@@ -135,6 +135,60 @@ def test_qwen4_exp_mtp_returns_sample_and_multi_streams(
      assert returned_multi_hidden.is_contiguous()
  
  
@@ -81,7 +81,7 @@ index 818f515438..8fcb7ef2c3 100644
  @pytest.mark.parametrize("backend", ["amd", "nvidia"])
  def test_qwen4_exp_mtp_remaps_mixed_precision_layer_indices(backend: str) -> None:
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index 32e95faa0d..306c67a7ff 100644
+index e9aa87659a..64b2dfd8c4 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -297,7 +297,11 @@ class Qwen4ExpMultiTokenPredictor(nn.Module):

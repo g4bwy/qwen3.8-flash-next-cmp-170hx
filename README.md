@@ -16,12 +16,16 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
   `MODEL=/local/path`.
 - Depths: MTP-4 is the shipped depth. The fast lane builds an int8-dense
   variant with `checkpoint/` (+6 % on top of depth, +20 % over MTP-3).
-- Base commit: `183625d4f9f49968218ffbe43242877ead72d569` (vllm-project/vllm main, 2026-10-13).
-- 7 patches: five ours, two adopted from upstream PRs (#56444 as
-  patch 2, #58094 as patch 4). After
+- Base commit: `9731f30a030c545e7f29a8a4ed96b8562be12c88` (vllm-project/vllm main, 2026-10-16; the rebase from `183625d4f9` absorbed upstream #60992 (fp8 QSA reads) and the upstream callable-compose rework of patch 4's region).
+- 8 patches: six ours, two adopted from upstream PRs (#56444 as
+  patch 2, #58094 as patch 4; both still open upstream, so they survive
+  rebases as adopted commits). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `18e0ec8942f61f82fd3a13bd9d9c6b9ce67ad371`. If it does not, you applied
+  `5dc25ebbaf6e4752b4ef3d497a9cec57db910106`. If it does not, you applied
   something else or onto something else.
+- The base's `humming-kernels[cu13]` pin moved to 0.1.17 (0.1.12 fails the
+  new `vllm/utils/humming.py` imports). The editable precompiled install
+  upgrades it with the wheel; check `pip show humming-kernels` on fender.
 - Nothing here runs without the patches. Upstream refuses PP3+MTP+PLE on this
   checkpoint (drafter asserts on the last rank, PLE rejected across pipeline
   ranks, KV allocation dies with a bare `StopIteration`).
@@ -31,13 +35,13 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
 ```bash
 git clone https://github.com/vllm-project/vllm
 cd vllm
-git checkout 183625d4f9f49968218ffbe43242877ead72d569
+git checkout 9731f30a030c545e7f29a8a4ed96b8562be12c88
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # 18e0ec8942f61f82fd3a13bd9d9c6b9ce67ad371
+git rev-parse 'HEAD^{tree}'   # 5dc25ebbaf6e4752b4ef3d497a9cec57db910106
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
-183625d4f9`), then re-run the `git am`.
+9731f30a`), then re-run the `git am`.
 
 ## Build
 
@@ -46,7 +50,7 @@ Python 3.12, `uv` on PATH ([install](https://docs.astral.sh/uv/)).
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=183625d4f9f49968218ffbe43242877ead72d569 \
+VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=9731f30a030c545e7f29a8a4ed96b8562be12c88 \
   uv pip install -e . --torch-backend=auto
 ```
 
@@ -58,7 +62,7 @@ that commit must satisfy two rules:
    `https://wheels.vllm.ai/<sha>/cu130/vllm/metadata.json` and stops on 404.
    Wheel CI lags main by hours, so walk down from the tip and take the newest
    commit that answers 200. The wheel for this base:
-   `0.32.0rc1.dev34+g183625d4f`, cp38-abi3, x86_64. Match the
+   `0.32.0rc1.dev306+g9731f30a0`, cp38-abi3, x86_64. Match the
    `+g<sha>` tail to your base. Ignore the leading number, which only tracks
    upstream packaging.
 2. Pass that 40-hex sha in `VLLM_PRECOMPILED_WHEEL_COMMIT`. Without it, a

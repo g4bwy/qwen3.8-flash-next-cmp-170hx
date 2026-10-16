@@ -1,7 +1,7 @@
-From 32fe310f25efdf1aabf9db9f44d8b3a2630a4a8e Mon Sep 17 00:00:00 2001
+From 530e9d63a12128b0651f0fdf68c3ae0ceb1c1c97 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
-Subject: [PATCH 05/10] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
+Subject: [PATCH 5/8] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
 
 Every draft token of MTP speculation runs compute_logits with the full
 248,320-row lm_head: on sm_80 at the ~1.1 TB/s measured for these cards
@@ -73,7 +73,7 @@ index 0000000000..dddb7c8f81
 +    assert _remap_mtp_weight_name("mtp.draft_lm_head.weight") == "draft_lm_head.weight"
 +    assert _remap_mtp_weight_name("mtp.shared_head.head.weight") == "lm_head.weight"
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index 306c67a7ff..763cd3219f 100644
+index 64b2dfd8c4..125914703d 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -13,6 +13,7 @@ The MTP draft model reuses the Qwen4Exp backbone (PLE/HC/MoE) but:
@@ -203,7 +203,7 @@ index 306c67a7ff..763cd3219f 100644
                  if remapped_name is not None:
                      yield remapped_name, weight
 diff --git a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
-index fdbedd78f6..13d5dfbaf9 100644
+index d5034a31b4..b5adfa8c79 100644
 --- a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
 +++ b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
 @@ -273,6 +273,13 @@ class TargetDependentARSpeculator(DraftModelSpeculator):

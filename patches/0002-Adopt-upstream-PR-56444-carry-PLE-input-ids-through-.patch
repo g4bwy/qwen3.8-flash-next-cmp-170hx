@@ -1,8 +1,8 @@
-From 5131eb80d9f92b5ae157b352753561e8c8f466b3 Mon Sep 17 00:00:00 2001
+From 3fb385d24bb7ff1f2b3ed65ea1ae9866f550c0f6 Mon Sep 17 00:00:00 2001
 From: Vaishnavi220506 <183067453+Vaishnavi220506@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 02/10] Adopt upstream PR #56444: carry PLE input ids through
- PP intermediates
+Subject: [PATCH 2/8] Adopt upstream PR #56444: carry PLE input ids through PP
+ intermediates
 
 Makes PLE pipeline-rank-free by transporting int32 input_ids inside the
 existing intermediate tensors (+4 B/token per hop). Removes the PP>1
@@ -26,7 +26,7 @@ Upstream-PR: vllm-project/vllm#56444 (Vaishnavi220506, pending)
  6 files changed, 151 insertions(+), 49 deletions(-)
 
 diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
-index 8fcb7ef2c3..6a5ec674a1 100644
+index 4ccd437176..cec2b045bf 100644
 --- a/tests/models/qwen4_exp/test_config.py
 +++ b/tests/models/qwen4_exp/test_config.py
 @@ -16,6 +16,7 @@ from vllm.model_executor.models.config import (
@@ -37,7 +37,7 @@ index 8fcb7ef2c3..6a5ec674a1 100644
  from vllm.v1.worker.gpu.model_states.mamba_hybrid import MambaHybridModelState
  
  from ...utils import spawn_new_process_for_each_test
-@@ -235,10 +236,10 @@ def test_qwen4_exp_mtp_override_sets_draft_config(
+@@ -238,10 +239,10 @@ def test_qwen4_exp_mtp_override_sets_draft_config(
  
  
  @pytest.mark.parametrize("ple_layer_ids", [[1], []])
@@ -52,7 +52,7 @@ index 8fcb7ef2c3..6a5ec674a1 100644
      vllm_config = SimpleNamespace(
          model_config=SimpleNamespace(
              hf_text_config=_text_config(ple_layer_ids=ple_layer_ids),
-@@ -250,13 +251,90 @@ def test_qwen4_exp_rejects_pipeline_parallel_only_with_ple(ple_layer_ids) -> Non
+@@ -253,13 +254,90 @@ def test_qwen4_exp_rejects_pipeline_parallel_only_with_ple(ple_layer_ids) -> Non
      with patch.object(
          Qwen3_5ForConditionalGenerationConfig, "verify_and_update_config"
      ):
@@ -151,10 +151,10 @@ index 8fcb7ef2c3..6a5ec674a1 100644
  
  def test_qwen4_exp_model_state_prepares_ngram_context() -> None:
 diff --git a/vllm/model_executor/models/config.py b/vllm/model_executor/models/config.py
-index 69ca643a3a..66b735e136 100644
+index 12ba253671..fa2c7db0bf 100644
 --- a/vllm/model_executor/models/config.py
 +++ b/vllm/model_executor/models/config.py
-@@ -936,14 +936,6 @@ class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConf
+@@ -1007,14 +1007,6 @@ class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConf
              raise NotImplementedError(
                  "Qwen4Exp PLE/QSA does not support dual-batch overlap or microbatching"
              )
@@ -170,10 +170,10 @@ index 69ca643a3a..66b735e136 100644
          if multimodal_config is not None and multimodal_config.language_model_only:
              _strip_qwen4_exp_mrope(vllm_config.model_config)
 diff --git a/vllm/models/qwen4_exp/amd/model.py b/vllm/models/qwen4_exp/amd/model.py
-index f36f70bee2..481a1495db 100644
+index b8e8e39a64..052cfee530 100644
 --- a/vllm/models/qwen4_exp/amd/model.py
 +++ b/vllm/models/qwen4_exp/amd/model.py
-@@ -62,7 +62,6 @@ from vllm.model_executor.models.utils import (
+@@ -63,7 +63,6 @@ from vllm.model_executor.models.utils import (
      WeightsMapper,
      _merge_multimodal_embeddings,
      extract_layer_index,
@@ -181,7 +181,7 @@ index f36f70bee2..481a1495db 100644
      make_layers,
      maybe_fuse_shared_experts,
      maybe_prefix,
-@@ -407,11 +406,6 @@ class Qwen4ExpModel(nn.Module):
+@@ -444,11 +443,6 @@ class Qwen4ExpModel(nn.Module):
              Qwen4ExpSparseMoeBlock,
              "mlp",
          )
@@ -193,7 +193,7 @@ index f36f70bee2..481a1495db 100644
          self.hyper_connection_mixer: GatedResidual | None
          if get_pp_group().is_last_rank:
              hc_config = HyperConnectionConfig(
-@@ -453,6 +447,30 @@ class Qwen4ExpModel(nn.Module):
+@@ -490,6 +484,30 @@ class Qwen4ExpModel(nn.Module):
      def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
          return self.embed_tokens(input_ids)
  
@@ -224,16 +224,16 @@ index f36f70bee2..481a1495db 100644
      def forward(
          self,
          input_ids: torch.Tensor | None,
-@@ -475,6 +493,8 @@ class Qwen4ExpModel(nn.Module):
+@@ -517,6 +535,8 @@ class Qwen4ExpModel(nn.Module):
              if intermediate_tensors is None:
                  raise ValueError("pipeline stage requires intermediate tensors")
              hidden_states = intermediate_tensors["hidden_states"]
 +            if self.config.ple_layer_ids:
 +                input_ids = intermediate_tensors["input_ids"]
  
+         full_num_tokens = positions.shape[-1]
          block_output = None
-         injection = None
-@@ -523,7 +543,11 @@ class Qwen4ExpModel(nn.Module):
+@@ -568,7 +588,11 @@ class Qwen4ExpModel(nn.Module):
                  hidden_states = last_layer.mlp_hyper_connection.combine(
                      hidden_states, block_output, injection
                  )
@@ -266,7 +266,7 @@ index ec2a0fef8b..dc8c959ec4 100644
          if self.ngram_context_len <= 0:
              raise ValueError("N-gram embedding requires context length >= 1.")
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index 2fb056bde4..9c63b35605 100644
+index 826db4efd3..ea7842e3f1 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
 @@ -64,7 +64,6 @@ from vllm.model_executor.models.utils import (
@@ -277,7 +277,7 @@ index 2fb056bde4..9c63b35605 100644
      make_layers,
      maybe_fuse_shared_experts,
      maybe_prefix,
-@@ -451,11 +450,6 @@ class Qwen4ExpModel(nn.Module):
+@@ -444,11 +443,6 @@ class Qwen4ExpModel(nn.Module):
              Qwen4ExpSparseMoeBlock,
              "mlp",
          )
@@ -289,7 +289,7 @@ index 2fb056bde4..9c63b35605 100644
          self.hyper_connection_mixer: GatedResidual | None
          if get_pp_group().is_last_rank:
              hc_config = HyperConnectionConfig(
-@@ -497,6 +491,30 @@ class Qwen4ExpModel(nn.Module):
+@@ -490,6 +484,30 @@ class Qwen4ExpModel(nn.Module):
      def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
          return self.embed_tokens(input_ids)
  
@@ -320,7 +320,7 @@ index 2fb056bde4..9c63b35605 100644
      @staticmethod
      def _start_layer_ple_prefetch(
          layer: nn.Module,
-@@ -546,6 +564,8 @@ class Qwen4ExpModel(nn.Module):
+@@ -539,6 +557,8 @@ class Qwen4ExpModel(nn.Module):
              if intermediate_tensors is None:
                  raise ValueError("pipeline stage requires intermediate tensors")
              hidden_states = intermediate_tensors["hidden_states"]
@@ -329,7 +329,7 @@ index 2fb056bde4..9c63b35605 100644
  
          full_num_tokens = positions.shape[-1]
          block_output = None
-@@ -611,7 +631,11 @@ class Qwen4ExpModel(nn.Module):
+@@ -604,7 +624,11 @@ class Qwen4ExpModel(nn.Module):
                  hidden_states = last_layer.mlp_hyper_connection.combine(
                      hidden_states, block_output, injection
                  )

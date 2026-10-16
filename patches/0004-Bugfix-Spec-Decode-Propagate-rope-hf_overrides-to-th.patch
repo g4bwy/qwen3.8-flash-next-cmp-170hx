@@ -1,8 +1,8 @@
-From b88ab7d60ae2399fb566f890b28f473da362321f Mon Sep 17 00:00:00 2001
+From 1fe5bdf221abcce7fda113da8516364cf231a4fe Mon Sep 17 00:00:00 2001
 From: gokay-ai <60583610+gokay-ai@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 04/10] [Bugfix][Spec Decode] Propagate rope hf_overrides to
- the MTP draft
+Subject: [PATCH 4/8] [Bugfix][Spec Decode] Propagate rope hf_overrides to the
+ MTP draft
 
 Covers the --hf-overrides YaRN path: nested text_config.rope_parameters
 and max_position_embeddings are forwarded to the draft ModelConfig and
@@ -26,8 +26,8 @@ Upstream-PR: vllm-project/vllm#58094 (gokay-ai, pending)
 ---
  .../test_speculative_draft_hf_overrides.py    | 101 ++++++++++++++++--
  vllm/config/model.py                          |   8 +-
- vllm/config/speculative.py                    |  94 ++++++++++++++--
- 3 files changed, 185 insertions(+), 18 deletions(-)
+ vllm/config/speculative.py                    |  91 ++++++++++++++--
+ 3 files changed, 182 insertions(+), 18 deletions(-)
 
 diff --git a/tests/config/test_speculative_draft_hf_overrides.py b/tests/config/test_speculative_draft_hf_overrides.py
 index 39ebd7924b..65d9af5020 100644
@@ -163,7 +163,7 @@ index 39ebd7924b..65d9af5020 100644
  def test_callable_overrides_reach_the_draft_config():
      """A callable override (config-to-config transform) composes with the
 diff --git a/vllm/config/model.py b/vllm/config/model.py
-index c4016e82bc..a3dfd760b2 100644
+index 7a883eac54..ab5c1b2161 100644
 --- a/vllm/config/model.py
 +++ b/vllm/config/model.py
 @@ -513,8 +513,8 @@ class ModelConfig:
@@ -205,7 +205,7 @@ index c4016e82bc..a3dfd760b2 100644
                  # It's a dict-valued parameter - set it directly
                  setattr(config, key, value)
 diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
-index b916d7da2b..d9c6b8a0b6 100644
+index 0205393f69..460c4f027f 100644
 --- a/vllm/config/speculative.py
 +++ b/vllm/config/speculative.py
 @@ -35,6 +35,30 @@ else:
@@ -239,7 +239,7 @@ index b916d7da2b..d9c6b8a0b6 100644
  MTPModelTypes = Literal[
      "deepseek_mtp",
      "dots3_note_mtp",
-@@ -1080,9 +1104,40 @@ class SpeculativeConfig:
+@@ -1084,9 +1108,40 @@ class SpeculativeConfig:
          hf_config = SpeculativeConfig.hf_config_override(hf_config)
          return target_hf_overrides(hf_config)
  
@@ -280,7 +280,7 @@ index b916d7da2b..d9c6b8a0b6 100644
      ) -> Callable[[PreTrainedConfig], PreTrainedConfig]:
          """Build the ``hf_overrides`` for the draft ``ModelConfig``.
  
-@@ -1090,8 +1145,16 @@ class SpeculativeConfig:
+@@ -1094,8 +1149,16 @@ class SpeculativeConfig:
          (e.g. test harnesses shrinking ``num_hidden_layers``) and must also
          reach the draft config — otherwise a draft belonging to a large
          target is instantiated at full size even when the target is shrunk.
@@ -299,7 +299,7 @@ index b916d7da2b..d9c6b8a0b6 100644
  
          The composed override must stay picklable: the draft ``ModelConfig``
          is sent to spawned engine-core processes, so a local closure would
-@@ -1099,11 +1162,25 @@ class SpeculativeConfig:
+@@ -1103,11 +1166,25 @@ class SpeculativeConfig:
          target via ``functools.partial`` over a module-referenceable static
          method instead.
          """
@@ -327,21 +327,18 @@ index b916d7da2b..d9c6b8a0b6 100644
          )
  
      @staticmethod
-@@ -1280,11 +1357,12 @@ class SpeculativeConfig:
-                 if self.method == "medusa":
-                     draft_hf_overrides = {"model_type": "medusa"}
-                 else:
--                    # Compose any callable hf_overrides set on the target so the
--                    # draft config receives the same transform (e.g. the test
--                    # shrink). Dict overrides stay target-only.
-+                    # Compose target hf_overrides onto the draft: callables
-+                    # (e.g. the test shrink) and rope-relevant dict keys
-+                    # (YaRN / RoPE). Other dict patches stay target-only.
-                     draft_hf_overrides = SpeculativeConfig.compose_draft_hf_overrides(
--                        self.target_model_config.hf_overrides
-+                        self.target_model_config.hf_overrides,
-+                        forward_rope_dicts=self.method in get_args(MTPModelTypes),
-                     )
+@@ -1276,11 +1353,9 @@ class SpeculativeConfig:
+             self.prompt_lookup_min = 0
+ 
+             if self.model is not None:
+-                # Compose any callable hf_overrides set on the target so the
+-                # draft config receives the same transform (e.g. the test
+-                # shrink). Dict overrides stay target-only.
+                 draft_hf_overrides = SpeculativeConfig.compose_draft_hf_overrides(
+-                    self.target_model_config.hf_overrides
++                    self.target_model_config.hf_overrides,
++                    forward_rope_dicts=self.method in get_args(MTPModelTypes),
+                 )
                  self.draft_model_config = ModelConfig(
                      model=self.model,
 -- 
