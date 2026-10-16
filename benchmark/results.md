@@ -1263,3 +1263,17 @@ Reads:
    swap touches it; the boot itself warns max_num_scheduled_tokens=2048
    (capped by spec settings) is suboptimal. Chunk-size/PP-split tuning is
    the untouched lever.
+
+### Cherry-pick 77154ca (#60992) measured on the live tree (2026-10-16)
+
+User grafted the one-file QSA read kernel fix onto the live serving tree
+(dev42-era boot, fp8-KV, pool 5,095,522 unchanged). Cold 1M prefill TTFT:
+108.8 -> 103.8 s (103.8/104.0/103.8, first rep post-JIT identical; recovers
+5.0 of the 17.0 s tax, remaining +13.1% vs bf16-KV 91.8). Correctness:
+prefix_state_check pass all sessions, acceptance 4.78 fresh salt.
+Incidental: six 1M contexts of my own salts made the 6th slow (150 s) =
+five resident 1M contexts confirmed against the 5.1M pool.
+Still-parked decision: 13.1% cold tax vs 1.93x pool, by workload. The
+residual tax is the QSA fp8 read pair (13.6% of device time in the
+profile); the 35.6% NCCL spin remains the biggest prefill lever either
+way.
