@@ -1277,3 +1277,30 @@ Still-parked decision: 13.1% cold tax vs 1.93x pool, by workload. The
 residual tax is the QSA fp8 read pair (13.6% of device time in the
 profile); the 35.6% NCCL spin remains the biggest prefill lever either
 way.
+
+### PP int8 handoff: production trial PASS (2026-10-16)
+
+Live tree = base+7+77154ca + experiments/pp-int8-hop.patch.v3, env
+VLLM_QWEN4EXP_PP_INT8_HOP=1, PLAIN bf16-KV boot (one variable), pool
+2,649,068 (+12k, halved recv buffers), utilization 0.9453 unchanged.
+
+| Metric | bf16-hop anchor | int8-hop | delta |
+|---|---|---|---|
+| Cold TTFT x3 fresh salts | 91.8 s | 79.9 / 79.8 / 79.9 | **-13.0%** |
+| Warm cell wall (1024 tok) | 9.2-9.7 s | 9.5 s | none |
+| Acceptance direct cells | 4.7-4.9 band | 4.79 / 4.86 | in band |
+| Needles / grown turns | pass | pass, exit 0 | - |
+| 100/4 wall x2 (fresh salts) | ~386 s cold-grade | 345.6 / 346.0 | **-10.5%**, 0 preempts |
+| 100/4 TTFT mean | 235-254 s | 210.5 / 210.4 | -11..17% |
+
+Method note: cold trio with salts totalling > pool evicts the first salt;
+warm tests must use the LAST salt of the trio or re-warm first (an 85 s
+"warm" cell was self-inflicted eviction, not a regression).
+The wire was the wall as predicted; bytes halved bought 13%, not the 25%
+upper bound (spin/skew share of the 35.6% survives the halving).
+Next stack to try: this + --kv-cache-dtype fp8 (predict cold ~97 s vs
+today's bf16 79.9 - the fp8 read tax stays; capacity +93%; at 100/4 five
+1M streams resident). Also NCCL_P2P_DISABLE=0 free-ish 2-8% of hops,
+one-env boot, and candidate upstream PR with acceptance+eval gates.
+Raw: logs/hop-1004-c{1,2}.json. Patch: experiments/pp-int8-hop.patch.v3
+(119-line diff, validated on replica, graphs-safe, guard-raised).
