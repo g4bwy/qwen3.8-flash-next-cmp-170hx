@@ -41,10 +41,15 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 # drafter, gives the same back and gains the room. Rank 0 is now the
 # binding stage, so a second shifted layer has nowhere useful to go.
 export VLLM_PP_LAYER_PARTITION=13,12,12,11
-# P2P does work on these cards (CUMEM; measured 2026-10-16, and NCCL picks
-# it unprompted) - disabling it costs 2-8% per hop, an A/B boot is pending.
-# NCCL_IB_DISABLE keeps it off-box regardless.
-export NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1
+# P2P works on these cards (CUMEM, driver-granted) and wins 2-8% per hop
+# between two idle GPUs - but on the real PP=4 boot it measured SLOWER:
+# cold 1M TTFT 94.7/94.9 s vs 91.2-92.1 s with staging (2026-10-16).
+# Three full-duplex pipeline communicators plus the PLE's pinned-table
+# DMA make the root complex a worse place for peer windows than for CPU
+# staging copies. Keep the default disabled; the ${VAR:-1} form means an
+# outer export overrides without editing the script, so future A/Bs are
+# free. NCCL_IB_DISABLE keeps comm off-box regardless.
+export NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1} NCCL_IB_DISABLE=1
 # Big transient shapes (248k-vocab logits) hit allocator-OOM retries on
 # near-full cards, and expandable segments serve them from fresh segments.
 # vLLM forbids this only with KV connectors, and we run none.
