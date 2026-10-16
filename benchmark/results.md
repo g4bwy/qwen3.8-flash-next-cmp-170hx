@@ -1305,3 +1305,26 @@ one-env boot, and candidate upstream PR with acceptance+eval gates.
 Raw: logs/hop-1004-c{1,2}.json. Formalized as patches/0008 (series branch
 qwen38-pp-hop8 at f8a579218d; 8-patch replay tree
 6b311444b1affc4322ead78478896dcd6622943b, round-trip verified).
+
+### Full stack certified: hop + fp8-KV + 77154ca (2026-10-16)
+
+Live tree re-ammed to the official 8-patch series + 77154ca6 cherry-pick,
+booted with --kv-cache-dtype fp8 and the hop env set. Pool 5,098,507.
+
+| Config | Cold 1M TTFT | 100/4 wall | Warm 1024-tok cell | Needles |
+|---|---|---|---|---|
+| bf16-KV, no hop (original) | 91.8 s | 386 s | 9.2-9.7 s | pass |
+| fp8-KV, no hop | 103.8 s | 346 s* | 9.3-9.4 s | pass |
+| bf16-KV + hop | 79.9 s | 345.6/346.0 | 9.5 s | pass |
+| fp8-KV + hop + 77154ca | 92.0-92.1 x3 | 344.4/353.6 | 10.5-10.8 s | pass |
+
+Acceptance 4.86-4.89 in band throughout; zero preemptions; 4x 1M streams
+(3.96M tokens) now resident at once on the 5.1M pool. The fp8-KV capacity
+is bought for exactly the time the hop gave back: the stack matches the
+ORIGINAL bf16 cold prefill wall while holding 1.93x the context. Warm
+cells carry ~+1 s of fp8 read tax at turn boundaries, inside cell noise.
+(*fp8 no-hop 100/4 figure was single-cell.)
+Recommendation table for ship config: hop is unconditional (flag off =
+inert, zero downside); fp8-KV now a free capacity upgrade for agent and
+concurrency workloads, still a 12 s/tax per fresh 1M document for bulk
+ingest. Raw: logs/stack-1004-c{1,2}.json.
