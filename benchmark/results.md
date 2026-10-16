@@ -1328,3 +1328,16 @@ Recommendation table for ship config: hop is unconditional (flag off =
 inert, zero downside); fp8-KV now a free capacity upgrade for agent and
 concurrency workloads, still a 12 s/tax per fresh 1M document for bulk
 ingest. Raw: logs/stack-1004-c{1,2}.json.
+
+### NCCL P2P A/B verdict (2026-10-16 night)
+
+Boot with script line flipped to NCCL_P2P_DISABLE=0, everything else ship:
+cold 1M TTFT 94.7 / 94.9 s clean samples (plus one 31.4 s artifact from a
+client-cancelled orphan stream leaving a salt half-cached - do not trust
+samples right after interrupted probes), vs ship baseline 91.2-92.1. Warm
+cells identical (9.7 vs 9.4-10.8). P2P wins idle pairs and loses the real
+4-rank boot: pipeline communicators plus PLE pinned DMA contend worse
+through root-complex peer windows than host staging does. Script now keeps
+=1 as default via ${NCCL_P2P_DISABLE:-1}, so an outer export A/Bs without
+editing. Case closed; revisit only if the PLE ever stops streaming over
+the same bridges.
