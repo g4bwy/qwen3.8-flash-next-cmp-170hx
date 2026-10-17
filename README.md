@@ -17,11 +17,11 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
 - Depths: MTP-4 is the shipped depth. The fast lane builds an int8-dense
   variant with `checkpoint/` (+6 % on top of depth, +20 % over MTP-3).
 - Base commit: `9731f30a030c545e7f29a8a4ed96b8562be12c88` (vllm-project/vllm main, 2026-10-16; the rebase from `183625d4f9` absorbed upstream #60992 (fp8 QSA reads) and the upstream callable-compose rework of patch 4's region).
-- 8 patches: six ours, two adopted from upstream PRs (#56444 as
+- 9 patches: seven ours, two adopted from upstream PRs (#56444 as
   patch 2, #58094 as patch 4; both still open upstream, so they survive
   rebases as adopted commits). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `5dc25ebbaf6e4752b4ef3d497a9cec57db910106`. If it does not, you applied
+  `9d66357a6af55e6769986dba80ab47e8fdc1a63c`. If it does not, you applied
   something else or onto something else.
 - The base's `humming-kernels[cu13]` pin moved to 0.1.17 (0.1.12 fails the
   new `vllm/utils/humming.py` imports). The editable precompiled install
@@ -37,7 +37,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout 9731f30a030c545e7f29a8a4ed96b8562be12c88
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # 5dc25ebbaf6e4752b4ef3d497a9cec57db910106
+git rev-parse 'HEAD^{tree}'   # 9d66357a6af55e6769986dba80ab47e8fdc1a63c
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
@@ -302,6 +302,7 @@ about one position in 130 moves because of the quantization. Full tables:
 | 6 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts), so the 173 GiB read-once load does not evict reusable cache at every boot |
 | 7 | Qwen4Exp PLE embedding honors fp8 n-gram tables inside compressed-tensors checkpoints: resolve the scheme (none -> unquantized, float8 -> fp8, else raise) instead of falling through to the Fp8Config-only gate |
 | 8 | opt-in int8 pipeline handoff (`VLLM_QWEN4EXP_PP_INT8_HOP=1`): the materialized 4-stream hyper-connection state (`hidden x hc_count` bf16, 42 MB per 2048-token chunk) crosses stages as per-token per-stream int8 plus fp32 scales, halving wire bytes on a link that is the prefill wall. Cold 1M TTFT 91.8 -> 79.9 s, 100/4 wall 386 -> 346 s, needles and acceptance clean; flag-off is byte-identical; a half-enabled pipeline raises instead of casting |
+| 9 | fix: the greedy JIT warmup round that primes the rejection-sampler kernels was gated on `rejection_sampler`, which only exists on the last pipeline stage. With any spec-decode method at PP>1 the last stage ran one warmup round too many and blocked forever in its first pipeline `recv` during engine init. Gate on `speculative_config`, which every stage has. Needed from any base at or after upstream #59260 (2026-10-14). Awaiting hardware re-cert |
 
 ## Gotchas
 
@@ -329,12 +330,19 @@ about one position in 130 moves because of the quantization. Full tables:
   20 tok/s until it finishes. Schedule long prefills early, not between decodes.
 - A bench fill of 100% means (ctx - decode) x 0.99. Anything larger is a plain
   HTTP 400 from the server.
+- On a base at or after upstream #59260, engine init with PP>1 plus spec decode
+  hangs with ranks 0..N-2 logging "Graph capturing finished" while the last
+  rank stops after its kernel-warmup lines and prints nothing more. py-spy
+  shows it inside `warmup_kernels` -> `execute_model` -> `recv`. That is the
+  asymmetric JIT warmup round; patch 9 fixes it. Without the patch, booting
+  with `--kernel-config '{"enable_jit_warmup": false}'` avoids the hang at the
+  cost of the JIT priming pass.
 
 ## Layout
 
 ```
 patchset-qwen38-pp/
-  patches/0001-*.patch .. 0010-*.patch   the series, git am
+  patches/0001-*.patch .. 0009-*.patch   the series, git am
   serve-4x-1m.sh                         the service lane: 4 gpus, 1M, YaRN 4.0 (PROF=1 arms the profiler)
   archive/                               retired lanes, the 3-card set, the TP=4 trial, and their tables
   benchmark/                             measurement tools, raw results, and the full record, see its README
