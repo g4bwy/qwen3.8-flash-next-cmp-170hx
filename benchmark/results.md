@@ -1376,3 +1376,41 @@ false}' skips the whole JIT pass (the legacy QSA/GDN kernel_warmup still
 runs). Status: fix is hardware-unverified until boot N4 (MTP + hop + fp8 KV
 on the 9-patch tree) lands; re-certification (acceptance trio, cold TTFT,
 needles, pool drift) follows on the same boot.
+
+## Rebase onto f98ae6a9fd (2026-10-18, +36 commits from 9731f30a03)
+
+Upstream state first: the greedy-JIT-warmup deadlock (patch 9) is unfixed on
+main but has an open PR with the identical gate, #62129 (2026-10-17,
+chenjr97). Patch 9 stays in the series and retires when that merges.
+The N4 hardware boot validated patch 9 on the previous base: engine init
+completes with MTP-4 + hop + fp8 KV, all warmups 4/4 ranks, pool 5,077,611
+tokens, hop ACTIVE logged, 3 min 15 s to serving.
+
+Rebase mechanics: worktree /home/gab/test/wt-rebase-1018, branch
+qwen38-pp-f98ae6a9fd, cherry-pick --strategy-option=diff3 of all 9, zero
+conflicts, series delta lines byte-identical to the old range. Replay: 9
+patches git am onto pristine f98ae6a9fd -> tree
+7256681104425f758647a00fa23f2e0d5d8bfc03, equal to the branch. Wheel:
+0.32.0rc1.dev342+gf98ae6a9f cu130 (200 on metadata probe; the 20 newer tips
+404). humming-kernels pin unchanged at 0.1.17. CPU suites: 143 passed across
+the ship files + warmup gates; test_ple.py 13 failures are GPU/UVA
+environmental, identical on the pristine base (verified side by side);
+test_qsa_prepare.py skips on this box (fender-stack question stays open).
+
+Semantics in the range that touch our stack:
+- b544587408 (#53558) makes KV planning pluggable. Checked: the default
+  builder delegates to the module-level get_kv_cache_config_from_groups, so
+  patch 3's fix stays on the live path.
+- c3de0b37e2 (#61455) replaces the "identify the draft KV group" heuristics
+  with explicit is_draft tags, set only on AttentionLayerBase layers. For
+  this model the drafter builds a full hybrid decoder layer: its attention
+  layer now gets tagged, its GDN layer cannot. The old all-groups fallback
+  (which eagle-flagged mamba groups and drove the documented one-block hit
+  loss at exact retention boundaries) now no longer triggers. Behavior of
+  mamba prefix hits under MTP can therefore differ on the new base. Verify
+  at first cert: boot log for the "no KV cache group could be identified"
+  warning (its absence means tagging worked), prefix_state_check boundary
+  case, acceptance trio on fixed salts.
+- 61bb590877 (#61174) clears stale rows from shared spec-decode block
+  tables. Same bug class we audited at #56734; pure benefit, no series
+  overlap.

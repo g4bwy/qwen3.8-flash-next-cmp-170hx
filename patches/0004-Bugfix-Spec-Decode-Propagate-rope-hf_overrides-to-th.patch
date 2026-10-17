@@ -1,7 +1,7 @@
-From 1fe5bdf221abcce7fda113da8516364cf231a4fe Mon Sep 17 00:00:00 2001
+From 89dbee1b8675c74b98907ced79eb633529015b00 Mon Sep 17 00:00:00 2001
 From: gokay-ai <60583610+gokay-ai@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 4/8] [Bugfix][Spec Decode] Propagate rope hf_overrides to the
+Subject: [PATCH 4/9] [Bugfix][Spec Decode] Propagate rope hf_overrides to the
  MTP draft
 
 Covers the --hf-overrides YaRN path: nested text_config.rope_parameters
@@ -163,7 +163,7 @@ index 39ebd7924b..65d9af5020 100644
  def test_callable_overrides_reach_the_draft_config():
      """A callable override (config-to-config transform) composes with the
 diff --git a/vllm/config/model.py b/vllm/config/model.py
-index 7a883eac54..ab5c1b2161 100644
+index 6dc2d16d52..bef6cead8f 100644
 --- a/vllm/config/model.py
 +++ b/vllm/config/model.py
 @@ -513,8 +513,8 @@ class ModelConfig:

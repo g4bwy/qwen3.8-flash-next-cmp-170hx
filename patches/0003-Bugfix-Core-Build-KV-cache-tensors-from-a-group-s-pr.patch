@@ -1,7 +1,7 @@
-From efcf4f5fc54ffbd65a99e8a4b2767cb47c571489 Mon Sep 17 00:00:00 2001
+From c24ea6aa39c3db446da4dcf2bf52b5b78662bf89 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 10 Sep 2026 22:12:29 +0200
-Subject: [PATCH 3/8] [Bugfix][Core] Build KV cache tensors from a group's
+Subject: [PATCH 3/9] [Bugfix][Core] Build KV cache tensors from a group's
  projected layers
 
 A pipeline stage that owns none of a KV cache group's layers keeps that
@@ -23,10 +23,10 @@ only for the layers it actually holds on this stage.
  2 files changed, 93 insertions(+), 6 deletions(-)
 
 diff --git a/tests/v1/core/test_kv_cache_utils.py b/tests/v1/core/test_kv_cache_utils.py
-index 6a0b6393a2..aeafc410b6 100644
+index 09f365d382..d49c24822a 100644
 --- a/tests/v1/core/test_kv_cache_utils.py
 +++ b/tests/v1/core/test_kv_cache_utils.py
-@@ -2174,3 +2174,90 @@ def test_null_head_len():
+@@ -2190,3 +2190,90 @@ def test_null_head_len():
          assert null_head_len(table) == expected
      blocks = KVCacheBlocks(([null] * 4 + real, [null] + real[:1] + [null]))
      assert blocks.get_unhashed_block_ids_all_groups() == [[1, 2, 3], [1]]
@@ -118,10 +118,10 @@ index 6a0b6393a2..aeafc410b6 100644
 +            assert group is not None, f"rank {rank}: orphan layer {tensor.layers[0]}"
 +            assert set(tensor.layers) <= set(group.layer_names)
 diff --git a/vllm/v1/core/kv_cache_planning.py b/vllm/v1/core/kv_cache_planning.py
-index 6e258a68a9..26d8629bf2 100644
+index 4d73f4303e..13c784d05e 100644
 --- a/vllm/v1/core/kv_cache_planning.py
 +++ b/vllm/v1/core/kv_cache_planning.py
-@@ -652,13 +652,13 @@ def get_kv_cache_config_from_groups(
+@@ -695,13 +695,13 @@ def get_kv_cache_config_from_groups(
  
      kv_cache_tensors = []
      for group in kv_cache_groups:

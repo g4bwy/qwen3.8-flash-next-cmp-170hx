@@ -1,7 +1,7 @@
-From 9903e3adc2e6c0e369bf66c29ae5e6cd2fe5ce6f Mon Sep 17 00:00:00 2001
+From eaf526e551da6157053ae8e122940b9d02ac4828 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 16 Oct 2026 11:21:02 +0200
-Subject: [PATCH 8/8] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
+Subject: [PATCH 8/9] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
  pipeline handoff
 
 The hyper-connection model ships the materialized 4-stream state
@@ -29,7 +29,7 @@ Co-authored-by: Maki <agent@local>
  2 files changed, 72 insertions(+), 2 deletions(-)
 
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 917c668a17..bb21d262e0 100755
+index 86eda9dc03..098357a941 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -122,6 +122,7 @@ if TYPE_CHECKING:
