@@ -1,0 +1,12 @@
+{
+ "salt": 1791963600,
+ "session_tokens": 899371,
+ "ttft_cold_s": 82.07,
+ "ttft_resume_s": 81.79,
+ "stored_gb": 36.9,
+ "loaded_gb": 0.0,
+ "greedy_equal": false,
+ "verdict": "NO HOST LOAD (lookup miss or stores lost)",
+ "pool_tokens": 2689440,
+ "settle_s": 60.0
+}

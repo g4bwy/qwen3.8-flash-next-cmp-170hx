@@ -64,7 +64,7 @@ export VLLM_SAFETENSORS_DROP_CACHE=1
 # prefill wall (cold 1M TTFT 91.8 -> 79.9 s). Series patch 8 reads this env;
 # one export here covers all four stages because this script execs a single
 # process tree. Without the env the engine is byte-identical to pre-patch.
-export VLLM_QWEN4EXP_PP_INT8_HOP=1
+export VLLM_QWEN4EXP_PP_INT8_HOP=${VLLM_QWEN4EXP_PP_INT8_HOP:-1}
 
 # PROF=1 arms the torch profiler (auto-stops after max_iterations engine
 # steps, needs no code patch): boot with PROF=1, then POST /start_profile

@@ -1,0 +1,74 @@
+From 63f6f22d00cd37baa6b899cf1c56c90c10201091 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 00:34:11 +0200
+Subject: [PATCH 9/9] [Bugfix][MRV2][Spec Decode] Mirror the greedy JIT warmup
+ round on every pipeline stage
+
+The JIT kernel warmup drives fabricated scheduler outputs through
+Worker.execute_model so every pipeline stage must run the same number
+of rounds. The greedy second round that warms the rejection-sampler
+kernels was gated on model_runner.rejection_sampler, which is only
+constructed on the last pipeline stage. With any spec-decode method
+under PP>1 the last stage then blocks forever in the first recv of
+the extra round while the earlier stages move on to graph capture.
+
+Reproduced on 4-stage PP + MTP-4 startup: rank 3 stuck at
+warmup_kernels -> _warmup_kernels -> execute_model -> recv_object
+(py-spy), ranks 0-2 already logged capture-complete. Engine init
+never returns.
+
+Gate the extra round on model_runner.speculative_config, which every
+stage has, so all stages mirror the round. Warmup-only change; no
+effect on serving paths. Test fakes carry the new attribute.
+---
+ tests/v1/worker/test_gpu_warmup_blocks.py | 1 +
+ tests/v1/worker/test_mixed_warmup_gate.py | 1 +
+ vllm/v1/worker/gpu/warmup.py              | 7 +++++--
+ 3 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/tests/v1/worker/test_gpu_warmup_blocks.py b/tests/v1/worker/test_gpu_warmup_blocks.py
+index b48f8249e6..0ec963effc 100644
+--- a/tests/v1/worker/test_gpu_warmup_blocks.py
++++ b/tests/v1/worker/test_gpu_warmup_blocks.py
+@@ -90,6 +90,7 @@ def _make_runner(
+         num_speculative_steps=num_spec_steps,
+         adaptive_verification=None,
+         rejection_sampler=None,
++        speculative_config=None,
+         decode_query_len=num_spec_steps + 1,
+         is_pooling_model=False,
+         is_encoder_decoder=False,
+diff --git a/tests/v1/worker/test_mixed_warmup_gate.py b/tests/v1/worker/test_mixed_warmup_gate.py
+index 199ce3b54a..8ca4f79e56 100644
+--- a/tests/v1/worker/test_mixed_warmup_gate.py
++++ b/tests/v1/worker/test_mixed_warmup_gate.py
+@@ -74,6 +74,7 @@ def test_kernel_warmup_restores_uncalibrated_adaptive_manager(monkeypatch, fail_
+     runner = SimpleNamespace(
+         adaptive_verification=manager,
+         rejection_sampler=rejection_sampler,
++        speculative_config=object(),
+     )
+ 
+     def run_steps(model_runner, execute, sample, greedy=False):
+diff --git a/vllm/v1/worker/gpu/warmup.py b/vllm/v1/worker/gpu/warmup.py
+index 5418147500..66f8258260 100644
+--- a/vllm/v1/worker/gpu/warmup.py
++++ b/vllm/v1/worker/gpu/warmup.py
+@@ -238,9 +238,12 @@ def warmup_kernels(
+         rejection_sampler.enable_adaptive_verification = False
+     try:
+         _warmup_kernels(model_runner, worker_execute_model, worker_sample_tokens)
+-        if rejection_sampler is not None:
++        if model_runner.speculative_config is not None:
+             # Greedy batches skip logits processing, so rejection kernels
+-            # also see model-dtype logits instead of FP32.
++            # also see model-dtype logits instead of FP32. Each round drives
++            # execute_model passes that every pipeline stage must mirror, and
++            # the rejection sampler only exists on the last stage, so gate on
++            # the config, which every stage has.
+             _warmup_kernels(
+                 model_runner, worker_execute_model, worker_sample_tokens, greedy=True
+             )
+-- 
+2.55.0
+

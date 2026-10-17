@@ -1341,3 +1341,38 @@ through root-complex peer windows than host staging does. Script now keeps
 =1 as default via ${NCCL_P2P_DISABLE:-1}, so an outer export A/Bs without
 editing. Case closed; revisit only if the PLE ever stops streaming over
 the same bridges.
+
+## New-base boot hang: asymmetric JIT warmup round (2026-10-18)
+
+The first production boot on base 9731f30a03 (8-patch series, MTP-4, fp8 KV,
+hop on) never finished engine init. Ranks PP0-PP2 logged "Graph capturing
+finished"; PP3 stopped after its QSA kernel-warmup lines and printed nothing
+more. Killed after ~12 min; the box was reverted to the previous tree.
+
+A py-spy dump of the stuck PP3 worker named the site: Worker.execute_model
+-> irecv_tensor_dict -> recv_object, called from _warmup_kernels, itself
+called from the second _warmup_kernels round inside warmup_kernels. The new
+JIT warmup (upstream #59260, 2026-10-14) fabricates scheduler outputs and
+drives real execute_model passes, so every pipeline stage must run the same
+number of rounds. The greedy second round exists to prime rejection-sampler
+kernels and was gated on model_runner.rejection_sampler, which is built only
+on the last pipeline stage. With spec decode at PP>1 the last stage waited
+for sends that the earlier stages (already done with warmup) never issued.
+Still broken on upstream main as of this writing.
+
+Control boot N3, same tree without --speculative-config: boots clean in ~3
+min, pool 2,726,114 tokens at kv_cache_dtype=auto. The drafter flag was the
+whole difference, which matches the mechanism exactly.
+
+Series patch 9 moves the gate to model_runner.speculative_config, present on
+every stage, so all stages mirror the round. CPU suites test_gpu_warmup_blocks
+and test_mixed_warmup_gate green (the adaptive-restore test exercises the
+guard; the block-count fakes carry the new attribute). Full series replay
+re-verified: 9 patches git am onto 9731f30a03 -> tree
+9d66357a6af55e6769986dba80ab47e8fdc1a63c, equal to the branch.
+
+Interim escape hatch without patch 9: --kernel-config '{"enable_jit_warmup":
+false}' skips the whole JIT pass (the legacy QSA/GDN kernel_warmup still
+runs). Status: fix is hardware-unverified until boot N4 (MTP + hop + fp8 KV
+on the 9-patch tree) lands; re-certification (acceptance trio, cold TTFT,
+needles, pool drift) follows on the same boot.
