@@ -1,7 +1,7 @@
-From 3fb385d24bb7ff1f2b3ed65ea1ae9866f550c0f6 Mon Sep 17 00:00:00 2001
+From 2bf0881ed129d8ed1ea3519fdbb5fbdc3400aa5a Mon Sep 17 00:00:00 2001
 From: Vaishnavi220506 <183067453+Vaishnavi220506@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 2/8] Adopt upstream PR #56444: carry PLE input ids through PP
+Subject: [PATCH 2/9] Adopt upstream PR #56444: carry PLE input ids through PP
  intermediates
 
 Makes PLE pipeline-rank-free by transporting int32 input_ids inside the

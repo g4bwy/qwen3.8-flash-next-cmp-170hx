@@ -1,7 +1,7 @@
-From 6916521c8dd03a115629a8ca588332528b9f42d7 Mon Sep 17 00:00:00 2001
+From 853a0efaa4bd91b7f09fc9b1dfd3f74201088e13 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 12:16:26 +0200
-Subject: [PATCH 6/8] [Model Loader] Drop consumed shard pages from the page
+Subject: [PATCH 6/9] [Model Loader] Drop consumed shard pages from the page
  cache
 
 Set VLLM_SAFETENSORS_DROP_CACHE=1 to posix_fadvise(FADV_DONTNEED) each
@@ -97,7 +97,7 @@ index 0000000000..47f5db0486
 +    monkeypatch.setattr(wu.envs, "VLLM_SAFETENSORS_DROP_CACHE", True)
 +    assert wu._drop_file_cache(str(tmp_path / "missing.safetensors")) is None
 diff --git a/vllm/envs.py b/vllm/envs.py
-index ab04f405d7..917c668a17 100755
+index 0492c5a59d..86eda9dc03 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -121,6 +121,7 @@ if TYPE_CHECKING:
