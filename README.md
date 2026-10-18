@@ -241,7 +241,7 @@ Rates are tok/s unless the cell shows a duration. All rows: 74 SMs, partition
 | 4 cards, 1M, official, MTP-4 | 90.6 s | 10.4k | 205-215 (median 212) | wall 386 s at 100/4, 2-3 of 4 resident |
 | 4 cards, 1M, W8A16 lane, MTP-4 | 93.5 s | 10.1k | 217-226 | 400 s wall at 100/4, batch-neutral |
 | + int8 handoff (patch 8), bf16 KV | 79.9 s | 12.4k | 205-215 | wall 346 s at 100/4, 4/4 would-fit, pool 2.65M |
-| + int8 handoff + fp8 KV = SHIP | 92.1 s | 10.7k | 1024-tok cell 10.5 s | wall 344-354 s at 100/4, 4/4 resident, pool 5.10M |
+| + int8 handoff + fp8 KV = SHIP | 92.3-92.6 s | 10.2k | 1024-tok cell 10.3-10.5 s | wall 344-357 s at 100/4, 4/4 resident, pool 5.08M |
 
 - The sustained column is a 1.5 s peak that typically lands in the wind-down
   of the run. Compare grids on wall or out tok/s. Full grids, repeat runs and
