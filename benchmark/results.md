@@ -1414,3 +1414,41 @@ Semantics in the range that touch our stack:
 - 61bb590877 (#61174) clears stale rows from shared spec-decode block
   tables. Same bug class we audited at #56734; pure benefit, no series
   overlap.
+
+## Certification: base f98ae6a9fd + 9 patches, boot N5 (2026-10-18)
+
+Tree dev351+g693f68e2e, pool 5,077,611, hop ACTIVE, draft-vocab live, no
+eagle-identification warning, 3 min 38 s to serving. Server idle except
+session traffic between cells; background drafts verified zero around the
+acceptance windows.
+
+| Metric | band era (f98ae's predecessor chain) | N5 |
+|---|---|---|
+| Cold 1M TTFT, 3 fresh salts | 92.0-92.1 s | 92.3 / 92.6 / 92.6 s |
+| Warm 1024-tok cell | 10.5-10.8 s | 10.3 / 10.5 s |
+| Acceptance, decode-phase window | band 4.75-4.91 | 4.995 |
+| 100/4 wall, fresh salt | 344.4 / 353.6 s | 356.5 s, 0 preempts, 4/4 resident |
+| Needles (prefix_state_check) | pass | pass, exit 0 |
+
+Method break on this base, read before comparing acceptance columns across
+boots: the spec-decode counters now also count drafts from prefill-phase
+steps. Visible directly (14 drafts before the first token of a warm 256-tok
+stream). Effect: bench.py's full-window acceptance column dilutes toward the
+prefill ratio (cold cell 1.8, warm 3.4-4.2), and the old era's full-window
+numbers are not comparable to decode-window numbers on the new base. The
+band's own era files had no prefill-phase drafts, so their full-window
+column equalled the decode value. From this boot on, acceptance is certified
+by bracketing the counters inside the decode phase of a warm stream.
+
+#61455 follow-up resolved in our favor: with the draft attention layer
+explicitly tagged and the mamba groups no longer eagle-flagged by the old
+all-groups fallback, the prefix-hit floor halved, 16-17 recomputed tokens at
+retention-boundary prompts (era: 32 with the MTP block drop), and the
+concurrent 4-session warm round recomputes 82 tokens (era: 1,682). Grown
+turns and needles all pass at 16160/32320/64640 boundary lengths.
+
+Verdict: PASS. The new base keeps the ship numbers (cold +0.5%, wall +1-3%
+inside sample spread) and buys the mamba prefix improvement plus #61174.
+Raw: logs/n5-cold-s9107{1,2,3}.json, logs/n5-warm-s91073.json,
+logs/n5-7770-c{1,2,3}.json, logs/n5-acc-{1,2,3}.json,
+logs/n5-1004-c1.json.

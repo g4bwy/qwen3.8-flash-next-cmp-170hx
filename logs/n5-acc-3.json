@@ -1,0 +1,21 @@
+{
+  "label": "n5-acc-3",
+  "base_url": "http://fender.lan:8000",
+  "depth": 200000,
+  "seed": 7770,
+  "task": "copy",
+  "marker_at": 0.5,
+  "prompt_tokens": 204882,
+  "completion_tokens": 2048,
+  "seconds": 11.96326231956482,
+  "drafts": 466.0,
+  "draft_tokens": 1864.0,
+  "accepted": 1585.0,
+  "mean_acceptance_length": 4.401287553648069,
+  "per_position": {
+    "0": 0.9463519313304721,
+    "1": 0.8991416309012875,
+    "2": 0.8304721030042919,
+    "3": 0.7253218884120172
+  }
+}
