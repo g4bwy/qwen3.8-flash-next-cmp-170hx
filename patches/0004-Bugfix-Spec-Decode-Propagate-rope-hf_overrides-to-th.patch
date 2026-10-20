@@ -1,4 +1,4 @@
-From 1b380f41b7bd7a790d080dac8ea12237e9b845d5 Mon Sep 17 00:00:00 2001
+From 3d911aa8d20188759888a0146091e7e0541238f4 Mon Sep 17 00:00:00 2001
 From: gokay-ai <60583610+gokay-ai@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
 Subject: [PATCH 4/8] [Bugfix][Spec Decode] Propagate rope hf_overrides to the

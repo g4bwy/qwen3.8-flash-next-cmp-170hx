@@ -1547,3 +1547,32 @@ of huge prompts), exactly where the Python API server spent its CPU; every
 session turn starts ~3.5 s sooner. Decode and prefill silicon unchanged,
 batch wall neutral-to-better. Keep it on; revert = boot without RUST=1.
 Raw: logs/rust-*.json.
+
+## Patch 2 shrunk to guards-only, promoted (2026-10-21)
+
+Pipeline: live probe boot (2026-10-20) proved wire vs stage-local PLE
+input ids byte-identical on 768/768 consecutive real-traffic forwards
+across PP1-PP3 (prefill chunks, mixed batches, MTP draft rows,
+concurrent streams); the only mismatches were fabricated warmup steps,
+where stage-local buffers hold stale dummies by construction, plus the
+PP3-only greedy round-2 signature. The unwire candidate then booted as
+dev142+gdaf777a49 and took the full cert battery: cold 1M 89.7/90.3/90.4 s
+(same class as the previous Rust boot), warm cell 7.1 s / sust 199 after
+one transient 8.1/168 sample was re-run clean, decode-window acceptance
+4.85-5.00 (mean 4.90; the -0.1 against 4.995 is the 1.4 s-TTFT window-
+start artifact of the Rust frontend, not the drafter), needles exit 0
+with the boundary floor at 17, 100/4 wall 350.6 s / 0 preempts.
+
+Series renumbered in place: patch 2 is now the guard deletions from
+#56444 plus retargeted contract tests (intermediate tensors must not
+carry ids; non-first ranks feed the runner argument to layers). The
+wire carry, its int32 staging buffer, and the consumer shadow are gone
+from both backend models. Rebuilt series verified: patch-2-position
+surgery + restack 3-8 yields a tree byte-identical to the
+hardware-proven tip (f4652439f3869c845b3f537cbc02ba89095f2279), ruff
+clean, replay of the eight re-exported patches reproduces it exactly.
+
+Follow-up worth filing on #56444: with #61016 merged, the PR's carry is
+obsolete for vLLM-V2 runners; ask the author to reduce to guards or
+close. Probe and unwire artifacts stay in experiments/ for provenance.
+Raw: logs/unw-*.json.
