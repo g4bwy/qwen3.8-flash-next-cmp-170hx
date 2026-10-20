@@ -1,0 +1,116 @@
+From 25b5a1eb3cb2c06d51323b1b323c5c72d154816e Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 23:15:33 +0200
+Subject: [PATCH] [Debug][Qwen4Exp] Probe PP-wire vs stage-local input_ids
+ alignment
+
+Patch 2 carries PLE input ids on the pipeline handoff; upstream #61016
+keeps the runner-supplied input_ids alive on every stage by other
+means. Patch 2 currently shadows the runner value, so the two sources
+have never been compared on live traffic. Row alignment between them is
+the precondition for shrinking patch 2 to just its guard deletions.
+
+Env-gated (VLLM_QWEN4EXP_ID_PROBE=1): on non-first ranks each eager
+forward compares the wire tensor against the runner argument and counts
+equal/content/shape/none outcomes, sampling the first differing
+positions on mismatches. Graph capture passes are skipped (comparison
+syncs, syncs kill captures). Nothing raises; probe off is inert.
+
+Debug-only artifact, not a series patch.
+---
+ vllm/models/qwen4_exp/nvidia/model.py | 65 +++++++++++++++++++++++++++
+ 1 file changed, 65 insertions(+)
+
+diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
+index 480d5dc45c..8e75a8513e 100644
+--- a/vllm/models/qwen4_exp/nvidia/model.py
++++ b/vllm/models/qwen4_exp/nvidia/model.py
+@@ -2,6 +2,7 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ """Inference-only Qwen4Exp model."""
+ 
++import os
+ from collections.abc import Iterable
+ from itertools import islice
+ 
+@@ -91,6 +92,66 @@ from .qsa import Qwen4ExpQSAAttention
+ 
+ logger = init_logger(__name__)
+ 
++_ID_PROBE = os.environ.get("VLLM_QWEN4EXP_ID_PROBE", "0") == "1"
++_ID_PROBE_STATE = {
++    "calls": 0,
++    "equal": 0,
++    "content": 0,
++    "shape": 0,
++    "none": 0,
++    "captured": 0,
++}
++_ID_PROBE_DETAILS: list[str] = []
++
++
++def _probe_input_ids_alignment(
++    runner_ids: torch.Tensor | None, wire_ids: torch.Tensor
++) -> None:
++    st = _ID_PROBE_STATE
++    if torch.cuda.is_current_stream_capturing():
++        st["captured"] += 1
++        return
++    st["calls"] += 1
++    if runner_ids is None:
++        st["none"] += 1
++    else:
++        if runner_ids.shape != wire_ids.shape:
++            st["shape"] += 1
++            if len(_ID_PROBE_DETAILS) < 12:
++                _ID_PROBE_DETAILS.append(
++                    f"shape {tuple(runner_ids.shape)} vs {tuple(wire_ids.shape)} "
++                    f"dtypes {runner_ids.dtype}/{wire_ids.dtype}"
++                )
++        n = min(runner_ids.shape[0], wire_ids.shape[0])
++        if n > 0:
++            a, b = runner_ids[:n], wire_ids[:n]
++            if a.dtype != b.dtype:
++                b = b.to(a.dtype)
++            if torch.equal(a, b):
++                st["equal"] += 1
++            else:
++                st["content"] += 1
++                if len(_ID_PROBE_DETAILS) < 12:
++                    diff = (a != b).nonzero().flatten()
++                    _ID_PROBE_DETAILS.append(
++                        f"n={n} ndiff={diff.numel()} first={diff[:6].tolist()}"
++                    )
++    if st["calls"] % 256 == 0:
++        logger.warning(
++            "IDPROBE calls=%d equal=%d content_mismatch=%d shape_mismatch=%d "
++            "runner_none=%d capture_skips=%d",
++            st["calls"],
++            st["equal"],
++            st["content"],
++            st["shape"],
++            st["none"],
++            st["captured"],
++        )
++        for d in _ID_PROBE_DETAILS:
++            logger.warning("IDPROBE detail: %s", d)
++        _ID_PROBE_DETAILS.clear()
++
++
+ # Transformers v5.18 renamed `qwen_sparse_attention` to `indexed_attention`
+ # TODO: Delete qwen_... once Transformers 5.18.0 is the minimum required version.
+ _QSA_LAYER_TYPES = ("qwen_sparse_attention", "indexed_attention")
+@@ -617,6 +678,10 @@ class Qwen4ExpModel(nn.Module):
+             else:
+                 hidden_states = intermediate_tensors["hidden_states"]
+             if self.config.ple_layer_ids:
++                if _ID_PROBE:
++                    _probe_input_ids_alignment(
++                        input_ids, intermediate_tensors["input_ids"]
++                    )
+                 input_ids = intermediate_tensors["input_ids"]
+ 
+         full_num_tokens = positions.shape[-1]
+-- 
+2.55.0
+
