@@ -1514,3 +1514,36 @@ jumps) and stays inside the historical band's spread. Patch 9's absorbed
 form and patch 7's shrunk form both behave: engine init completes with
 MTP+PP4 and the PLE fp8 pinned load line is unchanged.
 Raw: logs/n6-*.json.
+
+## Rust frontend trial (8407bc0bb6 + 8 patches, 2026-10-20)
+
+Activation: RUST=1 in serve-4x-1m.sh (exports VLLM_USE_RUST_FRONTEND=1).
+The Python launcher execs <tree>/vllm/vllm-rs (present from the precompiled
+wheel) and hands it the listener fds + ZMQ addresses; zero uvicorn processes,
+Rust tracing logs instead, boot log 319 lines vs 533. Live tree unchanged
+otherwise (dev141+gb63d5db91).
+
+Parity delta found only at boot (static audit missed both): the frontend
+warns that structured_outputs_config and enable_auto_tool_choice "currently
+have no effect in Rust frontend". Both are no-ops for this deployment:
+function tools + streaming + ~200k-token agent prompts ran native traffic
+through it fine. /v1/messages returns 404 (no route; unused here). All
+cert counter families present; prefix/probes work unchanged (accept_window
+actually races less: faster SSE chunking).
+
+| metric (same engine, same day base = N6) | Python frontend | Rust frontend |
+|---|---|---|
+| warm 1M cell TTFT | 4.7-4.9 s | 1.4 s |
+| warm 1M cell wall | 10.1-10.5 s | 6.9 s |
+| append round trip (probe) | 0.17-0.38 s | 0.11-0.14 s |
+| cold 1M TTFT | 92.9-93.9 s | 89.8 s (single draw) |
+| 100/4 wall / ttft mean | 356.8 / 223.8 s | 349.2 / 218.1 s |
+| acceptance (decode window) | 4.995 | 4.978-4.989 |
+| needles / boundary floor | pass / 17 | pass / 17 |
+| pool at boot | 5,077,611 | 5,053,731 (-0.47%, unexplained; watch next boot) |
+
+Reading: the win is on the request-ingress path (tokenize/validate/broadcast
+of huge prompts), exactly where the Python API server spent its CPU; every
+session turn starts ~3.5 s sooner. Decode and prefill silicon unchanged,
+batch wall neutral-to-better. Keep it on; revert = boot without RUST=1.
+Raw: logs/rust-*.json.
