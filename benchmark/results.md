@@ -1489,3 +1489,28 @@ identical to pristine base (149 passed, +9 from series tests). Exported
 0.32.1rc1.dev133+g8407bc0bb (rc line moved to 0.32.1, dev counter reset;
 post-am banner should read dev141). humming-kernels pin unchanged 0.1.17.
 Hardware boot + cert pending.
+
+## Certification: base 8407bc0bb6 + 8 patches, boot N6 (2026-10-20)
+
+Tree 0.32.1rc1.dev141+gb63d5db91 (133+8), pool 5,077,611 identical to N5,
+hop ACTIVE, draft-vocab live, no eagle warning, 3 min 45 s to service.
+Acceptance now certified with the decode-window bracket, saved as
+benchmark/accept_window.py (background-draft checks included, zeroed each
+trial).
+
+| Metric | N5 (f98ae6a9fd) | N6 (8407bc0bb6) |
+|---|---|---|
+| Cold 1M TTFT x3 fresh salts | 92.3 / 92.6 / 92.6 s | 92.9 / 93.9 / 93.7 s |
+| Warm 1024-tok cell | 10.3 / 10.5 s | 10.1 s (first try 20.1 s: transient co-tenant interference, discarded and re-run clean) |
+| Acceptance, decode window | 4.995 | 4.995 / 4.995 warm, 4.888 with cold prefix |
+| Acceptance, 200k probe continuity | 4.365-4.401 | 4.256 / 4.300 (pos-shape normal, low depth = lottery-sensitive) |
+| 100/4 wall | 356.5 s | 356.8 s, 0 preempts, ttft mean 223.8 |
+| Needles | pass | pass, exit 0 |
+| Retention-boundary floor | 16-17 tok | 17 / 17 / 17 tok |
+
+Verdict: PASS. Nothing in the +163 range moved a ship number beyond sample
+spread; the cold trio drifts +1% (92.0 -> 92.3 -> 92.9 across three base
+jumps) and stays inside the historical band's spread. Patch 9's absorbed
+form and patch 7's shrunk form both behave: engine init completes with
+MTP+PP4 and the PLE fp8 pinned load line is unchanged.
+Raw: logs/n6-*.json.

@@ -1,0 +1,21 @@
+{
+  "label": "n6-acc-2",
+  "base_url": "http://fender.lan:8000",
+  "depth": 200000,
+  "seed": 7770,
+  "task": "copy",
+  "marker_at": 0.5,
+  "prompt_tokens": 204882,
+  "completion_tokens": 2048,
+  "seconds": 12.705331563949585,
+  "drafts": 477.0,
+  "draft_tokens": 1908.0,
+  "accepted": 1574.0,
+  "mean_acceptance_length": 4.29979035639413,
+  "per_position": {
+    "0": 0.9412997903563941,
+    "1": 0.8846960167714885,
+    "2": 0.7882599580712788,
+    "3": 0.6855345911949685
+  }
+}
