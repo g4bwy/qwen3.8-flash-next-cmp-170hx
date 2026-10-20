@@ -21,7 +21,7 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
   patch 2, #58094 as patch 4; both still open upstream, so they survive
   rebases as adopted commits). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `2e6ac5a3fc930e43771b6e274df4371a30a681f0`. If it does not, you applied
+  `f4652439f3869c845b3f537cbc02ba89095f2279`. If it does not, you applied
   something else or onto something else.
 - The base's `humming-kernels[cu13]` pin moved to 0.1.17 (0.1.12 fails the
   new `vllm/utils/humming.py` imports). The editable precompiled install
@@ -37,7 +37,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout 8407bc0bb6b0061dacb731ae3cc54b6035f112b3
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # 2e6ac5a3fc930e43771b6e274df4371a30a681f0
+git rev-parse 'HEAD^{tree}'   # f4652439f3869c845b3f537cbc02ba89095f2279
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
@@ -295,7 +295,7 @@ about one position in 130 moves because of the quantization. Full tables:
 | # | does |
 |---|---|
 | 1 | Qwen4Exp MTP forward branches on `intermediate_tensors is None` rather than PP rank, so the last-rank drafter takes the embedding path |
-| 2 | upstream PR #56444, adopted: carry PLE input ids (int32, +4 B/token/hop) inside the PP intermediate tensors, so PLE is pipeline-rank-free. Replaces our rank-0 confinement. Its three new tests got process-isolation guards locally |
+| 2 | upstream PR #56444, adopted in reduced form: delete the PP>1+PLE config and model-state bans. #56444's wire carry of PLE input ids is NOT needed since upstream #61016 keeps stage-local input ids on every pipeline stage; a live probe confirmed wire-vs-local ids identical on all real-traffic calls (results.md, 2026-10-20). Contract tests assert intermediate tensors never carry ids |
 | 3 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
 | 4 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Forwarding is gated to the MTP family: an independent draft model ships its own rope and target dicts must not resize it. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our earlier local version used |
 | 5 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Dual-head: eager mixed prefill windows draft with the full head, graphed uniform decode rounds keep the small one. Needs artifacts, build commands in checkpoint/README |

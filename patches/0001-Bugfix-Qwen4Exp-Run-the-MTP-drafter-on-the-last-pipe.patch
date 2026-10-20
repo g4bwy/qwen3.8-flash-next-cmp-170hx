@@ -1,4 +1,4 @@
-From fa2791f20760bcd046584de4ab9fc0f682707b3f Mon Sep 17 00:00:00 2001
+From 843dabb4bc9daa28eb2cb79c30d4631207b20c60 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 10 Sep 2026 11:51:58 +0200
 Subject: [PATCH 1/8] [Bugfix][Qwen4Exp] Run the MTP drafter on the last

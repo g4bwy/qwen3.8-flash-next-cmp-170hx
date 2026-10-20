@@ -1,4 +1,4 @@
-From f059889a3ed122cca5fe0d0ecf973cd8d55f7027 Mon Sep 17 00:00:00 2001
+From bf4c52bb956db993838fc1823bbd9b9d7573143f Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 16 Oct 2026 11:21:02 +0200
 Subject: [PATCH 8/8] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
@@ -49,7 +49,7 @@ index 2dc7ef8b13..a2f378893b 100755
      "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index ea7842e3f1..480d5dc45c 100644
+index 07ff3ed696..3440496e00 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
 @@ -13,6 +13,7 @@ from vllm import envs
@@ -133,10 +133,10 @@ index ea7842e3f1..480d5dc45c 100644
 +                dtype=torch.float32,
 +                device=device,
 +            )
-         if self.config.ple_layer_ids:
-             # PLE needs the raw token IDs on every pipeline stage. The model
-             # runner stores input IDs as int32, so preserve that compact dtype
-@@ -556,7 +599,23 @@ class Qwen4ExpModel(nn.Module):
+         return IntermediateTensors(tensors)
+ 
+     @staticmethod
+@@ -547,7 +590,23 @@ class Qwen4ExpModel(nn.Module):
          else:
              if intermediate_tensors is None:
                  raise ValueError("pipeline stage requires intermediate tensors")
@@ -158,10 +158,10 @@ index ea7842e3f1..480d5dc45c 100644
 +                )
 +            else:
 +                hidden_states = intermediate_tensors["hidden_states"]
-             if self.config.ple_layer_ids:
-                 input_ids = intermediate_tensors["input_ids"]
- 
-@@ -625,6 +684,10 @@ class Qwen4ExpModel(nn.Module):
+         full_num_tokens = positions.shape[-1]
+         block_output = None
+         injection = None
+@@ -613,6 +672,10 @@ class Qwen4ExpModel(nn.Module):
                      hidden_states, block_output, injection
                  )
              intermediate = {"hidden_states": hidden_states}
@@ -169,9 +169,9 @@ index ea7842e3f1..480d5dc45c 100644
 +                intermediate["hidden_states"], intermediate["hidden_scale"] = (
 +                    _pp_hop_quantize(hidden_states, self.config.hc_count)
 +                )
-             if self.config.ple_layer_ids:
-                 assert input_ids is not None
-                 intermediate["input_ids"] = input_ids
+             return IntermediateTensors(intermediate)
+ 
+         # The final mixer consumes the last pending combine and returns both
 -- 
 2.55.0
 
