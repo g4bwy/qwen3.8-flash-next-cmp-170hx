@@ -1452,3 +1452,40 @@ inside sample spread) and buys the mamba prefix improvement plus #61174.
 Raw: logs/n5-cold-s9107{1,2,3}.json, logs/n5-warm-s91073.json,
 logs/n5-7770-c{1,2,3}.json, logs/n5-acc-{1,2,3}.json,
 logs/n5-1004-c1.json.
+
+## Rebase onto 8407bc0bb6 (2026-10-20, +163 commits from f98ae6a9fd)
+
+Patch 9 absorbed: upstream merged #62129 (7c9042c05a, 2026-10-18) with the
+identical speculative_config gate plus its own PP-round regression test.
+Series is 8 patches again.
+
+Conflict territory was patch 7 vs #61454 (Qwen3.8-Flash-Next HC/PLE cleanup,
+494663940b). Upstream added the compressed-tensors "no scheme -> unquantized"
+leg we had, but not the float8 leg, so honoring fp8 PLE tables is still
+patch 7's payload. Its old else-raise leg now contradicts an upstream test
+(test_ple_embedding_falls_back_for_unsupported_quantization_configs:
+int8 compressed-tensors schemes must fall back); the leg was paranoia beyond
+the patch's purpose (it only ever guarded our own fast-lane builds), so patch
+7 was shrunk to unquantized/float8 and anything else falls through to
+upstream's warn-and-unquantize tail. Commit message reworded accordingly;
+pre-rule agent trailers were scrubbed from all series commits.
+
+Other in-range interactions checked: #61836 wraps patch 6's fadvise loop in a
+sys.platform guard (coexists, our call sits inside it plus its own OSError
+handler); #52670 makes kv-cache dtypes pluggable via register_kv_cache_dtype
+-- kv_cache_dtype=fp8 stays a registered name, and this registry is the
+likely home of the parked indexer_kv_dtype fp8 lever; #58984 (DP drafter
+padding) auto-merged over patch 5's speculator hunk; #52477 touched warmup.py
+outside the absorbed patch 9 region.
+
+Mechanics: worktree /home/gab/test/wt-rebase-1020, branch
+qwen38-pp-8407bc0bb6, cherry-pick diff3, one conflict (patch 7), change-line
+delta identical to the old series outside the known-delta files. Patch 8's
+two helper functions needed CI-version ruff reflow (amended into the commit).
+CPU: 147 passed ship+gate suites; tests/models/qwen4_exp 11 failures
+identical to pristine base (149 passed, +9 from series tests). Exported
+0001-0008 (no agent trailers, adopted-PR authorship preserved), replay
+2e6ac5a3fc930e43771b6e274df4371a30a681f0 == branch tree. Wheel
+0.32.1rc1.dev133+g8407bc0bb (rc line moved to 0.32.1, dev counter reset;
+post-am banner should read dev141). humming-kernels pin unchanged 0.1.17.
+Hardware boot + cert pending.

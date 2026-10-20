@@ -1,7 +1,7 @@
-From dced520e69cf7813c0d302bce6fb197b45472f54 Mon Sep 17 00:00:00 2001
+From 0f0eff52006634d0a165be5575a4cc6133899849 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 9 Oct 2026 20:51:39 +0200
-Subject: [PATCH 7/9] [Model Loader] Qwen4Exp: Honor fp8 PLE tables under
+Subject: [PATCH 7/8] [Model Loader] Qwen4Exp: Honor fp8 PLE tables under
  compressed-tensors
 
 The compressed-tensors branch of Qwen4ExpPLEEmbeddingMethod
@@ -10,23 +10,22 @@ anything else fall through to the Fp8Config-only gate, so an fp8 PLE
 n-gram table in a compressed-tensors checkpoint failed to load with
 "no parameter named ngram_embedding.weight_scale".
 
-Resolve the scheme instead: unquantized when the prefix has no scheme,
-fp8 when it targets float8 weights, and an explicit NotImplementedError
-for anything else in that group.
-
-Co-authored-by: Maki <agent@local>
+Resolve the scheme: unquantized when the prefix has no scheme, fp8
+when it targets float8 weights. Anything else in that group falls
+through to the warn-and-unquantize tail, matching upstream's
+test_ple_embedding_falls_back_for_unsupported_quantization_configs.
 ---
- .../qwen4_exp/common/ngram_embedding.py       | 20 ++++++++++++++-----
- 1 file changed, 15 insertions(+), 5 deletions(-)
+ vllm/models/qwen4_exp/common/ngram_embedding.py | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
 
 diff --git a/vllm/models/qwen4_exp/common/ngram_embedding.py b/vllm/models/qwen4_exp/common/ngram_embedding.py
-index 0348b24224..e572866f0b 100644
+index d5bd9f6892..de651c92e1 100644
 --- a/vllm/models/qwen4_exp/common/ngram_embedding.py
 +++ b/vllm/models/qwen4_exp/common/ngram_embedding.py
-@@ -210,11 +210,21 @@ class Qwen4ExpPLEEmbeddingMethod(QuantizeMethodBase):
-             quant_config, ModelOptQuantConfigBase
-         ) and quant_config.is_layer_excluded(prefix):
-             return Qwen4ExpPLEUnquantizedEmbeddingMethod()
+@@ -209,11 +209,17 @@ class Qwen4ExpPLEEmbeddingMethod(QuantizeMethodBase):
+                         f"{prefix!r}; expected FP8 or NVFP4"
+                     )
+                 return Qwen4ExpPLEUnquantizedEmbeddingMethod()
 -        if (
 -            isinstance(quant_config, CompressedTensorsConfig)
 -            and quant_config.get_scheme_dict(None, layer_name=prefix) is None
@@ -43,10 +42,6 @@ index 0348b24224..e572866f0b 100644
 +                and weights.num_bits == 8
 +            ):
 +                return Qwen4ExpPLEFp8EmbeddingMethod()
-+            raise NotImplementedError(
-+                "Qwen4Exp PLE embedding supports only float8 weights in "
-+                f"compressed-tensors config, got {weights}"
-+            )
          if (
              isinstance(quant_config, INCConfig)
              and not quant_config.config_parser.resolve(None, prefix).quantized
