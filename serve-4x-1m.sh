@@ -66,6 +66,12 @@ export VLLM_SAFETENSORS_DROP_CACHE=1
 # process tree. Without the env the engine is byte-identical to pre-patch.
 export VLLM_QWEN4EXP_PP_INT8_HOP=${VLLM_QWEN4EXP_PP_INT8_HOP:-1}
 
+# RUST=1: experimental Rust frontend (vllm-rs) in place of the Python API
+# server. Rollback: boot without it. Parity audit: results.md, 2026-10-20.
+if [ "${RUST:-0}" = "1" ]; then
+    export VLLM_USE_RUST_FRONTEND=1
+fi
+
 # PROF=1 arms the torch profiler (auto-stops after max_iterations engine
 # steps, needs no code patch): boot with PROF=1, then POST /start_profile
 # mid-decode. Traces land in logs/prof NEXT TO THIS SCRIPT'S OWN COPY

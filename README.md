@@ -329,6 +329,8 @@ about one position in 130 moves because of the quantization. Full tables:
   20 tok/s until it finishes. Schedule long prefills early, not between decodes.
 - A bench fill of 100% means (ctx - decode) x 0.99. Anything larger is a plain
   HTTP 400 from the server.
+- `RUST=1 ./serve-4x-1m.sh` boots the experimental Rust frontend (vllm-rs):
+  warm 1M TTFT 4.7 -> 1.4 s, no /v1/messages route; audit in results.md.
 - On bases between #59260 (2026-10-14) and #62129 (2026-10-18), engine init
   hangs with PP>1 plus spec decode: the last rank stops after its
   kernel-warmup lines, py-spy shows `warmup_kernels -> execute_model ->
