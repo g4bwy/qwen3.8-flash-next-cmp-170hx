@@ -573,7 +573,7 @@ group sizes"), so `--prefix-cache-retention-interval` must track it
 - vLLM has `enable_adaptive_verification` (per-request draft budget)
   but it is gated to method=dspark. An MTP early-exit ("stop drafting
   after trailing rejections", the megakernel project does this) would
-  be the honest version of this feature; TODO-listed, not scheduled.
+  be the straight version of this feature; on the local work list, not scheduled.
 
 #### The depth ladder on the fixed stack: ship 4 (2026-10-12)
 
