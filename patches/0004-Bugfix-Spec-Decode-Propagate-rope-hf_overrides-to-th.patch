@@ -1,7 +1,7 @@
-From 89dbee1b8675c74b98907ced79eb633529015b00 Mon Sep 17 00:00:00 2001
+From 1b380f41b7bd7a790d080dac8ea12237e9b845d5 Mon Sep 17 00:00:00 2001
 From: gokay-ai <60583610+gokay-ai@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 4/9] [Bugfix][Spec Decode] Propagate rope hf_overrides to the
+Subject: [PATCH 4/8] [Bugfix][Spec Decode] Propagate rope hf_overrides to the
  MTP draft
 
 Covers the --hf-overrides YaRN path: nested text_config.rope_parameters
@@ -163,7 +163,7 @@ index 39ebd7924b..65d9af5020 100644
  def test_callable_overrides_reach_the_draft_config():
      """A callable override (config-to-config transform) composes with the
 diff --git a/vllm/config/model.py b/vllm/config/model.py
-index 6dc2d16d52..bef6cead8f 100644
+index 78dfeee653..3e5dead69c 100644
 --- a/vllm/config/model.py
 +++ b/vllm/config/model.py
 @@ -513,8 +513,8 @@ class ModelConfig:
@@ -205,7 +205,7 @@ index 6dc2d16d52..bef6cead8f 100644
                  # It's a dict-valued parameter - set it directly
                  setattr(config, key, value)
 diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
-index 0205393f69..460c4f027f 100644
+index d6c0dcc867..b82eea181e 100644
 --- a/vllm/config/speculative.py
 +++ b/vllm/config/speculative.py
 @@ -35,6 +35,30 @@ else:
@@ -239,7 +239,7 @@ index 0205393f69..460c4f027f 100644
  MTPModelTypes = Literal[
      "deepseek_mtp",
      "dots3_note_mtp",
-@@ -1084,9 +1108,40 @@ class SpeculativeConfig:
+@@ -1123,9 +1147,40 @@ class SpeculativeConfig:
          hf_config = SpeculativeConfig.hf_config_override(hf_config)
          return target_hf_overrides(hf_config)
  
@@ -280,7 +280,7 @@ index 0205393f69..460c4f027f 100644
      ) -> Callable[[PreTrainedConfig], PreTrainedConfig]:
          """Build the ``hf_overrides`` for the draft ``ModelConfig``.
  
-@@ -1094,8 +1149,16 @@ class SpeculativeConfig:
+@@ -1133,8 +1188,16 @@ class SpeculativeConfig:
          (e.g. test harnesses shrinking ``num_hidden_layers``) and must also
          reach the draft config — otherwise a draft belonging to a large
          target is instantiated at full size even when the target is shrunk.
@@ -299,7 +299,7 @@ index 0205393f69..460c4f027f 100644
  
          The composed override must stay picklable: the draft ``ModelConfig``
          is sent to spawned engine-core processes, so a local closure would
-@@ -1103,11 +1166,25 @@ class SpeculativeConfig:
+@@ -1142,11 +1205,25 @@ class SpeculativeConfig:
          target via ``functools.partial`` over a module-referenceable static
          method instead.
          """
@@ -327,7 +327,7 @@ index 0205393f69..460c4f027f 100644
          )
  
      @staticmethod
-@@ -1276,11 +1353,9 @@ class SpeculativeConfig:
+@@ -1315,11 +1392,9 @@ class SpeculativeConfig:
              self.prompt_lookup_min = 0
  
              if self.model is not None:

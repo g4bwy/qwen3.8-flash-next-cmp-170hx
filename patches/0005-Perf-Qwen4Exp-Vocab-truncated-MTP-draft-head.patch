@@ -1,7 +1,7 @@
-From 6453124d8d177f50416158fce639d1edcc576ddd Mon Sep 17 00:00:00 2001
+From d938751052782e80c5cce3c1d819704ea1ab6ac4 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
-Subject: [PATCH 5/9] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
+Subject: [PATCH 5/8] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
 
 Every draft token of MTP speculation runs compute_logits with the full
 248,320-row lm_head: on sm_80 at the ~1.1 TB/s measured for these cards
@@ -28,8 +28,6 @@ Mechanism and the coverage lesson (a generic list covering 92% costs
 ~10% throughput; a counted list covering 97.5% does not) follow
 syv-ai/HyperQwen's qwen3_5-mtp-draft-vocab patch, adapted to the
 qwen4_exp MTP module. Opt out by deleting the two files.
-
-Co-authored-by: Maki <agent@local>
 ---
  .../models/qwen4_exp/test_mtp_draft_vocab.py  | 29 +++++++
  vllm/models/qwen4_exp/nvidia/mtp.py           | 78 ++++++++++++++++++-
@@ -203,7 +201,7 @@ index 64b2dfd8c4..125914703d 100644
                  if remapped_name is not None:
                      yield remapped_name, weight
 diff --git a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
-index d5034a31b4..b5adfa8c79 100644
+index ff0fdfb9fb..8fccf9fb19 100644
 --- a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
 +++ b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
 @@ -273,6 +273,13 @@ class TargetDependentARSpeculator(DraftModelSpeculator):
