@@ -1576,3 +1576,35 @@ Follow-up worth filing on #56444: with #61016 merged, the PR's carry is
 obsolete for vLLM-V2 runners; ask the author to reduce to guards or
 close. Probe and unwire artifacts stay in experiments/ for provenance.
 Raw: logs/unw-*.json.
+
+## Adaptive MTP depth: field trial, REJECTED (2026-10-21)
+
+The B12X acceptance-length ratchet (experiments/0009-adaptive-mtp-depth.patch,
+port details in that commit) booted clean twice (window=8, then 32) and
+behaved exactly per spec: depth telemetry live (250 transitions at w8,
+28 at w32 as the window de-jittered it), pool -0.2% for depth-tier graphs,
+boot +50 s capture, needles and all standing gates pass.
+
+A/B on the fixed tool (accept_realistic.py, gated per type, ctok verified,
+2 reps each, quiet host): prose/code/json/mixed medians in tok/s -
+fixed-4: 139/179/137/130 (avg 146.2); adaptive w8: 144/186/129/126
+(avg 141.6); adaptive w32: 132/176/135/128 (avg 143.4). No content family
+gained beyond the ±15 tok/s noise floor; the mean sits below fixed on both
+windows. One real effect: adaptive compresses variance (code pinned
+186-188 vs fixed swinging 165-192) - predictability, not throughput.
+
+Mechanism of the non-win: with the patch-5 vocab-trimmed draft head, a
+draft forward is cheap against the 28-layer target verify, so the
+controller's cut-first law optimizes a cost term this box barely pays.
+B12X's Spark targets have proportionally expensive drafting; the law is
+tuned for their economics. Method note: the first probe series was
+contaminated - fixed-4 same-seed reps disagreed on acceptance, which is
+impossible under greedy+fixed-K, proving co-tenant drafts were inside the
+counter brackets; the tool now idle-gates per type and reports tries.
+
+Disposition: revert speculative-config to {"method":"mtp",
+"num_speculative_tokens":4}; the commit stays in the live tree inert
+(retire at next re-am). Lab branch + patch kept for the smarter horse:
+upstream AV (cost-table driven, roadmap #61024) once it lands PP broadcast
+and QSA varlen; that design would learn the cheap-draft economics instead
+of assuming expensive ones.
