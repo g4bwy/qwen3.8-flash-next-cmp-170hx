@@ -1608,3 +1608,36 @@ Disposition: revert speculative-config to {"method":"mtp",
 upstream AV (cost-table driven, roadmap #61024) once it lands PP broadcast
 and QSA varlen; that design would learn the cheap-draft economics instead
 of assuming expensive ones.
+
+## Adaptive depth, margin retune + depth headroom: closed (2026-10-21)
+
+Margin-2.5, window 32, cap 4 boot (experiments 0009 v3, margin made a
+config field): tied fixed-4 (prose/code/json/mixed 146/169/158/132 medians,
+but json reps split 181 vs 134 on identical config+seed - the value-level
+non-determinism surfacing at 2000-token windows, so the +3% mean is not
+trustworthy) and held depth at ~4 (8 transitions total, a 4<->3 tie).
+Verdict: a wide margin just converges to fixed-4; no throughput case.
+
+Depth headroom past K=4 is unreachable on this cache geometry without
+re-basing the whole era. The hybrid block alignment ties legal speculative
+depth to the QSA ring and retention (fp8 KV, --block-size 1616, retention
+16160):
+
+| cap | attn block | ring | legal? |
+|---|---|---|---|
+| <=4 | 3232 | 8 | yes (retention 5x3232) |
+| 5   | 3232 | 12 | no (3232 %% 12 != 0) |
+| 6-8 | 4848 | 12 | no (16160 %% 4848 != 0) |
+
+Only K<=4 or a retention move to 14544/19392 (new mamba snapshot grid, new
+certification era, pool shift). The three failed boots (K=6, K=8, K=5) were
+that alignment logic and a QSA ring assert, never the adaptive code. Per-
+position data (pos3 survival 0.3-0.6) says the next rung earns ~0.3 accepted
+tokens/step in top-decile windows - not worth re-basing.
+
+Booked as method wins: the accept_realistic.py tool (idle-gated, ctok-
+verified), the co-tenant-detection proof (same seed + greedy + fixed K must
+reproduce; disagreement => contamination), and the margin knob for whenever
+upstream AV (#61024, needs PP cost/confidence broadcast + QSA varlen) makes
+adaptive depth worth reopening. Live tree reverted to stock fixed-4 by the
+user; v3 experiment patch left in place inert.
