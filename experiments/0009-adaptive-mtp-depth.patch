@@ -1,4 +1,4 @@
-From 084786e53076bfc6959ae43dbb033b756b104b63 Mon Sep 17 00:00:00 2001
+From f9719b375078c55b98e247bb748d5d7d483202fa Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Wed, 21 Oct 2026 10:58:32 +0200
 Subject: [PATCH] [Perf][Spec Decode] Adaptive MTP draft depth from acceptance
@@ -34,16 +34,73 @@ Off is inert: without the new fields nothing executes. Controller law
 and config predicates unit-tested (7 tests); full scheduler suite green
 (238).
 ---
+ tests/compile/test_config.py                  |  27 +-
  .../v1/spec_decode/test_acceptance_length.py  | 449 ++++++------------
  vllm/config/speculative.py                    |  52 +-
- vllm/config/vllm.py                           |   4 +
+ vllm/config/vllm.py                           |  58 ++-
  vllm/v1/core/sched/scheduler.py               |  82 +++-
  .../spec_decode/dynamic/acceptance_length.py  | 190 ++++++++
  vllm/v1/worker/gpu/cudagraph_utils.py         |  43 +-
  .../target_dependent_ar/cudagraph_utils.py    |  21 +-
- 7 files changed, 509 insertions(+), 332 deletions(-)
+ 8 files changed, 567 insertions(+), 355 deletions(-)
  create mode 100644 vllm/v1/spec_decode/dynamic/acceptance_length.py
 
+diff --git a/tests/compile/test_config.py b/tests/compile/test_config.py
+index 4e7a756f8c..8ff6e124eb 100644
+--- a/tests/compile/test_config.py
++++ b/tests/compile/test_config.py
+@@ -542,6 +542,7 @@ def _mock_config_for_cudagraph_sizes(
+     max_num_batched_tokens: int,
+     compilation_config: CompilationConfig,
+     num_speculative_tokens_per_batch_size: list[tuple[int, int, int]] | None = None,
++    adaptive_speculative_tokens_window: int | None = None,
+ ) -> MagicMock:
+     """Mock VllmConfig wired up enough to run `_set_cudagraph_sizes`.
+ 
+@@ -562,11 +563,14 @@ def _mock_config_for_cudagraph_sizes(
+     config.performance_mode = None
+     config.diffusion_config = None
+     schedule = num_speculative_tokens_per_batch_size
++    window = adaptive_speculative_tokens_window
+     config.speculative_config = (
+         SimpleNamespace(
+             num_speculative_tokens=num_speculative_tokens,
+             num_speculative_tokens_per_batch_size=schedule,
+-            uses_dynamic_speculative_decoding=lambda: schedule is not None,
++            adaptive_speculative_tokens_window=window,
++            uses_dynamic_speculative_decoding=lambda: schedule is not None
++            or window is not None,
+         )
+         if num_speculative_tokens
+         else None
+@@ -912,6 +916,27 @@ def test_dynamic_decode_capture_clamps_configured_width():
+     assert 6 not in sizes
+ 
+ 
++def test_adaptive_depth_without_table_covers_every_depth():
++    """Acceptance-length adaptation with no batch-size table must not trip
++    the tier derivation, and every reachable K needs coverage."""
++    compilation_config = CompilationConfig(
++        cudagraph_mode=CUDAGraphMode.FULL_AND_PIECEWISE
++    )
++    config = _mock_config_for_cudagraph_sizes(
++        max_num_seqs=16,
++        num_speculative_tokens=3,
++        max_num_batched_tokens=32768,
++        compilation_config=compilation_config,
++        adaptive_speculative_tokens_window=8,
++    )
++
++    VllmConfig._set_cudagraph_sizes(config)
++
++    sizes = compilation_config.cudagraph_capture_sizes
++    for query_len in (2, 3, 4):
++        assert _widest_covered_request_count(sizes, query_len, 16) == 16
++
++
+ def test_dynamic_decode_capture_covers_schedule_gap_and_tail():
+     compilation_config = CompilationConfig(
+         cudagraph_mode=CUDAGraphMode.FULL_AND_PIECEWISE
 diff --git a/tests/v1/spec_decode/test_acceptance_length.py b/tests/v1/spec_decode/test_acceptance_length.py
 index 04db178bac..4afe280e0b 100644
 --- a/tests/v1/spec_decode/test_acceptance_length.py
@@ -598,7 +655,7 @@ index b82eea181e..674a3a201b 100644
          return self.method == "draft_model"
  
 diff --git a/vllm/config/vllm.py b/vllm/config/vllm.py
-index 7312ef9c4e..053cc09575 100644
+index 7312ef9c4e..dc5ab68d38 100644
 --- a/vllm/config/vllm.py
 +++ b/vllm/config/vllm.py
 @@ -1082,6 +1082,8 @@ class VllmConfig:
@@ -619,6 +676,68 @@ index 7312ef9c4e..053cc09575 100644
  
      def _normalize_piecewise_cudagraph_mode(
          self, *, breakable_cudagraph_enabled: bool
+@@ -2510,29 +2514,39 @@ class VllmConfig:
+                         schedule = (
+                             speculative_config.num_speculative_tokens_per_batch_size
+                         )
+-                        assert schedule is not None
+-                        # Read the tiers off the dense lookup the scheduler
+-                        # runs on, so the clamp against num_speculative_tokens
+-                        # and the carry-forward through gaps and the tail
+-                        # cannot drift from it. Validation lives elsewhere; an
+-                        # invalid schedule keeps the single-tier default.
+-                        try:
+-                            dense_schedule = build_dynamic_sd_schedule_lookup(
+-                                schedule,
+-                                vllm_max_batch_size=max_num_seqs,
+-                                vllm_num_speculative_tokens=self.num_speculative_tokens,
+-                            )
+-                        except ValueError:
+-                            pass
++                        if schedule is None:
++                            # Acceptance-length adaptation without a table:
++                            # the ratchet can hold any K in 1..cap at any
++                            # batch size, so every depth needs a tier.
++                            decode_tiers = [
++                                (depth + 1, max_num_seqs)
++                                for depth in range(1, self.num_speculative_tokens + 1)
++                            ]
+                         else:
+-                            # Ascending batch size, so the last write per
+-                            # query length is the widest batch running at it.
+-                            widest_batch: dict[int, int] = {}
+-                            for batch_size, num_spec in enumerate(
+-                                dense_schedule[1:], start=1
+-                            ):
+-                                widest_batch[num_spec + 1] = batch_size
+-                            decode_tiers = list(widest_batch.items())
++                            # Read the tiers off the dense lookup the scheduler
++                            # runs on, so the clamp against num_speculative_tokens
++                            # and the carry-forward through gaps and the tail
++                            # cannot drift from it. Validation lives elsewhere; an
++                            # invalid schedule keeps the single-tier default.
++                            try:
++                                dense_schedule = build_dynamic_sd_schedule_lookup(
++                                    schedule,
++                                    vllm_max_batch_size=max_num_seqs,
++                                    vllm_num_speculative_tokens=(
++                                        self.num_speculative_tokens
++                                    ),
++                                )
++                            except ValueError:
++                                pass
++                            else:
++                                # Ascending batch size, so the last write per
++                                # query length is the widest batch running at it.
++                                widest_batch: dict[int, int] = {}
++                                for batch_size, num_spec in enumerate(
++                                    dense_schedule[1:], start=1
++                                ):
++                                    widest_batch[num_spec + 1] = batch_size
++                                decode_tiers = list(widest_batch.items())
+ 
+                     uniform_decode_sizes = sorted(
+                         {
 diff --git a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
 index 3e475a85ab..1fdfa2fcfb 100644
 --- a/vllm/v1/core/sched/scheduler.py
