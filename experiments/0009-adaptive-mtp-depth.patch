@@ -1,4 +1,4 @@
-From f9719b375078c55b98e247bb748d5d7d483202fa Mon Sep 17 00:00:00 2001
+From 0004354bb2dfa31b5e63f023808f44d1f8f43895 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Wed, 21 Oct 2026 10:58:32 +0200
 Subject: [PATCH] [Perf][Spec Decode] Adaptive MTP draft depth from acceptance
@@ -10,39 +10,37 @@ the average step accepts 1.9 of 4 drafts (per-position survival
 ceiling - the depth that pays off swings with content, not just batch
 size.
 
-Adopt the B12X acceptance-length controller (Apache-2.0, vendored
-verbatim from local-inference-lab/vllm dev/karmic-kraken commit
-8244d1c443; report in eugr/spark-vllm-docker#432, positive field data
-on this model family and GLM-5.3-Flash). speculative-config gains
-adaptive_speculative_tokens_window and adaptive_speculative_tokens_initial;
-num_speculative_tokens stays the cap. Per window, the scheduler computes
-target = clamp(floor(mean_accepted + 1.5), 1, cap), drops to target
-immediately and climbs one token per window: fast back-off, slow
-recovery, no oscillation. Controllers are per distinct batch-size cap
-when combined with the existing num_speculative_tokens_per_batch_size
-table.
+Adopt the B12X acceptance-length controller (Apache-2.0, from
+local-inference-lab/vllm dev/karmic-kraken commit 8244d1c443; report in
+eugr/spark-vllm-docker#432). Per window of W scheduler steps the target
+is clamp(floor(mean_accepted_per_draft + margin), 1, cap); depth falls
+to target at once and climbs one token per window. One modification vs
+B12X: the margin is configurable (adaptive_speculative_tokens_margin,
+default 1.5) because 2026-10-21 field trial on sm_80 + the vocab-trimmed
+draft head showed the fixed 1.5 law cuts depth for savings this silicon
+does not pay out (no content family beat fixed-4 beyond noise; mean
+2-3% below). With a wide margin the ratchet only reacts when drafts are
+genuinely off, and buys variance compression: fixed-4 code-content rates
+swung 165-192 tok/s across reps, adaptive held 186-188.
 
-Transport is upstream's (#57053): per-step num_spec_tokens_to_schedule,
--1-marked ungenerated drafts, per-K graph tiers. This patch adds the
-scheduler wiring, the reachable-depth CUDA-graph tiers the ratchet
-needs on both target and drafter sides, uniform-padding disablement
-while adapting, and the standard DP/V1-runner disable guards. Pipeline
-parallelism is untested upstream and in the field; that is what the
-fender trial boot decides.
+speculative-config: adaptive_speculative_tokens_window/initial/margin;
+num_speculative_tokens stays the cap. Transport is upstream (#57053):
+per-step num_spec_tokens_to_schedule, -1-marked drafts, per-K graph
+tiers; this patch adds the scheduler wiring, reachable-depth graph
+tiers on target and drafter, uniform-padding disablement, DP/V1-runner
+disable guards, and the margin knob.
 
-Off is inert: without the new fields nothing executes. Controller law
-and config predicates unit-tested (7 tests); full scheduler suite green
-(238).
+Off is inert. 239 CPU tests green (controller 9, scheduler 230).
 ---
  tests/compile/test_config.py                  |  27 +-
- .../v1/spec_decode/test_acceptance_length.py  | 449 ++++++------------
- vllm/config/speculative.py                    |  52 +-
+ .../v1/spec_decode/test_acceptance_length.py  | 472 ++++++------------
+ vllm/config/speculative.py                    |  59 ++-
  vllm/config/vllm.py                           |  58 ++-
- vllm/v1/core/sched/scheduler.py               |  82 +++-
- .../spec_decode/dynamic/acceptance_length.py  | 190 ++++++++
+ vllm/v1/core/sched/scheduler.py               |  84 +++-
+ .../spec_decode/dynamic/acceptance_length.py  | 200 ++++++++
  vllm/v1/worker/gpu/cudagraph_utils.py         |  43 +-
  .../target_dependent_ar/cudagraph_utils.py    |  21 +-
- 8 files changed, 567 insertions(+), 355 deletions(-)
+ 8 files changed, 609 insertions(+), 355 deletions(-)
  create mode 100644 vllm/v1/spec_decode/dynamic/acceptance_length.py
 
 diff --git a/tests/compile/test_config.py b/tests/compile/test_config.py
@@ -102,10 +100,10 @@ index 4e7a756f8c..8ff6e124eb 100644
      compilation_config = CompilationConfig(
          cudagraph_mode=CUDAGraphMode.FULL_AND_PIECEWISE
 diff --git a/tests/v1/spec_decode/test_acceptance_length.py b/tests/v1/spec_decode/test_acceptance_length.py
-index 04db178bac..4afe280e0b 100644
+index 04db178bac..e7ef0ae97b 100644
 --- a/tests/v1/spec_decode/test_acceptance_length.py
 +++ b/tests/v1/spec_decode/test_acceptance_length.py
-@@ -1,329 +1,160 @@
+@@ -1,329 +1,183 @@
  # SPDX-License-Identifier: Apache-2.0
  # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 -"""EAGLE3 Acceptance Length Regression Tests.
@@ -284,6 +282,29 @@ index 04db178bac..4afe280e0b 100644
 +    ctrl = AcceptanceLengthController(max_num_spec_tokens=4, observation_window=1)
 +    update = step(ctrl, 0.0)
 +    assert update is not None and update.num_spec_tokens == 1
++
++
++def test_wide_margin_holds_depth_while_drafts_are_marginal():
++    """Mean 1.7 per draft: the 1.5 law cuts 4->3, the 2.5 law holds 4.
++
++    Cheap-draft hardware wants the second law: a marginal draft token is
++    worth keeping when drafting costs almost nothing next to verification.
++    """
++    for margin, expected in ((1.5, 3), (2.5, 4)):
++        ctrl = AcceptanceLengthController(
++            max_num_spec_tokens=4,
++            observation_window=2,
++            initial_num_spec_tokens=4,
++            margin=margin,
++        )
++        step(ctrl, 1.7)
++        update = step(ctrl, 1.7)
++        assert update is not None
++        assert update.num_spec_tokens == expected, margin
++    with pytest.raises(ValueError):
++        AcceptanceLengthController(
++            max_num_spec_tokens=4, observation_window=2, margin=0.0
++        )
 +
 +
 +def test_rejects_bad_arguments():
@@ -576,10 +597,10 @@ index 04db178bac..4afe280e0b 100644
 +    assert not table_only.uses_acceptance_length_adaptation()
 +    assert table_only.uses_batch_size_dynamic_speculative_decoding()
 diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
-index b82eea181e..674a3a201b 100644
+index b82eea181e..7204dc3dd6 100644
 --- a/vllm/config/speculative.py
 +++ b/vllm/config/speculative.py
-@@ -525,6 +525,17 @@ class SpeculativeConfig:
+@@ -525,6 +525,24 @@ class SpeculativeConfig:
      inclusive batch-size range.
      """
  
@@ -594,10 +615,17 @@ index b82eea181e..674a3a201b 100644
 +    Defaults to ``num_speculative_tokens`` and requires
 +    ``adaptive_speculative_tokens_window``."""
 +
++    adaptive_speculative_tokens_margin: float = Field(default=1.5, gt=0.0, le=8.0)
++    """Survival margin of the acceptance-length ratchet: the target depth
++    is ``floor(mean_accepted_per_draft + margin)``. 1.5 (upstream B12X) cuts
++    eagerly; raise it toward ``num_speculative_tokens`` on hardware where a
++    draft forward is cheap relative to verification, so depth is only
++    dropped when drafts are badly off."""
++
      # params generated in the post-init stage
      draft_model_config: SkipValidation[ModelConfig] = None  # type: ignore
      """The configuration of the draft model initialized internal."""
-@@ -1264,6 +1275,36 @@ class SpeculativeConfig:
+@@ -1264,6 +1282,36 @@ class SpeculativeConfig:
              )
              self.method = "mtp"
  
@@ -634,7 +662,7 @@ index b82eea181e..674a3a201b 100644
          if self.model is None and self.num_speculative_tokens is not None:
              if self.method == "mtp":
                  if self.target_model_config is None:
-@@ -2079,9 +2120,18 @@ class SpeculativeConfig:
+@@ -2079,9 +2127,18 @@ class SpeculativeConfig:
      def use_dspark(self) -> bool:
          return self.method == "dspark"
  
@@ -739,7 +767,7 @@ index 7312ef9c4e..dc5ab68d38 100644
                      uniform_decode_sizes = sorted(
                          {
 diff --git a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
-index 3e475a85ab..1fdfa2fcfb 100644
+index 3e475a85ab..7f24c61c82 100644
 --- a/vllm/v1/core/sched/scheduler.py
 +++ b/vllm/v1/core/sched/scheduler.py
 @@ -72,6 +72,9 @@ from vllm.v1.metrics.stats import (
@@ -773,7 +801,7 @@ index 3e475a85ab..1fdfa2fcfb 100644
          if speculative_config is not None:
              if speculative_config.num_speculative_tokens_per_batch_size:
                  self.dynamic_sd_lookup = build_dynamic_sd_schedule_lookup(
-@@ -312,6 +322,27 @@ class Scheduler(SchedulerInterface):
+@@ -312,6 +322,29 @@ class Scheduler(SchedulerInterface):
                      vllm_max_batch_size=self.scheduler_config.max_num_seqs,
                      vllm_num_speculative_tokens=self.num_spec_tokens,
                  )
@@ -789,19 +817,21 @@ index 3e475a85ab..1fdfa2fcfb 100644
 +                        speculative_config.adaptive_speculative_tokens_initial
 +                    ),
 +                    num_spec_tokens_by_batch_size=self.dynamic_sd_lookup,
++                    margin=speculative_config.adaptive_speculative_tokens_margin,
 +                )
 +                logger.info(
 +                    "Adaptive speculative depth enabled: window=%d steps, "
-+                    "max K=%d, initial=%s.",
++                    "max K=%d, initial=%s, margin=%.1f.",
 +                    observation_window,
 +                    self.num_spec_tokens,
 +                    speculative_config.adaptive_speculative_tokens_initial
 +                    or self.num_spec_tokens,
++                    speculative_config.adaptive_speculative_tokens_margin,
 +                )
              self.use_eagle = speculative_config.use_eagle()
              self.use_eagle_block_drop = speculative_config.use_eagle_block_drop()
              if self.use_eagle and not self.use_eagle_block_drop:
-@@ -1187,7 +1218,11 @@ class Scheduler(SchedulerInterface):
+@@ -1187,7 +1220,11 @@ class Scheduler(SchedulerInterface):
                      # preserve full cudagraph for this step.
                      # Not for diffusion where draft tokens can't be padded.
                      if (
@@ -814,7 +844,7 @@ index 3e475a85ab..1fdfa2fcfb 100644
                          and self.num_sampled_tokens_per_step > 0
                          and num_new_tokens == 1
                          and not prefill_scheduled
-@@ -1564,10 +1599,15 @@ class Scheduler(SchedulerInterface):
+@@ -1564,10 +1601,15 @@ class Scheduler(SchedulerInterface):
  
          # Dynamic speculative decoding: compute optimal K
          num_spec_tokens_to_schedule = self.num_spec_tokens
@@ -834,7 +864,7 @@ index 3e475a85ab..1fdfa2fcfb 100644
  
          scheduled_encoder_input_stats = None
          if (
-@@ -2137,6 +2177,9 @@ class Scheduler(SchedulerInterface):
+@@ -2137,6 +2179,9 @@ class Scheduler(SchedulerInterface):
  
          outputs: dict[int, list[EngineCoreOutput]] = defaultdict(list)
          spec_decoding_stats: SpecDecodingStats | None = None
@@ -844,7 +874,7 @@ index 3e475a85ab..1fdfa2fcfb 100644
  
          failed_kv_load_req_ids: set[str] = set()
          if kv_connector_output and kv_connector_output.failed_recving:
-@@ -2219,6 +2262,10 @@ class Scheduler(SchedulerInterface):
+@@ -2219,6 +2264,10 @@ class Scheduler(SchedulerInterface):
                      num_invalid_spec_tokens=scheduler_output.num_invalid_spec_tokens,
                      request_id=req_id,
                  )
@@ -855,7 +885,7 @@ index 3e475a85ab..1fdfa2fcfb 100644
                  if request.spec_decode_metrics is not None:
                      # Exclude grammar-invalidated drafts from the proposed
                      # count, mirroring make_spec_decoding_stats; the accepted
-@@ -2378,6 +2425,31 @@ class Scheduler(SchedulerInterface):
+@@ -2378,6 +2427,31 @@ class Scheduler(SchedulerInterface):
                  assert not prompt_logprobs_tensors
                  assert prompt_token_id_logprobs is None
  
@@ -889,16 +919,19 @@ index 3e475a85ab..1fdfa2fcfb 100644
          if stopped_running_reqs:
 diff --git a/vllm/v1/spec_decode/dynamic/acceptance_length.py b/vllm/v1/spec_decode/dynamic/acceptance_length.py
 new file mode 100644
-index 0000000000..b8b0819b62
+index 0000000000..aaea830194
 --- /dev/null
 +++ b/vllm/v1/spec_decode/dynamic/acceptance_length.py
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,200 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +#
-+# Adapted verbatim from local-inference-lab/vllm, branch dev/karmic-kraken,
++# Adapted from local-inference-lab/vllm, branch dev/karmic-kraken,
 +# commit 8244d1c44348ae8a5bbfc9f1b607021652283ed4 (2026-10-15), the B12X
 +# adaptive-MTP-depth controller reported in eugr/spark-vllm-docker#432.
++# Modified here: the survival margin is a constructor parameter
++# (adaptive_speculative_tokens_margin) instead of the hard-coded 1.5, so
++# boxes with cheap drafting can bias the ratchet toward the cap.
 +
 +
 +from collections.abc import Sequence
@@ -922,11 +955,14 @@ index 0000000000..b8b0819b62
 +        max_num_spec_tokens: int,
 +        observation_window: int,
 +        initial_num_spec_tokens: int | None = None,
++        margin: float = 1.5,
 +    ) -> None:
 +        if max_num_spec_tokens <= 0:
 +            raise ValueError("max_num_spec_tokens must be greater than zero.")
 +        if observation_window <= 0:
 +            raise ValueError("observation_window must be greater than zero.")
++        if margin <= 0:
++            raise ValueError("margin must be greater than zero.")
 +        if initial_num_spec_tokens is None:
 +            initial_num_spec_tokens = max_num_spec_tokens
 +        if not 1 <= initial_num_spec_tokens <= max_num_spec_tokens:
@@ -936,6 +972,7 @@ index 0000000000..b8b0819b62
 +
 +        self.max_num_spec_tokens = max_num_spec_tokens
 +        self.observation_window = observation_window
++        self.margin = margin
 +        self.num_spec_tokens = initial_num_spec_tokens
 +
 +        self._num_observation_steps = 0
@@ -971,7 +1008,7 @@ index 0000000000..b8b0819b62
 +        mean_num_draft_tokens = self._num_draft_tokens / self._num_drafts
 +        target_num_spec_tokens = min(
 +            self.max_num_spec_tokens,
-+            max(1, floor(mean_num_accepted_tokens + 1.5)),
++            max(1, floor(mean_num_accepted_tokens + self.margin)),
 +        )
 +
 +        previous_num_spec_tokens = self.num_spec_tokens
@@ -1004,10 +1041,12 @@ index 0000000000..b8b0819b62
 +        observation_window: int,
 +        initial_num_spec_tokens: int | None = None,
 +        num_spec_tokens_by_batch_size: Sequence[int] | None = None,
++        margin: float = 1.5,
 +    ) -> None:
 +        self.max_num_spec_tokens = max_num_spec_tokens
 +        self.observation_window = observation_window
 +        self.initial_num_spec_tokens = initial_num_spec_tokens
++        self.margin = margin
 +        self._global_controller: AcceptanceLengthController | None = None
 +        self._controllers_by_batch_size: (
 +            list[AcceptanceLengthController | None] | None
@@ -1047,6 +1086,7 @@ index 0000000000..b8b0819b62
 +            max_num_spec_tokens=max_num_spec_tokens,
 +            observation_window=self.observation_window,
 +            initial_num_spec_tokens=initial_num_spec_tokens,
++            margin=self.margin,
 +        )
 +
 +    def _controller_for_batch_size(
