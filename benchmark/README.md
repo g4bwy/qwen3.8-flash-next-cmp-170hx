@@ -12,7 +12,6 @@ kernel-level benches noted below. Reproduce commands are at the end of
 - `bench-*.json`, `mtp-4x1m-*.json`, `sustained-decode.json` - raw per-cell
   dumps (bench.py `--json`) behind those tables. Names carry the config they
   measured. Stale-looking names are history, kept for provenance.
-- `quality/*.jsonl.gz` - raw logprob captures behind the W8A16 quality gate.
 
 ## Load cells
 
