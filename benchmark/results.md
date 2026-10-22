@@ -2193,3 +2193,33 @@ entries; ruff clean).
   logits change, so quality_diff boot-vs-reference will legitimately read
   above the floor; the acceptance bar there is corpus acc win >= 2.2 sampled
   / 3.0 greedy floor and needles + match canary, not bit-identity.
+
+### Boot A: battery v2 on 0015 (draft-head W8A8), 2026-10-23 00:21-01:40
+
+Tree = 10-patch series + 0015, `MTP draft head scores as W8A8 int8 via
+CUTLASS` on PP3, mmap gather live, pool 5,086,567, init 24.5 s. All 17 steps
+rc=0, every cell bg=0/0, preempts 0. Raw: logs/battery-v2-boot-a/.
+
+| gate | boot A | reference (first v2 run, same corpus sha) |
+|---|---|---|
+| needles | pass | pass |
+| floor (boot vs own repeat) | 7.743% flips, KL 0.0661 | 7.759% |
+| value vs mmap boot | 7.821% flips = floor +0.08pp | - |
+| accept-window (salt 7770) | 4.992 (n=2) | 5.000x3 |
+| corpus greedy / sampled | 2.991, 3.166 / 2.108, 2.367 (two seeds) | 3.043 / 2.218 inside band |
+| cold trio (98100-98300) | TTFT 90.6 / 90.1 / 90.2 s | 90.2-90.4 |
+| 100/4 (98400-98700) | 355.1 / 358.5 / 353.8 / 422.9 | median 356.7 |
+
+n4-r4 (salt 98700) is content, not the machine: the canary read 58% match
+with acc 3.88 and the WARNING prints the drift rule; same for cold-r3
+(match 0.0, 98300). Under greedy, verify masks the int8 drafter exactly as
+predicted: the value diff sits at the floor (+0.08pp), acceptance is band-
+identical, cold and batch cells match the mmap reference. The expected
++1.5-2% decode micro-gain is NOT resolvable in these cells (E3 and the
+plateau vary more with seed content than with head time); it would need a
+dedicated fixed-salt single-stream A/B across two boots, env off vs on.
+
+Verdict: 0015 PASS as quality-neutral and regression-free. Wall-clock
+justification is micro; its real value is as the safe half of the int8 pair
+and as the harness rehearsal for Boot B (0016), where prefill cells should
+move directly. Boot B awaits the next owner boot.
