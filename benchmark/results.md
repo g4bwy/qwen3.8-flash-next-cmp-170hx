@@ -1741,3 +1741,40 @@ Readings:
   boot (loader table-sparing arithmetic confirmed at boot: 125.29 of
   172.97 GiB dropped, 47.68 GiB spared).
 - Raw: logs/promo9-*.json, /tmp/promo9_batt.log.
+
+### io_uring gather probe (2026-10-22): dead end, shelved
+
+Question: the file-gather stage does one `os.preadv` per unique row
+(~32k per 2048-token step, one PLE layer x 16 heads); can io_uring collapse
+those syscalls and recover the GPU0 utilization gap (~90% vs 100% pinned)?
+
+Built a pure-ctypes raw ring (no liburing: fender may not have it; only the
+`io_uring_setup`/`io_uring_enter` syscalls + three mmaps; SQE is 64 bytes,
+not 128 - the first prototype's phantom NOPs came from that stride).
+io_uring_setup and scattered buffered reads work from this container despite
+apparmor noise in dmesg; `io_uring_disabled=0` on the kernel.
+
+Measured on the real workload shape (32,768 scattered 2 KB page-cache-hot
+reads, deduped, same file):
+
+| path | time | vs preadv |
+|---|---|---|
+| current per-row `os.preadv` loop | 49.9 ms | 1.00x |
+| io_uring, ctypes per-SQE fill, naive reap | 100.6 ms | 0.49x |
+| io_uring, numpy-SQE fill + vectorized reap | 61.0 ms | 0.82x |
+
+Correctness of the ring path was fully verified (all rows byte-checked).
+
+Why it loses: the syscall trap is not the cost - ~0.3 us each; the per-row
+kernel work (page-cache lookup + 2 KB copy) is identical in both paths, and
+Python-side ring bookkeeping (fill + reap) adds back more than the traps it
+removes. io_uring pays when reads WAIT on the device (O_DIRECT, deep queue)
+or in C where a slot write is two pointer bumps. pidstat already showed the
+table is page-cache resident (0.8-144 kB/s reads in steady state), so there
+is no device wait left to win. The existing FADV_WILLNEED readahead covers
+the miss case asynchronously.
+
+The CPU time in staging is real (~15-20 ms per 2048-token step at batch,
+matching the +8 s cold gap vs pinned) but it is memcpy-bound; fewer syscalls
+does not touch it. Prototype kept at
+`experiments/ple_gather_iouring_probe.py` (runnable, self-checking).
