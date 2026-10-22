@@ -1,8 +1,8 @@
 From 8d5c3ddbb2f3f7015b7f321ed14524a4dd278b98 Mon Sep 17 00:00:00 2001
 From: gokay-ai <60583610+gokay-ai@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 4/9] [Bugfix][Spec Decode] Propagate rope hf_overrides to the
- MTP draft
+Subject: [PATCH 04/10] [Bugfix][Spec Decode] Propagate rope hf_overrides to
+ the MTP draft
 
 Covers the --hf-overrides YaRN path: nested text_config.rope_parameters
 and max_position_embeddings are forwarded to the draft ModelConfig and

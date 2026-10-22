@@ -1,7 +1,7 @@
 From 4d09254464265fd579048fe76706f9b2bf0916c5 Mon Sep 17 00:00:00 2001
 From: Vaishnavi220506 <183067453+Vaishnavi220506@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 2/9] [Model][Qwen4Exp] Accept pipeline parallelism with the
+Subject: [PATCH 02/10] [Model][Qwen4Exp] Accept pipeline parallelism with the
  N-gram PLE
 
 Upstream rejects PP>1 for this checkpoint: verify_and_update_config and

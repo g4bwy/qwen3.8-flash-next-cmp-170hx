@@ -1,7 +1,7 @@
 From 9022c0fb1c6fe2149d1d43b3e798c630906f308f Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Wed, 21 Oct 2026 19:22:07 +0200
-Subject: [PATCH 9/9] [Model Loader][Qwen4Exp] Serve PLE rows from checkpoint
+Subject: [PATCH 09/10] [Model Loader][Qwen4Exp] Serve PLE rows from checkpoint
  files via page cache (host_file_gather)
 
 Adopt upstream PR #58815: --engram-config '{"host_file_gather": true}'

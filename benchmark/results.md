@@ -1905,5 +1905,6 @@ Readings:
   parity, 100/4 -4 s, same RAM and boot savings) but does not beat pinned at
   100/4 (-1.4% residual); the whole-stream sync per staging step and H2D
   staging remain the gap, not the gather. Raw: logs/0014-*.json.
-- Decision: promote 0014 as its own series patch (keeps the flag A/B-able),
-  serve scripts gain `host_file_gather_mmap: true`. Not yet executed.
+- Decision: promoted as series patch 10 (keeps the flag A/B-able), tree
+  `09f7f92dfcf86bb58ce3621cf6608e94d42104bd`, 10 patches (seven ours, three
+  adopted). Serve scripts set `host_file_gather_mmap: true`.

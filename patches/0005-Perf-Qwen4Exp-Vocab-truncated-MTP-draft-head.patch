@@ -1,7 +1,7 @@
 From 897109184bd17d68d98e0a07334446c65e951cdf Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
-Subject: [PATCH 5/9] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
+Subject: [PATCH 05/10] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
 
 Every draft token of MTP speculation runs compute_logits with the full
 248,320-row lm_head: on sm_80 at the ~1.1 TB/s measured for these cards

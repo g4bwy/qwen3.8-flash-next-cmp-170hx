@@ -1,0 +1,342 @@
+From 0002ba6a4ea65cddae267e3e04d80232844e2be1 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 16:55:55 +0200
+Subject: [PATCH 10/10] [Model Loader][Qwen4Exp] Gather file-backed PLE rows
+ through a persistent mmap
+
+host_file_gather serves each step's PLE rows with one preadv syscall per
+distinct row. That re-derives, 32k times per prefill step, a page the kernel
+already has mapped for this process: the fd, page-cache lookup, kmap and fput
+cost more than the 2 KB copy they perform. Measured on the 4x170HX box, the
+per-row loop is the batch-prefill bottleneck; GPU0 (the PLE rank) tops out near
+90% because the CPU gather sits on the critical path behind the whole-stream
+sync.
+
+Add an opt-in gather backend, `--engram-config '{"host_file_gather": true,
+"host_file_gather_mmap": true}'`. At bind, map each checkpoint shard file once
+read-only and view its table rows as tensors. Each step then gathers with one
+batched `index_select` per shard instead of a preadv loop: warm rows become
+plain loads of resident pages. The `POSIX_FADV_WILLNEED` pre-queue stays, so
+cold pages are still fetched coalesced rather than faulted one at a time - the
+failure mode that made the earlier mmap backend (PR #54129) slower on cold
+starts.
+
+The trade is the property preadv exists for. Mapped pages live in the worker's
+address space for the process lifetime and are reclaimed only by unmapping, so
+this is for hosts where the table fits in the page cache anyway and prefill
+throughput matters; the default preadv path is unchanged for memory-tight
+boxes. Chosen per-deployment, not automatic.
+
+Scatter gather on a 32k-row step measured ~30 ms (preadv) -> ~3 ms (mmap),
+byte-identical rows. CPU tests: new backend-selection and mmap/preadv
+equivalence cases pass; test_ple, test_config, test_envs and the drop_cache
+loader suite match baseline. Hardware trial pending: boot both modes, compare
+GPU0 utilization, cold 1M, 100/4 wall, and confirm byte-exact rows on FP8.
+---
+ docs/features/engram.md                       | 19 ++++-
+ tests/models/qwen4_exp/test_ple.py            | 43 +++++++++-
+ tests/test_config.py                          |  6 ++
+ vllm/config/engram.py                         |  9 +++
+ .../qwen4_exp/nvidia/ngram_embedding.py       | 78 +++++++++++++++++--
+ 5 files changed, 142 insertions(+), 13 deletions(-)
+
+diff --git a/docs/features/engram.md b/docs/features/engram.md
+index f7eaa208a2..9489c3bf8c 100644
+--- a/docs/features/engram.md
++++ b/docs/features/engram.md
+@@ -108,10 +108,21 @@ on the GPU, and an unquantized table must match `--dtype`. CPU offload
+ converts on load; this mode rejects the mismatch at load.
+ 
+ Each step reads its rows from the files with `preadv` and stages them on the
+-device, so the table is never mapped into the worker after load and never
+-counts toward its RSS. Its pages are plain page cache: shared by co-located
+-ranks and reclaimable under memory pressure. Each step pays a host sync, and
+-every TP rank reads all rows.
++device, so by default the table is never mapped into the worker after load
++and never counts toward its RSS. Its pages are plain page cache: shared by
++co-located ranks and reclaimable under memory pressure. Each step pays a host
++sync, and every TP rank reads all rows.
++
++Setting `host_file_gather_mmap: true` replaces the per-row `preadv` with one
++persistent read-only mapping per shard file and batched `index_select` calls,
++so warm rows cost memory loads instead of VFS calls: an order of magnitude
++less CPU time per step on prefill-scale gathers (a 32k-row step measured
++~3 ms versus ~30 ms). Cold pages behave as before — the coalesced ranges are
++still queued with `POSIX_FADV_WILLNEED` before the gather. The trade is the
++property the default exists for: mapped table pages live in the worker's
++address space for the process lifetime and are reclaimed only by unmapping
++them. Prefer the mmap mode when the table fits in the page cache anyway and
++prefill throughput matters; prefer the default on memory-tight hosts.
+ 
+ Serving depends on the checkpoint files staying unchanged while the server
+ runs: an in-place overwrite serves the new bytes, truncation stops the engine
+diff --git a/tests/models/qwen4_exp/test_ple.py b/tests/models/qwen4_exp/test_ple.py
+index 166d7c9154..b79b179d95 100644
+--- a/tests/models/qwen4_exp/test_ple.py
++++ b/tests/models/qwen4_exp/test_ple.py
+@@ -1144,6 +1144,7 @@ def _make_file_gather_embedding(
+     fp8: bool = False,
+     load_format: str = "auto",
+     bind: bool = False,
++    use_mmap: bool = False,
+ ) -> tuple[Qwen4ExpNGramEmbedding, torch.Tensor]:
+     """Build a two-head, 12-token host-file-gather embedding and its saved table.
+ 
+@@ -1175,6 +1176,7 @@ def _make_file_gather_embedding(
+         embedding_method=method,
+         num_ngram_heads=2,
+         max_total_tokens=12,
++        use_mmap=use_mmap,
+     )
+     dtype = torch.float8_e4m3fn if fp8 else torch.bfloat16
+     table = torch.arange(42, dtype=torch.float32).reshape(21, 2).to(dtype)
+@@ -1215,7 +1217,16 @@ def _dev_zero_shards() -> list[tuple[str, torch.Tensor]]:
+     ("engram_config", "backend", "rows"),
+     [
+         (
+-            SimpleNamespace(host_file_gather=True, cpu_offload=True),
++            SimpleNamespace(
++                host_file_gather=True, cpu_offload=True, host_file_gather_mmap=False
++            ),
++            Qwen4ExpPLEFileGatherEmbedding,
++            0,
++        ),
++        (
++            SimpleNamespace(
++                host_file_gather=True, cpu_offload=True, host_file_gather_mmap=True
++            ),
+             Qwen4ExpPLEFileGatherEmbedding,
+             0,
+         ),
+@@ -1245,6 +1256,10 @@ def test_ngram_embedding_selects_backend_from_engram_config(
+ 
+     assert tuple(module.ngram_embedding.weight.shape) == (rows, 2)
+     assert isinstance(module.ngram_embedding, backend)
++    if backend is Qwen4ExpPLEFileGatherEmbedding:
++        assert module.ngram_embedding._use_mmap is bool(
++            getattr(engram_config, "host_file_gather_mmap", False)
++        )
+ 
+ 
+ def test_ngram_embedding_default_cpu_offload_selects_pinned_backend(
+@@ -1477,6 +1492,32 @@ def test_file_gather_forward_reads_staging_without_host_work(
+     assert output.shape == (6, 4)
+ 
+ 
++def test_file_gather_mmap_serves_the_same_rows_as_preadv(monkeypatch, tmp_path) -> None:
++    """The mapped gather is byte-identical to preadv, covering duplicates and
++    the trailing partial shard, after the loader's views were released."""
++    preadv, table = _make_file_gather_embedding(monkeypatch, tmp_path, bind=True)
++    mapped, _ = _make_file_gather_embedding(
++        monkeypatch, tmp_path, bind=True, use_mmap=True
++    )
++    embedding = mapped.ngram_embedding
++    assert embedding._shards == {}
++    row_bytes = embedding._rows.shape[1]
++    assert torch.equal(embedding._tables[0][0], table[0].view(torch.uint8)[:row_bytes])
++
++    generator = torch.Generator().manual_seed(3)
++    ids = torch.randint(0, 21, (12, 2), generator=generator)
++    ids[0, 0] = 20  # last row of the trailing partial shard
++    ids[1, 1] = ids[0, 0]  # duplicate expansion through the inverse
++    for module in (preadv, mapped):
++        module.ngram_embedding._host_ids.copy_(ids)
++        module.ngram_embedding.stage_rows(12)
++
++    assert torch.equal(
++        mapped.ngram_embedding._staging.view(torch.uint8),
++        preadv.ngram_embedding._staging.view(torch.uint8),
++    )
++
++
+ def test_dilated_ple_spec_state_rolls_back_before_next_forward() -> None:
+     conv_state_len = 6
+     dilation = 2
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 04ea0ff3d5..037854a9dc 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -1874,6 +1874,11 @@ def test_engram_host_file_gather_requires_cuda_qwen4exp(
+         config.verify_model_config(model)
+ 
+ 
++def test_engram_host_file_gather_mmap_requires_gather():
++    with pytest.raises(ValueError, match="host_file_gather_mmap requires"):
++        EngramConfig(host_file_gather_mmap=True)
++
++
+ def test_engram_hash_tracks_execution_options():
+     configs = [
+         EngramConfig(cpu_offload=True),
+@@ -1881,6 +1886,7 @@ def test_engram_hash_tracks_execution_options():
+         EngramConfig(cpu_offload=True, embedding_across_dp=True),
+         EngramConfig(cpu_offload=True, dp_shared_memory=True),
+         EngramConfig(host_file_gather=True),
++        EngramConfig(host_file_gather=True, host_file_gather_mmap=True),
+     ]
+     assert len({config.compute_hash() for config in configs}) == len(configs)
+ 
+diff --git a/vllm/config/engram.py b/vllm/config/engram.py
+index 16113760c5..942700c409 100644
+--- a/vllm/config/engram.py
++++ b/vllm/config/engram.py
+@@ -42,6 +42,13 @@ class EngramConfig:
+     files and staging them on the device each step, instead of allocating the
+     table; takes precedence over `cpu_offload`."""
+ 
++    host_file_gather_mmap: bool = False
++    """With `host_file_gather`, gather rows through a persistent read-only
++    mapping of each checkpoint shard instead of one `preadv` syscall per row.
++    Rows land as memory loads of page-cache pages (no VFS per row); cold pages
++    are still queued with `POSIX_FADV_WILLNEED` before the gather. Shard files
++    must not be truncated or replaced while the server runs."""
++
+     embedding_across_dp: bool = False
+     """Shard embeddings across TP and all DP ranks when enabled.
+     Otherwise, each DP rank has a separate TP-sharded embedding replica."""
+@@ -67,6 +74,8 @@ class EngramConfig:
+             raise ValueError(
+                 "use_thp requires cpu_offload=True and dp_shared_memory=False"
+             )
++        if self.host_file_gather_mmap and not self.host_file_gather:
++            raise ValueError("host_file_gather_mmap requires host_file_gather=True")
+         return self
+ 
+     def verify_model_config(self, model_config: "ModelConfig | None") -> None:
+diff --git a/vllm/models/qwen4_exp/nvidia/ngram_embedding.py b/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
+index 35de96321c..f832c734c8 100644
+--- a/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
++++ b/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
+@@ -4,6 +4,7 @@
+ 
+ import mmap
+ import os
++import warnings
+ from collections.abc import Iterable
+ 
+ import torch
+@@ -58,6 +59,24 @@ def _maps_entry(ptr: int) -> tuple[str, int]:
+     return "", 0
+ 
+ 
++_MAPPED_FILES: dict[str, tuple[mmap.mmap, torch.Tensor]] = {}
++
++
++def _mapped_file_bytes(path: str) -> torch.Tensor:
++    """Return a read-only uint8 tensor over ``path``, mapped once per file."""
++    hit = _MAPPED_FILES.get(path)
++    if hit is not None:
++        return hit[1]
++    with open(path, "rb") as handle:
++        mapping = mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ)
++    with warnings.catch_warnings():
++        # A mapped checkpoint is intentionally immutable and read-only.
++        warnings.simplefilter("ignore", UserWarning)
++        data = torch.frombuffer(mapping, dtype=torch.uint8)
++    _MAPPED_FILES[path] = (mapping, data)
++    return data
++
++
+ class Qwen4ExpPLEFileGatherEmbedding(Qwen4ExpPLEEmbedding):
+     """PLE rows read on the host from the checkpoint shard files."""
+ 
+@@ -74,6 +93,7 @@ class Qwen4ExpPLEFileGatherEmbedding(Qwen4ExpPLEEmbedding):
+         max_total_tokens: int = 0,
+         data_parallel_rank: int = 0,
+         reduce_results: bool = True,
++        use_mmap: bool = False,
+     ) -> None:
+         super().__init__(
+             num_embeddings,
+@@ -100,6 +120,8 @@ class Qwen4ExpPLEFileGatherEmbedding(Qwen4ExpPLEEmbedding):
+         self._bound = False
+         self._fds: dict[str, int] = {}
+         self._fds_t = self._bases = torch.empty(0, dtype=torch.int64)
++        self._use_mmap = use_mmap
++        self._tables: list[torch.Tensor] | None = None
+ 
+     def allocate_embedding_weight(
+         self,
+@@ -151,9 +173,30 @@ class Qwen4ExpPLEFileGatherEmbedding(Qwen4ExpPLEEmbedding):
+                 if path not in self._fds:
+                     self._fds[path] = os.open(path, os.O_RDONLY)
+                 self._fds_t[index], self._bases[index] = self._fds[path], offset
++            if self._use_mmap:
++                self._bind_mapped_tables()
+         self._shards = {}
+         self._bound = True
+ 
++    def _bind_mapped_tables(self) -> None:
++        """Map each shard file once and view its table rows as tensors."""
++        path_of = {int(fd): path for path, fd in self._fds.items()}
++        row_bytes = self._rows.shape[1]
++        tables: list[torch.Tensor] = []
++        for index in range(self._fds_t.numel()):
++            path = path_of[int(self._fds_t[index])]
++            base = int(self._bases[index])
++            rows = min(self._shard_size, self.org_vocab_size - index * self._shard_size)
++            data = _mapped_file_bytes(path)
++            tables.append(data[base : base + rows * row_bytes].view(rows, row_bytes))
++        self._tables = tables
++        logger.info(
++            "%s: PLE file gather serving %d shard rows through %d file mapping(s).",
++            self.prefix,
++            self.org_vocab_size,
++            len(_MAPPED_FILES),
++        )
++
+     def stage_rows(self, num_tokens: int) -> None:
+         """Read the rows for ``_host_ids[:num_tokens]`` and copy them to staging."""
+         if self._shards is None or not self._bound:
+@@ -180,14 +223,28 @@ class Qwen4ExpPLEFileGatherEmbedding(Qwen4ExpPLEEmbedding):
+                     fd, lo * page, (hi - lo + 1) * page, os.POSIX_FADV_WILLNEED
+                 )
+             rows = self._rows[: ids.numel()]
+-            for row, fd, offset in zip(
+-                rows.numpy(), self._fds_t[shard].tolist(), start.tolist()
+-            ):
+-                if os.preadv(fd, [row], offset) != row_bytes:
+-                    raise ValueError(
+-                        f"PLE shard file {os.readlink(f'/proc/self/fd/{fd}')} is "
+-                        f"truncated at offset {offset}"
+-                    )
++            if self._tables is not None:
++                edges = torch.searchsorted(
++                    shard, torch.arange(len(self._tables), dtype=shard.dtype)
++                )
++                bounds = torch.cat(
++                    (edges, torch.tensor([rows.shape[0]], dtype=edges.dtype))
++                )
++                for index in range(len(self._tables)):
++                    low, high = int(bounds[index]), int(bounds[index + 1])
++                    if low < high:
++                        torch.index_select(
++                            self._tables[index], 0, local[low:high], out=rows[low:high]
++                        )
++            else:
++                for row, fd, offset in zip(
++                    rows.numpy(), self._fds_t[shard].tolist(), start.tolist()
++                ):
++                    if os.preadv(fd, [row], offset) != row_bytes:
++                        raise ValueError(
++                            f"PLE shard file {os.readlink(f'/proc/self/fd/{fd}')} is "
++                            f"truncated at offset {offset}"
++                        )
+             torch.index_select(rows, 0, inverse, out=out)
+         self._staging[:num_tokens].copy_(
+             self._host_rows[:num_tokens], non_blocking=True
+@@ -399,6 +456,11 @@ class Qwen4ExpNGramEmbedding(nn.Module):
+             max_total_tokens=max_total_tokens,
+             data_parallel_rank=data_parallel_rank,
+             reduce_results=not self.use_reduce_scatter,
++            **(
++                {"use_mmap": engram_config.host_file_gather_mmap}
++                if embedding_cls is Qwen4ExpPLEFileGatherEmbedding
++                else {}
++            ),
+         )
+         if self.ngram_embedding.supports_prefetch:
+             # The side-stream lookup outlives eager-break args, whose
+-- 
+2.55.0
+
