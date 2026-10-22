@@ -1,4 +1,4 @@
-From c2a00421de120a8881daa8580b5ca43f38e1c399 Mon Sep 17 00:00:00 2001
+From b9dfe6b8fb66bafc3e5a7bcf0de59093d571d2d3 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 01:23:03 +0200
 Subject: [PATCH] [Perf][Qwen4Exp] Stage pure-prefill PLE rows from
@@ -34,9 +34,9 @@ keeps the pre-pipeline behavior for every step.
  tests/models/qwen4_exp/test_config.py         |  68 ++++++-
  tests/models/qwen4_exp/test_ple.py            |  64 ++++++-
  vllm/envs.py                                  |  12 ++
- vllm/models/qwen4_exp/nvidia/model_state.py   |  94 ++++++++++
+ vllm/models/qwen4_exp/nvidia/model_state.py   |  98 ++++++++++
  .../qwen4_exp/nvidia/ngram_embedding.py       | 174 ++++++++++++++++--
- 5 files changed, 390 insertions(+), 22 deletions(-)
+ 5 files changed, 394 insertions(+), 22 deletions(-)
 
 diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
 index e245701b3b..c3d1da5eb0 100644
@@ -263,7 +263,7 @@ index a2f378893b..2b60cb0329 100755
          os.getenv("VLLM_SAFETENSORS_DROP_CACHE", "0").lower() in ("1", "true")
      ),
 diff --git a/vllm/models/qwen4_exp/nvidia/model_state.py b/vllm/models/qwen4_exp/nvidia/model_state.py
-index d1dcd8dedc..53906ef043 100644
+index d1dcd8dedc..ba62e7db00 100644
 --- a/vllm/models/qwen4_exp/nvidia/model_state.py
 +++ b/vllm/models/qwen4_exp/nvidia/model_state.py
 @@ -4,10 +4,14 @@
@@ -294,7 +294,7 @@ index d1dcd8dedc..53906ef043 100644
  
  class Qwen4ExpModelState(MambaHybridModelState):
      """Add rollback-safe PLE n-gram context to the model inputs."""
-@@ -67,6 +74,91 @@ class Qwen4ExpModelState(MambaHybridModelState):
+@@ -67,6 +74,95 @@ class Qwen4ExpModelState(MambaHybridModelState):
              if isinstance(module, Qwen4ExpNGramEmbedding)
              and isinstance(module.ngram_embedding, Qwen4ExpPLEFileGatherEmbedding)
          ]
@@ -310,6 +310,10 @@ index d1dcd8dedc..53906ef043 100644
 +            and self.device.type == "cuda"
 +        ):
 +            self.gather_pipeline = _GatherPipeline()
++            logger.info_once(
++                "PLE gather pipeline enabled; pure-prefill staging runs on a "
++                "background thread from host-computed ids."
++            )
 +        # Per-request mirror of prefill_token_ids; the fast path reads chunks
 +        # and their left context from here so ngram ids need no GPU round-trip.
 +        self._ple_host_tokens: np.ndarray | None = None
@@ -386,7 +390,7 @@ index d1dcd8dedc..53906ef043 100644
  
      def _prepare_ngram_context(
          self,
-@@ -117,6 +209,8 @@ class Qwen4ExpModelState(MambaHybridModelState):
+@@ -117,6 +213,8 @@ class Qwen4ExpModelState(MambaHybridModelState):
                  input_batch.input_ids,
                  query_start_loc,
                  ngram_context,
