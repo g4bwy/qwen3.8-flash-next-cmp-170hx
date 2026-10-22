@@ -1,0 +1,49 @@
+18:25:06 START needles
+18:25:26 END needles rc=0
+18:25:58 START cap-boot
+18:36:30 END needles rc=0 (already passed 18:25, skipped on resume)
+18:37:02 START cap-boot
+18:39:03 END cap-boot rc=0
+18:39:35 START cap-repeat
+18:41:22 END cap-repeat rc=0
+18:41:54 START diff-floor
+18:41:55 END diff-floor rc=0
+18:42:27 START diff-ref
+18:42:28 END diff-ref rc=0
+18:43:00 START corpus
+18:45:53 END corpus rc=0
+18:46:25 START cold-r1
+18:49:12 END cold-r1 rc=0
+18:49:44 START cold-r2
+18:52:31 END cold-r2 rc=0
+18:53:03 START cold-r3
+18:56:06 END cold-r3 rc=0
+18:56:39 START n4-r1
+19:03:41 END n4-r1 rc=0
+19:04:13 START n4-r2
+19:11:21 END n4-r2 rc=0
+19:11:53 START n4-r3
+19:19:05 END n4-r3 rc=0
+19:19:37 START n4-r4
+19:26:36 END n4-r4 rc=0
+19:27:08 START accept-window
+19:29:10 END accept-window rc=0
+19:29:42 START deep-plateau
+19:36:47 END deep-plateau rc=0
+19:37:19 START e3
+19:48:02 END e3 rc=0
+19:48:34 START oversub
+19:57:55 END oversub rc=0
+19:57:55 BATTERY DONE
+20:17:10 START cold-r3b
+20:20:12 END cold-r3b rc=0
+20:21:12 START n4-r3b
+20:28:23 END n4-r3b rc=0
+20:29:23 START deep-plateau-b
+20:35:51 END deep-plateau-b rc=0
+20:35:51 RERUN DONE
+20:45:31 START probe-97310-repeat (warm prefill)
+20:47:27 END probe-97310-repeat rc=0
+20:48:12 START probe-97100-repeat (clean control, warm)
+20:50:01 END probe-97100-repeat rc=0
+20:50:01 PROBES DONE

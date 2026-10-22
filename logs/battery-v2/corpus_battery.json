@@ -1,0 +1,165 @@
+{
+ "label": null,
+ "model": "qwen3.8-flash-next-fp8",
+ "base_url": "http://fender.lan:8000",
+ "corpus_file": "/home/gab/test/vllm-review/qwen3.8-flash-next-cmp-170hx/draft_corpus.jsonl",
+ "corpus_sha256": "4598072dad025122658eebad00d13398e1c36af6c29bd4f48b268fde94a0d8c2",
+ "seed_base": 1792687380,
+ "seed_pinned": false,
+ "depth_tokens_est": 45000,
+ "window": 4096,
+ "conc": 4,
+ "stagger": 1.5,
+ "modes": [
+  "greedy",
+  "sampled"
+ ],
+ "results": [
+  {
+   "mode": "greedy",
+   "seed": 1792687380,
+   "sampling": {
+    "temperature": 0.0
+   },
+   "prompts_sha256": "bcf47a04a4f771c832191b2bd993a5d8ccbe4aa7a17181ecee1fc5491f4e9dab",
+   "depth_tokens_est": 45000,
+   "window": 4096,
+   "conc": 4,
+   "stagger": 1.5,
+   "span_s": 77.2,
+   "out_tokens": 16384,
+   "agg_out_tps": 212.35,
+   "mean_ttft_s": 10.47,
+   "rate_min": 57.7,
+   "rate_median": 76.85,
+   "rate_max": 81.8,
+   "acc_window": 3.043,
+   "acc_full": 2.99,
+   "mean_acceptance_length": 2.99,
+   "drafts": 5480,
+   "accepted": 10907,
+   "bracket": {
+    "opened": true,
+    "first_tokens": {
+     "0": 6.2,
+     "1": 10.4,
+     "2": 14.9,
+     "3": 19.4
+    },
+    "open_t": 1792687399.9227915,
+    "close_t": 1792687441.695434,
+    "window_s": 41.8,
+    "open_rel_s": 19.4,
+    "close_rel_s": 61.2,
+    "drafts": 4293,
+    "accepted": 8769
+   },
+   "pos_shares": {
+    "0": 0.425,
+    "1": 0.265,
+    "2": 0.175,
+    "3": 0.136
+   },
+   "per_stream": [
+    {
+     "i": 0,
+     "ttft": 6.2,
+     "toks": 4096,
+     "rate": 57.7
+    },
+    {
+     "i": 1,
+     "ttft": 8.9,
+     "toks": 4096,
+     "rate": 80.7
+    },
+    {
+     "i": 2,
+     "ttft": 11.9,
+     "toks": 4096,
+     "rate": 73.0
+    },
+    {
+     "i": 3,
+     "ttft": 14.9,
+     "toks": 4096,
+     "rate": 81.8
+    }
+   ]
+  },
+  {
+   "mode": "sampled",
+   "seed": 1792687381,
+   "sampling": {
+    "temperature": 1.0,
+    "top_k": 20,
+    "top_p": 0.95
+   },
+   "prompts_sha256": "12ef6af41ae9eb90c4a00227ac6c3c6b7225dee373ba8ae2c103745edebbf8ab",
+   "depth_tokens_est": 45000,
+   "window": 4096,
+   "conc": 4,
+   "stagger": 1.5,
+   "span_s": 92.1,
+   "out_tokens": 16384,
+   "agg_out_tps": 177.9,
+   "mean_ttft_s": 10.3,
+   "rate_min": 50.0,
+   "rate_median": 55.45,
+   "rate_max": 61.5,
+   "acc_window": 2.218,
+   "acc_full": 2.214,
+   "mean_acceptance_length": 2.214,
+   "drafts": 7402,
+   "accepted": 8985,
+   "bracket": {
+    "opened": true,
+    "first_tokens": {
+     "0": 5.4,
+     "1": 10.2,
+     "2": 15.0,
+     "3": 19.5
+    },
+    "open_t": 1792687479.1898506,
+    "close_t": 1792687541.2905347,
+    "window_s": 62.1,
+    "open_rel_s": 19.5,
+    "close_rel_s": 81.6,
+    "drafts": 6584,
+    "accepted": 8022
+   },
+   "pos_shares": {
+    "0": 0.468,
+    "1": 0.268,
+    "2": 0.161,
+    "3": 0.103
+   },
+   "per_stream": [
+    {
+     "i": 0,
+     "ttft": 5.4,
+     "toks": 4096,
+     "rate": 51.4
+    },
+    {
+     "i": 1,
+     "ttft": 8.7,
+     "toks": 4096,
+     "rate": 50.0
+    },
+    {
+     "i": 2,
+     "ttft": 12.0,
+     "toks": 4096,
+     "rate": 61.5
+    },
+    {
+     "i": 3,
+     "ttft": 15.0,
+     "toks": 4096,
+     "rate": 59.5
+    }
+   ]
+  }
+ ]
+}

@@ -216,7 +216,9 @@ The link is x4 here, about 2 GB/s per card in each direction. Nothing else is
 tuned. Each card is capped at 200 W.
 Full tables, methodology and reproduce commands: [benchmark/results.md](benchmark/results.md).
 Numbers use repetition-task prompts at decode 1024, because a short window measures drafter
-warmup rather than steady decode.
+warmup rather than steady decode. Those single-stream figures are the drafter-ceiling task.
+The battery also measures greedy and sampled rates over real corpus content, quoted in
+results.md, and the two tasks are not interchangeable.
 
 ### Pool and weights at boot
 
@@ -246,6 +248,10 @@ Rates are tok/s unless the cell shows a duration. All rows: 74 SMs, partition
 - The sustained column is a 1.5 s peak that typically lands in the wind-down
   of the run. Compare grids on wall or out tok/s. Full grids, repeat runs and
   the salt law: [benchmark/results.md](benchmark/results.md).
+- Since 2026-10-22 the battery adds a four-resident deep-plateau cell, an
+  8192-decode batch cell, and an oversubscription cell (results.md, Protocol
+  battery v2). The 100/4 wall cells are mostly serialized prefill, so they
+  never measured all-resident decode.
 - Single-stream decode at MTP-4 sits at this checkpoint's roofline on this
   silicon. The step anatomy (results.md, 2026-10-13) puts 66% of step time in
   GEMM traffic at the measured 580-790 GB/s solo band and the rest in
@@ -322,9 +328,10 @@ about one position in 130 moves because of the quantization. Full tables:
   3.81. Nothing is wrong: 1,000,000 is not 4 x 262,144, and the explicit
   factor wins.
 - The first MTP decode step compiles `_fill_num_accepted_kernel` and stalls;
-  warm up before the first measured cell. Scatter after that is content, not
-  the machine: pinned-salt repeats land within ~2%, rotating salts draw the
-  prompt lottery at depth 4+ (see the salt law in results.md).
+  warm up before the first measured cell. `bench.py --warmup` now runs that
+  throwaway cell for you. Scatter after that is content, not the machine:
+  pinned-salt repeats land within ~2%, rotating salts draw the prompt lottery
+  at depth 4+ (see the salt law in results.md).
 - The 1M pool holds 2.57 full requests. A third queues behind them. If
   residency is exceeded mid-decode, the preempted request replays its whole
   prompt under Mamba align mode, roughly 2 min per 1M.

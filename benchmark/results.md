@@ -1908,3 +1908,183 @@ Readings:
 - Decision: promoted as series patch 10 (keeps the flag A/B-able), tree
   `09f7f92dfcf86bb58ce3621cf6608e94d42104bd`, 10 patches (seven ours, three
   adopted). Serve scripts set `host_file_gather_mmap: true`.
+
+## Protocol battery v2 (2026-10-22)
+
+Six protocol findings since 2026-10-10 all point at the same gap: the rules of
+the battery were prose, and prose only binds whoever remembers it. The 216-vs-176
+single-cell flips that were read as a bimodal machine (salt law, above), the
+f660b7e gate fix, which voided a whole era of accepted numbers, the salt-step
+overlap that let the prefix cache fake a warm 208-216 s cluster, the post-idle
+first cell, the wind-down `sust` metric that wrote 545 tok/s for a four-stream
+cell, and the L2 eviction-priority trial whose steps ran faster while
+acceptance collapsed to 1.6. Each one was caught by a person looking back. They are now tool gates:
+`bench.py` warms up before the grid, cools down between cells, steps salt bases
+100 apart, checks the spec-decode counters before and after every cell for
+background drafts, and reports acceptance measured inside the all-decoding
+window. The battery below is the certification procedure that follows from them.
+
+### Acceptance column epoch
+
+The `bench.py` `acc` column counts prefill-phase drafts on bases at or after
+`8407bc0bb6`, which is the current series base. Window logic and the reason for
+it are in the `benchmark/accept_window.py` header. On a deep-fill cell most of
+the wall is prefill (~60-65% at 100/4), and drafts issued in a mixed window are
+rejected more often than drafts in uniform decode, so the full-window number
+dilutes toward the prefill ratio. The effect is modest on the current tree
+(100/4, decode 1024: 4.83 full window in `logs/n6-1004-c1.json` against
+4.97-5.00 in the decode window) and grows with the prefill share of the cell.
+It compounds with history: the 2.93-2.98 values of the 2026-10-10 grids were
+the eager small-head window, not dilution, so the same-looking column can
+carry three different effects across eras. Consequence:
+`acc` columns measured before that base and after it are not comparable. New
+records quote `acc win` and the `accept_window.py` bracket. Every historical
+table in this file stands as a full-window legacy value from whichever base
+produced it.
+
+### The standard battery
+
+Certification on the 4-card 1M lane (`--ctx 1000000`), one server, idle host,
+owner's all-clear. Correctness gates run first: a timing number on a tree that
+fails a gate is worthless.
+
+```bash
+# 1  cache-hit state: two hex needles (block 0, half depth), cold/warm/grown, exits non-zero
+./benchmark/prefix_state_check.py --base-url http://fender.lan:8000
+# 2  values: capture this boot, diff against its own repeat capture (the floor), then against the stored reference
+./benchmark/logprob_capture.py --base-url http://fender.lan:8000 --k 8 --depths 8200,16400 --lp-stride 4 --out cap-boot.jsonl
+./benchmark/quality_diff.py cap-repeat.jsonl cap-boot.jsonl
+./benchmark/quality_diff.py cap-ref.jsonl cap-boot.jsonl
+# 3  real content: greedy and sampled acceptance plus per-stream rates, one invocation
+./benchmark/corpus_accept_probe.py --base-url http://fender.lan:8000 --modes greedy,sampled --corpus ../draft_corpus.jsonl
+# 4  cold 1M TTFT trio: the 100/1 cell three times, salt bases 100 apart, one run per base
+./benchmark/bench.py --base-url http://fender.lan:8000 --ctx 1000000 --fills 100 --concurrency 1 --warmup --cooldown 60 --salt <base> --json bench-1m-cold-r<n>.json
+# 5  100/4 wall quartet: the batch cell four times, salt bases 100 apart, one run per base
+./benchmark/bench.py --base-url http://fender.lan:8000 --ctx 1000000 --fills 100 --concurrency 4 --warmup --cooldown 60 --salt <base> --json bench-1m-n4-r<n>.json
+# 6  decode-window acceptance bracket on a fixed salt
+./benchmark/accept_window.py --base-url http://fender.lan:8000
+# 7  deep plateau: four 988k contexts resident at once
+./benchmark/sustained_decode.py --base-url http://fender.lan:8000 --concurrencies 4 --depth 988000 --decode 8192 --timeout 3000 --json bench-1m-n4-deep.json   # decode 8192, not 4096: see first-run note
+# 8  E3 long-decode batch cell
+./benchmark/bench.py --base-url http://fender.lan:8000 --ctx 1000000 --fills 100 --concurrency 4 --decode 8192 --warmup --cooldown 60 --salt 95100 --json bench-1m-e3-d8192.json
+# 9  oversubscription: six streams against a pool that admits four
+./benchmark/bench.py --base-url http://fender.lan:8000 --ctx 1000000 --fills 90 --concurrency 6 --warmup --cooldown 60 --salt 95200 --json bench-1m-oversub.json
+```
+
+The three cells that are new to this battery:
+
+- Deep plateau (7). The 100/4 wall cells are ~60-65% serialized prefill (mean
+  TTFT ~230 s of ~365 s wall), so they measure the pipeline, not four-resident
+  decode. The fp8-KV pool (5,089,552 tokens) admits four 988k contexts plus
+  decode tokens each with room to spare, and this cell is the first direct
+  measurement of the all-resident decode plateau the fp8 KV lane sells. Quote
+  it in tok/s aggregate and per stream. The tool now dumps its 0.5 s sample
+  timeseries to the JSON so the plateau can be checked against the wind-down
+  trap (see the first-run note below): at 988k depth the four prefills
+  serialize at ~87 s each, so stream 4 only reaches first token at ~350 s and
+  the all-four-decoding window is the final ~37 s. `--decode 4096` clears that
+  window; a longer decode widens it and is cheap, so 8192 is the shipped value.
+- E3 long-decode variant (8). Decode 1024 at full fill leaves an all-decoding
+  window too short for a stable `acc win` sample. Decode 8192 raises the
+  pure-decode share from ~20% of the cell to a majority of it. The E1/E2
+  decode-length experiment earlier in this record established the geometry.
+- Oversubscription (9). Six 890,096-token prompts plus decode demand against
+  the 5.089M pool is ~5.35M of reservation, so admission must queue. Expected
+  shape: TTFT stretches in the tail and the preempt column stays 0.
+
+What this battery still cannot price: admission reserves prompt + max_tokens,
+so API-driven load cannot force an align-mode preemption, and the ~2 min cost of
+replaying a 1M prompt under align mode stays an open measurement. A future
+fault-injection experiment is the only way to price it, either shrinking the
+pool with `--gpu-memory-utilization` mid-session or routing through a connector.
+
+### Salt bases (2026-10-22)
+
+`bench.py` steps salt +100 per cell from a time-derived base. Two runs started
+within (cells x 100) seconds can therefore land a later cell of the second run
+on a prompt the first run already served, and the prefix cache fakes a warm
+cell: the 208-216 s cluster in the pipeline trial was that artifact. Rule for
+certification runs: pass an explicit `--salt` base at least 100 above the
+highest base used in the previous 24 h of runs, and keep the bases in the run
+names and the result table, as the promo9 and 0014 batteries above do. A state
+file that records the last base used would remove the human step. It is future
+work and does not exist yet.
+
+### Corpus reference (2026-10-22)
+
+Greedy and sampled corpus cells from `corpus_accept_probe.py` join the battery,
+so every certification carries a real-content row next to the synthetic grid.
+The two tasks measure different things and headline rates must name which one:
+the synthetic repeat-task grid measures the drafter ceiling, where acceptance
+sits at ~4.9 and single-stream decode at 205-226 tok/s, while real sampled
+content accepts ~2.3 and real greedy content decodes 74-124 tok/s. A number
+quoted without its task is not comparable to anything.
+
+### Battery v2 first full run (2026-10-22 18:25-20:50, fender.lan:8000, Rust frontend boot, mmap-gather tree)
+
+All 14 steps exit 0; raw dumps and per-step logs in `logs/battery-v2/`. The
+server was the boot already live (owned_by vllm-frontend-rs, model id
+qwen3.8-flash-next-fp8, max_model_len 1,000,000). One corpus was generated for
+the run (`extract_maki_corpus.py`: 152 sessions, 27,163 records, ~8.6M tokens,
+sha 4598072dad02).
+
+Clean timing cells (confirmed-idle windows, bg=0, match column aside):
+
+| cell | readings | comparison |
+|---|---|---|
+| cold 1M (salts 97100/97200/97310) | TTFT 90.3 / 90.4 / 90.2 s; prefill 10.9-11.0k tok/s (prompt / TTFT-window); decode win avg 183.1 / 190.1 tok/s, sust 199 | promo9 92.6-92.9, pinned 92.9-93.9: best cold trio this lane has logged. Rates are the rotating-salt band; the 205-215 headline was pinned salt |
+| 100/4 wall x5 (97400/97500/97600/97700/97610) | 348.5-360.9 s, median 356.7; pipeline prefill 11.2-11.6k tok/s; per-stream win avg 37-52 during the prefill-dominated wall | promo9 362-367, pinned 350-357; TTFT mean 219.8-223.0, preempts 0 |
+| accept-window, salt 7770 | 5.000 / 5.000 / 5.000 | at the pinned-era ceiling |
+| deep plateau 4x988k, decode 4096 | 507 agg / 127 per-stream tok/s | first direct four-resident decode number; genuine all-decoding window, see below |
+| E3 100/4, decode 8192 | wall 571.9 s, win avg 32.3 per stream, acc full 1.62, acc win 2.28, match 82 | long greedy tail drifts, see content note |
+| oversub 90%/6 streams | TTFT mean 284.3, p95 464.3, wall 489.9, pipeline prefill 11.1k tok/s, preempt 0, acc 4.58 | admission queues the sixth stream exactly as the battery predicts |
+
+Corpus cells (real content, time seeds, 4 streams x 45k prompts): greedy acc
+win 3.043 at 57.7-81.8 per-stream tok/s, sampled 2.218 at 50.0-61.5,
+aggregate 212 / 178 tok/s. Within a hundredth of the v2-era baselines (2.3
+sampled floor), reproduced by the new dual-mode tool on its first run. These
+are the served-traffic rates; the grid's repeat-task cells are the drafter
+ceiling, and a drifted salt (97300/97310 here) pulls the rotating single-
+stream band to 60-70 win avg, which is content, not the machine.
+
+Quality gates: needles exit 0. Boot-vs-repeat floor 7.759% top-1 flips
+(mean KL 0.0669, greedy tails 36.4%) sits a half-point above the historical
+7.27-7.30% floor band, same order. The diff against `capture_official_boot4`
+is void, not a regression: that reference was captured against a different
+`draft_corpus.jsonl` extraction, so it compares different window contents
+(99.3% flips is content mismatch). Fixed in tooling while running: captures
+now carry a corpus sha fingerprint and `quality_diff.py` prints INCOMPARABLE
+when the two sides disagree. Any pre-fingerprint reference must be re-captured
+against the current corpus before its flips mean anything.
+
+Two calibration findings from the new gates, both now fixed in tool:
+
+1. The background gate false-positived on its own cell. vLLM flushes step
+   stats on a ~5 s interval; the 2 s settle before the after-snapshot missed
+   the cell's own tail, and the post-probe counted 77-79 of its drafts as
+   foreign (cold-r3, n4-r3). The settle is 6 s now; the reruns read bg=0.
+   Related and real: this session's operator model is the model under test,
+   so any tool-polling between cells is genuine background traffic on this
+   box. Battery runs must come from a host reasoning elsewhere.
+2. The content canary learned its discriminator on live data. Five deep cells
+   read match below 0.98 with healthy acceptance (n4-r3b 75%/4.28, oversub
+   83%/4.58): greedy loops at 988k drift their tails on ordinary salts. Two
+   salts (97300, 97310) collapsed match AND acceptance together (56-73%,
+   acc win 1.46-2.09), identically on runs 80 minutes apart, while
+   accept-window between them read 5.000 and other salts stayed clean:
+   salt-deterministic content behavior, not a corruption class (L2 poisoned
+   every salt of its boot). The WARNING text now prints acc beside match and
+   states the rule. Consequence for the salt law: on this tree at 988k
+   single-stream, the rotating-salt acceptance band reaches ~1.5, not the
+   3.2 floor recorded 2026-10-12. Pin the salt; when rotating, quote the
+   wider band or the drifted tail belongs to the machine by assumption.
+
+The deep plateau number is real, and narrow. The sample timeseries (now
+dumped by sustained_decode) shows first tokens at 96/178/263/351 s, the run
+median at 10 tok/s while three prefills serialize under the fourth, and the
+all-four-decoding window in the final ~37 s: 507 agg / 127 per stream.
+Four 1M streams resident do decode together at 3.4x the single-stream
+aggregate (concurrency reclaiming the PP bubble, as the step anatomy
+predicts), and the measurement only exists because the tool now shows the
+window it averaged. Decode 8192 widens the honest window; the spec line is
+updated.

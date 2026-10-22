@@ -152,6 +152,13 @@ def main():
             meta_a.get("lp_stride") != meta_b.get("lp_stride"):
         print("WARNING: corpus/depth settings differ between captures, "
               "only shared windows are compared")
+    cs_a, cs_b = meta_a.get("corpus_sha256"), meta_b.get("corpus_sha256")
+    if cs_a and cs_b and cs_a != cs_b:
+        print("INCOMPARABLE: the two captures used different corpus files, "
+              "so their windows hold different text and the flip rate "
+              "measures content mismatch, not value drift. Re-capture the "
+              "reference against the current corpus before reading this "
+              "number.")
 
     n, flips, deltas, kls, miss = report(lp_a, lp_b, k_mode)
     print(f"positions: {n:,}  top-1 flips: {flips:,} "
