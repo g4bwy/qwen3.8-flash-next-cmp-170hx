@@ -1,0 +1,173 @@
+From 334c793e4601f467be1f99d153e0eabf3999feed Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 23:52:14 +0200
+Subject: [PATCH 1/2] [Perf][MTP] Score the Qwen4Exp draft head with W8A8 int8
+ via CUTLASS
+
+The vocab-truncated draft head runs a bf16 GEMV four times per graphed
+decode step (once per MTP position) and is pure weight bandwidth on
+sm_80. A decode-M microbench on this box with the real 40k artifact
+(2026-10-22, results.md) measures CUTLASS W8A8 at 1.39-1.67x versus
+bf16 at every batch from M=1 to M=2048, with the per-token activation
+quant costing under 4 us on top. sm_80 has no fp8 tensor cores and the
+low-latency skinny-GEMM plans cover only sm_90+, so this head today
+runs plain aten::mm.
+
+VLLM_QWEN4EXP_DRAFT_W8A8=1 swaps the draft head's quant_method for one
+that quantizes the loaded BF16 weight to per-output-channel int8 once,
+lazily on the first apply (eager warmup, outside graph capture), then
+scores with dynamic per-token activation quant plus cutlass_scaled_mm.
+Biased or non-BF16 heads fall back to the bf16 path unchanged; the
+target head and verification logits are untouched, so output quality
+is preserved by construction and only proposal argmax can shift. The
+screen-noise analysis for this pattern (same op family) bounds
+value-changing flips at <= 7e-4 per position, far below the bf16
+output grid the head already quantizes to.
+
+The low-latency path is intentionally not chained: its plan table has
+no sm_80 entries, and int8 at 40k rows beats the bf16 GEMV it would
+replace.
+---
+ tests/models/qwen4_exp/test_ple.py  | 25 ++++++++++++++++++++
+ vllm/envs.py                        |  9 ++++++++
+ vllm/models/qwen4_exp/nvidia/mtp.py | 36 +++++++++++++++++++++++++++++
+ 3 files changed, 70 insertions(+)
+
+diff --git a/tests/models/qwen4_exp/test_ple.py b/tests/models/qwen4_exp/test_ple.py
+index b79b179d95..64cf47004b 100644
+--- a/tests/models/qwen4_exp/test_ple.py
++++ b/tests/models/qwen4_exp/test_ple.py
+@@ -8,6 +8,7 @@ from dataclasses import dataclass
+ from itertools import accumulate
+ from pathlib import Path
+ from types import SimpleNamespace
++from unittest.mock import patch
+ 
+ import pytest
+ import torch
+@@ -3044,3 +3045,27 @@ def test_amd_ngram_embedding_matches_reference_under_compile(
+     )
+     expected = loaded_weight[ngram_ids.cpu()].flatten(-2).to(device)
+     torch.testing.assert_close(output.float(), expected.float(), rtol=0, atol=0)
++
++
++def test_draft_w8a8_head_defers_when_cutlass_does_not_apply() -> None:
++    """Biased or non-BF16 draft heads keep the bf16 embedding path."""
++    from vllm.model_executor.layers.vocab_parallel_embedding import (
++        UnquantizedEmbeddingMethod,
++    )
++    from vllm.models.qwen4_exp.nvidia.mtp import Qwen4ExpDraftW8A8EmbeddingMethod
++
++    seen: list[tuple] = []
++
++    def fake_apply(self, layer, x, bias=None):
++        seen.append((layer.weight.dtype, bias is not None))
++        return torch.nn.functional.linear(x, layer.weight.float(), bias)
++
++    method = Qwen4ExpDraftW8A8EmbeddingMethod()
++    x = torch.randn(2, 4)
++    with patch.object(UnquantizedEmbeddingMethod, "apply", fake_apply):
++        fp32_layer = SimpleNamespace(weight=torch.randn(8, 4))
++        method.apply(fp32_layer, x)
++        biased_layer = SimpleNamespace(weight=torch.randn(8, 4, dtype=torch.bfloat16))
++        method.apply(biased_layer, x, bias=torch.zeros(8))
++    assert seen == [(torch.float32, False), (torch.bfloat16, True)]
++    assert not hasattr(fp32_layer, "_draft_w8a8")
+diff --git a/vllm/envs.py b/vllm/envs.py
+index a2f378893b..5d3aac6776 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -123,6 +123,7 @@ if TYPE_CHECKING:
+     VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
+     VLLM_SAFETENSORS_DROP_CACHE: bool = False
+     VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
++    VLLM_QWEN4EXP_DRAFT_W8A8: bool = False
+     VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
+     VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
+     VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
+@@ -1133,6 +1134,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_QWEN4EXP_PP_INT8_HOP": lambda: (
+         os.getenv("VLLM_QWEN4EXP_PP_INT8_HOP", "0").lower() in ("1", "true")
+     ),
++    # Score the vocab-truncated MTP draft head with W8A8 int8 (per-channel
++    # weights, dynamic per-token activations) through CUTLASS instead of the
++    # bf16 GEMV. Measured 1.39-1.67x on CMP 170HX at every decode batch;
++    # int8 logit error stays far below the bf16 grid the head already rounds
++    # to, and verification keeps output quality unchanged.
++    "VLLM_QWEN4EXP_DRAFT_W8A8": lambda: (
++        os.getenv("VLLM_QWEN4EXP_DRAFT_W8A8", "0").lower() in ("1", "true")
++    ),
+     # Timeout in seconds for keeping HTTP connections alive in API server
+     "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
+         os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
+diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
+index 125914703d..20dcb4bf20 100644
+--- a/vllm/models/qwen4_exp/nvidia/mtp.py
++++ b/vllm/models/qwen4_exp/nvidia/mtp.py
+@@ -21,6 +21,7 @@ import torch
+ from torch import nn
+ from transformers import Qwen4ExpTextConfig
+ 
++from vllm import _custom_ops as ops
+ from vllm import envs
+ from vllm.config import VllmConfig, replace, set_current_vllm_config
+ from vllm.distributed import get_pp_group
+@@ -34,6 +35,7 @@ from vllm.model_executor.layers.linear import ColumnParallelLinear
+ from vllm.model_executor.layers.logits_processor import LogitsProcessor
+ from vllm.model_executor.layers.vocab_parallel_embedding import (
+     ParallelLMHead,
++    UnquantizedEmbeddingMethod,
+     VocabParallelEmbedding,
+ )
+ from vllm.model_executor.model_loader.utils import configure_quant_config
+@@ -99,6 +101,37 @@ def _remap_quantized_layers(
+ logger = init_logger(__name__)
+ 
+ 
++class Qwen4ExpDraftW8A8EmbeddingMethod(UnquantizedEmbeddingMethod):
++    """Score the vocab-truncated draft head with W8A8 int8 through CUTLASS.
++
++    The bf16 GEMV is a decode critical path on sm_80; int8 halves the
++    streamed head bytes (measured 1.39-1.67x at every decode batch). Weights
++    quantize lazily on the first call, which lands in eager warmup before
++    graph capture. Biased or non-BF16 heads fall back to the standard path.
++    """
++
++    def apply(
++        self,
++        layer: torch.nn.Module,
++        x: torch.Tensor,
++        bias: torch.Tensor | None = None,
++    ) -> torch.Tensor:
++        weight = layer.weight
++        if bias is not None or weight.dtype != torch.bfloat16:
++            return super().apply(layer, x, bias)
++        cache = getattr(layer, "_draft_w8a8", None)
++        if cache is None:
++            w = weight.data
++            scale = w.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-8) / 127.0
++            quantized = torch.round(w.float() / scale).clamp_(-127, 127).to(torch.int8)
++            cache = (quantized.t(), scale.t().contiguous())
++            layer._draft_w8a8 = cache
++        x2 = x.contiguous().reshape(-1, x.shape[-1])
++        xq, x_scale, _ = ops.scaled_int8_quant(x2, None, None, symmetric=True)
++        logits = ops.cutlass_scaled_mm(xq, cache[0], x_scale, cache[1], x.dtype)
++        return logits.view(*x.shape[:-1], logits.shape[-1])
++
++
+ def expand_draft_logits(
+     sub_logits: torch.Tensor, draft_vocab_ids: torch.Tensor, vocab_size: int
+ ) -> torch.Tensor:
+@@ -473,6 +506,9 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+                     prefix=maybe_prefix(prefix, "draft_lm_head"),
+                 )
+                 self.draft_logits_processor = LogitsProcessor(int(ids.numel()))
++                if envs.VLLM_QWEN4EXP_DRAFT_W8A8:
++                    self.draft_lm_head.quant_method = Qwen4ExpDraftW8A8EmbeddingMethod()
++                    logger.info("MTP draft head scores as W8A8 int8 via CUTLASS")
+                 # Full head stays resident: mixed prefill windows draft
+                 # eagerly and score the whole vocabulary there, while
+                 # graphed decode rounds replay the small head.
+-- 
+2.55.0
+
