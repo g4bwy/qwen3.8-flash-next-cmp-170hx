@@ -1,0 +1,274 @@
+From 309f2564baee74029daba22f10a060e0b4e5d5dc Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 00:46:31 +0200
+Subject: [PATCH] [Model Loader] Spare PLE table pages from shard cache
+ eviction under host_file_gather
+
+Patch 6 releases each consumed safetensors shard with one whole-file
+FADV_DONTNEED. Correct for the resident backends, but the host_file_gather
+PLE backend serves table rows from the page cache, so dropping the shard
+mid-load pushes the gather onto the block layer for the rows it has not
+staged yet.
+
+Parse each shard's safetensors header and drop only the byte ranges that
+are not PLE table tensors (ngram_embedding.*), keeping the table resident
+while still releasing the ~125 GiB of ordinary weights. Gated on
+host_file_gather via the current VllmConfig, so pinned/device loads keep
+the single whole-file call (unchanged). Both the single- and multi-thread
+iterators resolve the patterns on the calling thread.
+
+Backward compatible: with the env off, keep_patterns is empty and the
+whole-file path runs. 8 loader tests pass (5 new: range merge, drop
+spares keep, both iterators); model_loader suite failure set identical
+to base.
+---
+ .../test_safetensors_drop_cache.py            | 89 ++++++++++++++++++
+ .../model_loader/weight_utils.py              | 91 +++++++++++++++++--
+ 2 files changed, 174 insertions(+), 6 deletions(-)
+
+diff --git a/tests/model_executor/model_loader/test_safetensors_drop_cache.py b/tests/model_executor/model_loader/test_safetensors_drop_cache.py
+index 47f5db0486..0e75188eb9 100644
+--- a/tests/model_executor/model_loader/test_safetensors_drop_cache.py
++++ b/tests/model_executor/model_loader/test_safetensors_drop_cache.py
+@@ -2,6 +2,7 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ """VLLM_SAFETENSORS_DROP_CACHE releases shard pages after consumption."""
+ 
++import json
+ import os
+ 
+ import pytest
+@@ -61,3 +62,91 @@ def test_no_drop_when_disabled(tmp_path, monkeypatch):
+ def test_drop_survives_unreadable_file(tmp_path, monkeypatch):
+     monkeypatch.setattr(wu.envs, "VLLM_SAFETENSORS_DROP_CACHE", True)
+     assert wu._drop_file_cache(str(tmp_path / "missing.safetensors")) is None
++
++
++def _make_shard_with_ple(tmp_path):
++    """One shard: big plain weight first, PLE table tensors interleaved."""
++    p = tmp_path / "mixed.safetensors"
++    save_file(
++        {
++            "model.layers.0.mlp.w": torch.randn(64, 64),
++            "model.layers.1.ple.ple_embedding.ngram_embedding.shard_0.weight": (
++                torch.randn(8, 8)
++            ),
++            "model.layers.2.mlp.w": torch.randn(64, 64),
++            "model.layers.1.ple.ple_embedding.ngram_embedding.shard_1.weight": (
++                torch.randn(8, 8)
++            ),
++            "model.layers.3.mlp.w": torch.randn(64, 64),
++        },
++        str(p),
++    )
++    return str(p)
++
++
++@pytest.mark.cpu_test
++def test_keep_ranges_merge_ple_tensor_bytes(tmp_path):
++    path = _make_shard_with_ple(tmp_path)
++    ranges = wu._safetensors_keep_ranges(path, (wu._PLE_TABLE_PATTERN,))
++    assert ranges, "ngram_embedding tensors must be located"
++    assert all(a[1] <= b[0] for a, b in zip(ranges, ranges[1:]))
++    with open(path, "rb") as file:
++        header_len = int.from_bytes(file.read(8), "little")
++        header = json.loads(file.read(header_len))
++    base = 8 + header_len
++    total = sum(end - start for start, end in ranges)
++    expected = sum(
++        meta["data_offsets"][1] - meta["data_offsets"][0]
++        for name, meta in header.items()
++        if wu._PLE_TABLE_PATTERN in name
++    )
++    assert total == expected
++
++
++@pytest.mark.cpu_test
++def test_drop_spares_keep_ranges(tmp_path, monkeypatch):
++    path = _make_shard_with_ple(tmp_path)
++    keep = wu._safetensors_keep_ranges(path, (wu._PLE_TABLE_PATTERN,))
++    calls = []
++    monkeypatch.setattr(
++        os, "posix_fadvise", lambda fd, off, length, advice: calls.append((off, length))
++    )
++    size = os.path.getsize(path)
++    dropped = wu._drop_file_cache(path, keep)
++    assert calls, "some range must be dropped"
++    covered = 0
++    for off, length in calls:
++        assert all(off >= e or off + length <= b for b, e in keep), (
++            f"eviction {off}..{off + length} overlaps a kept range"
++        )
++        covered += length
++    assert dropped == covered
++    assert covered < size, "kept ranges must actually spare bytes"
++
++
++@pytest.mark.cpu_test
++@pytest.mark.parametrize(
++    "iterator",
++    [
++        lambda files: safetensors_weights_iterator(files, use_tqdm_on_load=False),
++        lambda files: multi_thread_safetensors_weights_iterator(
++            files, use_tqdm_on_load=False
++        ),
++    ],
++    ids=["single", "multi-thread"],
++)
++def test_iterators_spare_ple_pages_when_gather_active(tmp_path, monkeypatch, iterator):
++    path = _make_shard_with_ple(tmp_path)
++    keep = wu._safetensors_keep_ranges(path, (wu._PLE_TABLE_PATTERN,))
++    calls = []
++    monkeypatch.setattr(wu.envs, "VLLM_SAFETENSORS_DROP_CACHE", True)
++    monkeypatch.setattr(
++        os, "posix_fadvise", lambda fd, off, length, advice: calls.append((off, length))
++    )
++    monkeypatch.setattr(
++        wu, "_drop_cache_keep_patterns", lambda: (wu._PLE_TABLE_PATTERN,)
++    )
++    list(iterator([path]))
++    assert calls
++    for off, length in calls:
++        assert all(off >= e or off + length <= b for b, e in keep)
+diff --git a/vllm/model_executor/model_loader/weight_utils.py b/vllm/model_executor/model_loader/weight_utils.py
+index 75e3194545..07586d1463 100644
+--- a/vllm/model_executor/model_loader/weight_utils.py
++++ b/vllm/model_executor/model_loader/weight_utils.py
+@@ -1083,22 +1083,87 @@ def _prefetch_all_checkpoints(
+     threading.Thread(target=_run_prefetch, daemon=True).start()
+ 
+ 
+-def _drop_file_cache(path: str) -> int | None:
++_PLE_TABLE_PATTERN = "ngram_embedding."
++
++
++def _drop_cache_keep_patterns() -> tuple[str, ...]:
++    """Tensor-name substrings whose pages must survive cache eviction.
++
++    The host_file_gather PLE backend serves table rows from the page cache
++    on every step, so dropping them at load would push the gather onto the
++    block layer. Every other backend holds a resident copy, for which
++    evicting everything is correct.
++    """
++    try:
++        from vllm.config import get_current_vllm_config
++
++        engram = getattr(get_current_vllm_config(), "engram_config", None)
++    except Exception:
++        return ()
++    if engram is not None and getattr(engram, "host_file_gather", False):
++        return (_PLE_TABLE_PATTERN,)
++    return ()
++
++
++def _safetensors_keep_ranges(
++    path: str, patterns: tuple[str, ...]
++) -> list[tuple[int, int]]:
++    """Merged byte ranges of tensors matching patterns, from the header."""
++    try:
++        with open(path, "rb") as file:
++            header_len = int.from_bytes(file.read(8), "little")
++            header = json.loads(file.read(header_len))
++    except (OSError, ValueError):
++        return []
++    base = 8 + header_len
++    ranges = []
++    for name, meta in header.items():
++        if name == "__metadata__" or not any(p in name for p in patterns):
++            continue
++        offsets = meta.get("data_offsets")
++        if offsets is not None:
++            ranges.append((base + offsets[0], base + offsets[1]))
++    ranges.sort()
++    merged: list[tuple[int, int]] = []
++    for start, end in ranges:
++        if merged and start <= merged[-1][1]:
++            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
++        else:
++            merged.append((start, end))
++    return merged
++
++
++def _drop_file_cache(
++    path: str, keep_ranges: list[tuple[int, int]] | None = None
++) -> int | None:
+     """Release a fully consumed checkpoint shard's page cache.
+ 
+     Reopening for fadvise is intentional: it targets the inode's page cache
+     regardless of how (or whether) the reader mapped the file, and
+     FADV_DONTNEED on clean pages is async per kernel docs but immediate in
+-    practice at these sizes. Returns the file size when dropped.
++    practice at these sizes. ``keep_ranges`` (merged, ascending) spares those
++    byte ranges. Returns the number of bytes actually dropped.
+     """
+     try:
+         fd = os.open(path, os.O_RDONLY)
+         try:
+             size = os.fstat(fd).st_size
+-            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
++            if not keep_ranges:
++                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
++                return size
++            dropped = 0
++            pos = 0
++            for start, end in keep_ranges:
++                if start > pos:
++                    os.posix_fadvise(fd, pos, start - pos, os.POSIX_FADV_DONTNEED)
++                    dropped += start - pos
++                pos = max(pos, end)
++            if pos < size:
++                os.posix_fadvise(fd, pos, size - pos, os.POSIX_FADV_DONTNEED)
++                dropped += size - pos
++            return dropped
+         finally:
+             os.close(fd)
+-        return size
+     except OSError:
+         return None
+ 
+@@ -1190,6 +1255,7 @@ def safetensors_weights_iterator(
+ 
+     leftover_state_dict: dict[str, torch.Tensor] = {}
+     drop_cache = envs.VLLM_SAFETENSORS_DROP_CACHE
++    keep_patterns = _drop_cache_keep_patterns() if drop_cache else ()
+     dropped_files = 0
+     dropped_bytes = 0
+     for st_file in tqdm(
+@@ -1242,7 +1308,12 @@ def safetensors_weights_iterator(
+                     param = f.get_tensor(name)
+                     yield name, param
+         if drop_cache:
+-            dropped = _drop_file_cache(st_file)
++            dropped = _drop_file_cache(
++                st_file,
++                _safetensors_keep_ranges(st_file, keep_patterns)
++                if keep_patterns
++                else None,
++            )
+             if dropped:
+                 dropped_files += 1
+                 dropped_bytes += dropped
+@@ -1261,11 +1332,19 @@ def multi_thread_safetensors_weights_iterator(
+     max_workers: int = 4,
+ ) -> Generator[tuple[str, torch.Tensor], None, None]:
+     """Multi-Thread iterate over the weights in the model safetensor files."""
++    keep_patterns = (
++        _drop_cache_keep_patterns() if envs.VLLM_SAFETENSORS_DROP_CACHE else ()
++    )
+ 
+     def _load_file(st_file: str):
+         result = load_file(st_file, device="cpu")
+         if envs.VLLM_SAFETENSORS_DROP_CACHE:
+-            _drop_file_cache(st_file)
++            _drop_file_cache(
++                st_file,
++                _safetensors_keep_ranges(st_file, keep_patterns)
++                if keep_patterns
++                else None,
++            )
+         return result
+ 
+     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+-- 
+2.55.0
+

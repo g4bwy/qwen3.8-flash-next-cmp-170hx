@@ -1641,3 +1641,39 @@ reproduce; disagreement => contamination), and the margin knob for whenever
 upstream AV (#61024, needs PP cost/confidence broadcast + QSA varlen) makes
 adaptive depth worth reopening. Live tree reverted to stock fixed-4 by the
 user; v3 experiment patch left in place inert.
+
+
+## host_file_gather: PLE rows from the page cache (experiments 0010/0012/0013)
+
+Port of upstream #58815 (Trosfy): with engram `host_file_gather` the 47.6 GiB
+FP8 PLE table is never allocated; rows are preadv'd from the mmap'd checkpoint
+shards into a device staging buffer per step. Boot trial on fender passed
+correctness (needles exit 0; cold-table decode byte-exact), cut weight load
+from 1:16 to 0:49, and freed the table from host RSS. Cost: the staging path
+syncs the worker's whole stream every step (ids come back D2H before preadv).
+Under PP=4 batch prefill went bimodal, 100/4 in 276-380 s vs pinned ~350 s
+steady, and cold 1M paid +2% (93.3-94.1 vs 92.3-92.6 tok/s). pidstat says the
+table stays page-cache-resident in both regimes (0.8-144 kB/s reads), so the
+spread is sync-vs-cadence, not disk.
+
+- 0012: range-aware cache eviction; the loader's `VLLM_SAFETENSORS_DROP_CACHE`
+  pass now spares PLE table byte ranges when host_file_gather is on. 5 loader
+  tests, CPU-only verification so far.
+- 0013 v1 (threaded gather, one commit): failed on hardware. Logprob A/B
+  pipeline-vs-sync: 10.5% top-1 flips vs 7.3-7.7% noise floor, union KL 0.195
+  vs 0.074-0.081, greedy tails equal 35.4% vs 44-52%. Mechanism: the worker
+  waited the previous step's barrier, which in stream order does not delay the
+  current forward, so a step could read `_staging` while its own H2D was
+  writing it. Self-consistent staleness is invisible to self-comparing gates;
+  use a two-path logprob diff for storage or pipeline swaps.
+- 0013 v2 (this patch, prefill-ahead): pure-prefill steps need no GPU
+  round-trip; prompt tokens are host-known. Model state mirrors
+  `NewRequestData.prefill_token_ids` per request, computes ngram ids on the
+  CPU for batches that are prefill-only, draft-free, and mirror-covered, and
+  the gather thread orders its H2D behind a submit-time main-stream event
+  with the barrier placed before the step's forward. Decode/mixed/draft steps
+  keep the lockstep path. CPU tests: mirror-sliced ids == `compute_ngram_ids`
+  == `_reference_ngram_ids` (parity test). Hardware status: unbooted.
+
+Knobs: VLLM_PLE_GATHER_PIPELINE=0 forces lockstep for prefill batches;
+VLLM_PLE_GATHER_SYNC=1 restores pre-pipeline behavior everywhere.
