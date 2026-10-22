@@ -1673,7 +1673,43 @@ spread is sync-vs-cadence, not disk.
   the gather thread orders its H2D behind a submit-time main-stream event
   with the barrier placed before the step's forward. Decode/mixed/draft steps
   keep the lockstep path. CPU tests: mirror-sliced ids == `compute_ngram_ids`
-  == `_reference_ngram_ids` (parity test). Hardware status: unbooted.
+  == `_reference_ngram_ids` (parity test).
 
 Knobs: VLLM_PLE_GATHER_PIPELINE=0 forces lockstep for prefill batches;
 VLLM_PLE_GATHER_SYNC=1 restores pre-pipeline behavior everywhere.
+
+### 0013 v2 hardware battery (2026-10-22, boot-4x-1m.log 11:07, tree 0010+0012+0013)
+
+Correctness gates all pass: logprob A/B vs the sync capture reads 4.41%
+top-1 flips, union KL mean 0.048, greedy tails 52.3% equal, per-depth
+200k KL 0.0145 - all at or under the noise floor (v1 failed the same
+gate at 10.5% / 0.195 / 35.4%). Needles exit 0. Decode-window
+acceptance 4.973/5.000 (trial1 dropped: sampling raced the stream).
+
+Perf gates fail. First battery finding: the runner stepped salt bases by
++1, and bench.py stream i uses salt+i, so runs shared 3 of 4 streams
+with the predecessor and prefix cache reuse faked a 208-216 s cluster.
+Disjoint-base rerun (100 apart, table resident, same boot):
+
+| run | wall s | TTFT mean s | in tok/s |
+|---|---|---|---|
+| 100/4 clean r92000 | 413.7 | 246.5 | 9,556 |
+| 100/4 clean r92100 | 400.5 | 249.8 | 9,873 |
+| 100/4 clean r92200 | 389.1 | 246.0 | 10,163 |
+| 100/4 clean r92300 | 398.6 | 248.3 | 9,920 |
+| cold 1M x4 (96.0/96.3/97.8/98.0) | TTFT vs sync-boot 93.3-94.1 | ~10k | |
+
+The pipeline path is deterministic but slower than lockstep everywhere:
++2.5 s on single-stream cold (about 6 ms per step of worker-side id
+compute), and 389-414 s at 100/4 against the sync era's 276-380 spread
+and pinned's 350-357 band. The premise is disproved: per-step gather
+waiting was never the batch bottleneck, so hiding it cannot recover the
+cadence, and the worker CPU cost taxes every prefill step that used to
+run clean. Raw: logs/pipe2-*.json.
+
+Decision pending: shelve 0013 (default the fast path off or drop the
+commit) and keep 0010+0012 lockstep, which beat pinned at 100/4 median
+(~295 vs ~353) while freeing 47.6 GB of pinned RAM and 27 s of boot. A
+same-boot VLLM_PLE_GATHER_PIPELINE=0 rerun would attribute the
+cross-boot delta exactly; optional. The salt-step rule is now in the
+bench protocol notes.
