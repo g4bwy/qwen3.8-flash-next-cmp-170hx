@@ -1875,3 +1875,35 @@ series, `git am` 0014, serve with `--engram-config '{"cpu_offload": true,
 against /tmp/cap_promo9.jsonl (must be tighter than boot-to-boot floor - same
 bytes by construction), 100/4 clean salts (hypothesis: at or under pinned
 350-357), cold trio, GPU0 btop during prefill, host free -g.
+
+### 0014 hardware battery (2026-10-22 16:59 boot, banner dev143+g5ede4b9cc, mmap gather live)
+
+Boot proof: `PLE file gather serving 320001536 shard rows through 33 file
+mapping(s)` on Worker_PP0; engram resolved with host_file_gather_mmap=true;
+load 42-61 s, engine init 23.5 s, pool 5,089,552, no errors. The loader's
+`Dropped ... 125.29 GiB` line precedes bind, so residency proof comes from
+the cold runs instead.
+
+| cell | mmap (0014) | preadv (promo9) | pinned-era |
+|---|---|---|---|
+| logprob A/B vs preadv boot | 4.44% flips, KL 0.049, verdict ok | — | — |
+| needles / accept-window | exit 0 / 4.982 | exit 0 / 4.99 | 4.98-5.00 |
+| cold 1M TTFT x3 | 90.9 / 91.0 / 90.8 s | 92.6 / 92.8 / 92.9 s | 89.7-93.9 s |
+| 100/4 wall x4 (bases 94100-94400) | 358-362 s | 362-367 s | 350-357 s |
+
+Readings:
+- Correctness at the floor exactly as intended: every correct-vs-correct path
+  pair measures 4.41-4.44% flips and ~0.049 KL (sync-vs-lockstep this morning
+  too), while the broken v1 read 10.5%. Three independent boots now define
+  the floor; mmap is another point on it.
+- Gains are real but smaller than the microbench promised, and the reason is
+  production row counts: per-step cost scales with DISTINCT ids after dedup,
+  and the cold delta (~2 s over 485 steps) puts the shipped gather at ~4 ms
+  saved per step, not 40. The probe's 32k-worst-case overstated the typical
+  step.
+- Net position: mmap mode strictly beats preadv mode (cold -1.8 s to pinned
+  parity, 100/4 -4 s, same RAM and boot savings) but does not beat pinned at
+  100/4 (-1.4% residual); the whole-stream sync per staging step and H2D
+  staging remain the gap, not the gather. Raw: logs/0014-*.json.
+- Decision: promote 0014 as its own series patch (keeps the flag A/B-able),
+  serve scripts gain `host_file_gather_mmap: true`. Not yet executed.
