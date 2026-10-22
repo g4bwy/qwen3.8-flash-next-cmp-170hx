@@ -1861,3 +1861,17 @@ different consumer). Estimated per-step staging: 47-56 ms shipped -> 5-10
 ms prototype; cold 1M back to pinned parity or better, and the shelved
 prefill-ahead pipeline becomes viable again since a 5 ms thread job truly
 hides under a 190 ms GPU step. Unmeasured on hardware.
+
+### 0014: mmap gather built as an experiment (2026-10-22)
+
+`experiments/0014-ple-mmap-gather.patch` (branch lab/ple-mmap-staging off the
+promoted 9-patch tip, replay tree 09f7f92d, export sha256 17191fc2...):
+`host_file_gather_mmap` engram flag; one read-only mmap per shard at bind,
+per-shard `index_select` staging, WILLNEED pre-queue kept, preadv path
+untouched as default. CPU suites green (new mmap/preadv byte-equality test);
+hardware trial not yet run. Boot recipe: reset the fender tree to the 9-patch
+series, `git am` 0014, serve with `--engram-config '{"cpu_offload": true,
+"host_file_gather": true, "host_file_gather_mmap": true}'`. Gates: logprob A/B
+against /tmp/cap_promo9.jsonl (must be tighter than boot-to-boot floor - same
+bytes by construction), 100/4 clean salts (hypothesis: at or under pinned
+350-357), cold trio, GPU0 btop during prefill, host free -g.
