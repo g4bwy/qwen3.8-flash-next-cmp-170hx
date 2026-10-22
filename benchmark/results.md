@@ -2088,3 +2088,31 @@ aggregate (concurrency reclaiming the PP bubble, as the step anatomy
 predicts), and the measurement only exists because the tool now shows the
 window it averaged. Decode 8192 widens the honest window; the spec line is
 updated.
+
+## INT8 draft-screen evaluation (2026-10-22, offline, artifacts in /tmp/int8_screen)
+
+Fork mechanism, corrected from source: NOT int8x int8 - it is Marlin W8A16
+(bf16 activations, int8 weights per-row/K128 scales, fp32 accumulate) over the
+full 248,320-row head, top-32 per TP shard, exact bf16 rescore, batch=1 only
+(`src/draft_int8_runtime.py:18-29`), gated to their TP2/MTP6 stack.
+
+Fidelity on real margins (362,442 positions parsed from /tmp/cap_promo9.jsonl,
+plus the real lm_head and 40k artifact from ~/test/Qwen3.8-Flash-Next-W8A16):
+screen noise sigma 0.017-0.025 nats, 3-6x finer than the bf16 output grid the
+head already rounds to; value-changing argmax flips bounded <= 7e-4/position;
+Monte Carlo of their exact algorithm: retention 1.000 even at 8x noise
+(the exact rescore needs >32 rivals inside the noise band; real softmax mass
+allows that at 0.026% of positions). Effectively lossless for greedy drafting.
+
+But as a patch-5 replacement the cost model rejects it: 647 MB head reads per
+pass vs our 207 MB; calibrated at our measured 63% stream-to-wall efficiency
+that is ~+4.8% single-stream vs the +8.7% patch 5 already delivers, +616 MiB
+extra residency, and their sampled-traffic path caps per-token acceptance at
+0.905 (top-8 support q, measured on real top-k mass). Our residual 40k-head
+exposure: 2.5% of held-out positions (93.7% of them at 200k depth, high-
+confidence), already priced in hardware at 4.99 vs 4.995.
+
+Salvaged idea, strictly better fit: run OUR 40k head itself as CUTLASS W8A8
+(our own kernel shootout: W8A8 beats bf16 1.51x on these shapes). Halves the
+207 MB to ~103 MB/pass, margin analysis says int8 logit error is far below the
+bf16 grid; est ~+1.5-2% decode for one boot to test. Candidate 0015.
