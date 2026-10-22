@@ -58,6 +58,9 @@ CORPUS = [
 ]
 
 FILLER = "The tenant returned the key on a Tuesday and left no forwarding address. "
+# The repeat task asks for this one sentence over and over, so the expected
+# completion is known and output can be checked token by token.
+REPEAT_SENTENCE = "The lighthouse keeper logged the weather."
 POSITION = re.compile(r'position="(\d+)"')
 COUNTERS = {
     "vllm:spec_decode_num_drafts": "drafts",
@@ -154,8 +157,7 @@ def tail_for(task, seed):
         )
     return (
         "Repeat the following sentence verbatim, one per line, until the end of "
-        "your response, and add nothing else: The lighthouse keeper logged the "
-        "weather."
+        "your response, and add nothing else: " + REPEAT_SENTENCE
     )
 
 

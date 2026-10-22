@@ -23,6 +23,7 @@ usage: logprob_capture.py --base-url URL --corpus ../draft_corpus.jsonl
        --depth-tokens 64 --lp-stride 1 --seed 816]
 """
 import argparse
+import hashlib
 import json
 import random
 import time
@@ -130,6 +131,10 @@ def main():
             "depth_tokens": a.depth_tokens, "depth_seed": a.depth_seed,
             "lp_stride": a.lp_stride, "seed": a.seed,
             "chars_per_token": cptr, "ts": time.strftime("%F %T"),
+            "corpus": a.corpus,
+            "corpus_sha256": hashlib.sha256(
+                open(a.corpus, "rb").read()
+            ).hexdigest(),
         }) + "\n")
 
         for wi in range(min(a.windows, len(texts))):

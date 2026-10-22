@@ -19,7 +19,20 @@ kernel-level benches noted below. Reproduce commands are at the end of
 - `bench.py` - fill sweep x concurrency -> the table with TTFT, prefill,
   wall, out tok/s, sustained, acceptance, preempts. Salt is time-derived by
   default. Pin `--salt` for comparisons and rotate it for headline ranges (salt
-  law). Dumps per-cell JSON and a live progress line.
+  law). Dumps per-cell JSON and a live progress line. `--warmup` runs one
+  throwaway short cell before the grid, which kills the first-MTP-step JIT
+  stall, and `--cooldown SECS` sleeps between cells. A background-traffic gate
+  probes the spec-decode counters before and after each cell and prints a
+  WARNING line on nonzero background drafts. Appended columns: `match` (share
+  of sentence lines in the last 40 lines of each stream that reached the
+  repeat loop; reasoner preamble and the max_tokens-cut tail line excluded,
+  thinking-only cells read `-` as inconclusive), `acc win` (mean
+  acceptance length inside the all-decoding window) and `bg` (background
+  drafts seen pre+post). The legacy `acc` column is full-window and counts
+  prefill-phase drafts on bases at or after `8407bc0bb6`, so it dilutes toward
+  the prefill ratio on deep-fill cells. Use `acc win`. The matching per-cell
+  JSON keys are `tail_match_frac`, `completion_sha256`, `acc_window_len`,
+  `bg_drafts_pre` and `bg_drafts_post`.
 - `sustained_decode.py` - batched-decode capacity plateaus at chosen depth
   and stream counts.
 
@@ -44,7 +57,10 @@ kernel-level benches noted below. Reproduce commands are at the end of
 - `mtp_ab_probe.py` - acceptance A/B at depth; doubles as the shared client
   lib for the other probes.
 - `corpus_accept_probe.py` - acceptance over the real-text corpus
-  (`../draft_corpus.jsonl`), greedy or sampled.
+  (`../draft_corpus.jsonl`), greedy or sampled. `--modes greedy,sampled` runs
+  both in one invocation and prints a per-mode table with rates as well as
+  acceptance, so it is the real-content comparator for the battery. The seed
+  is time-derived by default, so runs do not reuse the prefix cache.
 - `logprob_capture.py` + `quality_diff.py` - the quality gate: teacher-forced
   fingerprints per boot (top-1 by default, `--k 8` adds top-k sets so the diff
   also reports union KL, and `--depths 8200,16400 --lp-stride 4` adds
@@ -65,11 +81,11 @@ kernel-level benches noted below. Reproduce commands are at the end of
 
 - All HTTP tools default to `http://127.0.0.1:8000`. Always pass
   `--base-url http://fender.lan:8000` when the server is the remote box.
-- Do not touch the server (no curls, no scrapes beyond the tool itself)
-  while a bench cell is in flight.
-- Do not start a bench cell while the box runs other jobs. PP decode is
-  CPU-sensitive (ZMQ hop RPCs between stages), so external load silently
-  inflates step time. The owner says when the machine is quiet.
+- bench.py probes the spec-decode counters before and after every cell and
+  flags contamination, but the box must still be idle. A probe catches traffic
+  during the probe window, not during the cell, and PP decode is CPU-sensitive
+  (ZMQ hop RPCs between stages), so external load silently inflates step time.
+- The owner still says when the machine is quiet.
 - Kernel-level changes read fixed-salt acceptance FIRST, timing second:
   timing can look great while values rot (L2 eviction incident, results.md).
 - `sampler.py`, `picked.json`, `decode_probe.py` are untracked local scratch.

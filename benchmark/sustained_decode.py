@@ -59,7 +59,15 @@ def run(base, model, n, depth, decode, timeout, cpt):
         f"| {', '.join(f'{x:.1f}' for x in firsts)} "
         f"| {plateau:,.0f} | {plateau / n:,.0f} |"
     )
-    return {"n": n, "plateau_agg_tps": plateau}
+    return {
+        "n": n,
+        "depth": depth,
+        "decode": decode,
+        "wall_s": max(r["end"] for r in runs) - t0,
+        "first_tokens_s": firsts,
+        "plateau_agg_tps": plateau,
+        "samples": [[round(t, 2), round(v, 2)] for t, v in samples],
+    }
 
 
 def main():
@@ -88,7 +96,7 @@ def main():
     if args.json:
         with open(args.json, "w") as fh:
             json.dump(
-                {"depth": args.depth, "decode": args.decode, "runs": out}, fh, indent=2
+                {"depth": args.depth, "decode": args.decode, "runs": out}, fh
             )
 
 
