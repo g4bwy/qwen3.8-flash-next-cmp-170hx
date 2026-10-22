@@ -1830,3 +1830,34 @@ considered and skipped: the raw-UAPI ring already submits and reaps with one
 enter per window, which is what liburing does, and it still loses to C
 preadv. io_uring is closed on four grounds (ctypes, numpy ring, raw C,
 library); a C preadv gather helper is the open, worthwhile option.
+
+## mmap beats every syscall flavor: staging access-pattern probe (2026-10-22)
+
+Question: beyond C, is the preadv access pattern itself beatable? Yes.
+Same 32,768x2 KB warm scatter gather, all variants byte-checked (script +
+table in experiments/ple_gather_mmap_probe.py):
+
+| gather path | ms |
+|---|---|
+| Python `os.preadv` loop (shipped) | 56 |
+| C preadv loop | 32-36 |
+| C io_uring / pyuring | 38-46 / 163 |
+| C mmap + memcpy loop | 11.3 |
+| **torch `index_select` from mmap, per-shard `out=` slices** | **2.7** |
+
+Mechanism: preadv re-does the kernel's page lookup on every call
+(fdget, xarray walk, kmap, ref/unref, fput) for pages the process could
+reference directly. One MAP_SHARED mapping per shard + `torch.frombuffer`
++ per-shard `index_select` turns the gather into parallel memory loads of
+already-resident pages with multi-threaded copies; syscall and VFS cost
+go to zero. This supersedes the C-extension direction: it is pure
+Python/torch, so the series stays rebuild-free.
+
+Open risks to settle in a prototype (0014): row order undo pass
+(+1x64MB copy), 12 M-page TLB pressure at full table size, mapped-page
+reclaim stickiness (why upstream chose preadv), first-touch fault budget
+across boot, and interaction with 0012 range-sparing fadvise (unchanged,
+different consumer). Estimated per-step staging: 47-56 ms shipped -> 5-10
+ms prototype; cold 1M back to pinned parity or better, and the shelved
+prefill-ahead pipeline becomes viable again since a 5 ms thread job truly
+hides under a 190 ms GPU step. Unmeasured on hardware.
