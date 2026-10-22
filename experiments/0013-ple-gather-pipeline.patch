@@ -1,4 +1,4 @@
-From b9dfe6b8fb66bafc3e5a7bcf0de59093d571d2d3 Mon Sep 17 00:00:00 2001
+From 2e030f3de8dd42f0e638928c537c55133511ea4c Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 01:23:03 +0200
 Subject: [PATCH] [Perf][Qwen4Exp] Stage pure-prefill PLE rows from
@@ -26,17 +26,20 @@ this step's forward, so the staging write can neither race the previous
 read nor this one. The worker only waits the thread's enqueue, bounded
 by the gather itself and never by the GPU backlog.
 
-Decode, mixed, draft, mirror-uncovered, and pipeline-disabled steps
-keep the lockstep path unchanged. VLLM_PLE_GATHER_PIPELINE=0 forces the
-lockstep path for pure-prefill batches too; VLLM_PLE_GATHER_SYNC=1
-keeps the pre-pipeline behavior for every step.
+Decode, mixed, draft, and mirror-uncovered steps keep the lockstep path
+unchanged. The fast path is opt-in (VLLM_PLE_GATHER_PIPELINE=1, default
+0): on the 4x170HX PP=4 testbed it measured slower than lockstep (100/4
+at 389-414 s vs 276-380, cold 1M +2.5 s) because the gather wait it
+hides was never the batch bottleneck, while the worker-side id compute
+taxes every prefill step. Correctness gates passed: logprob A/B inside
+the noise floor, needles exit 0, decode-window acceptance 4.99.
 ---
  tests/models/qwen4_exp/test_config.py         |  68 ++++++-
  tests/models/qwen4_exp/test_ple.py            |  64 ++++++-
- vllm/envs.py                                  |  12 ++
+ vllm/envs.py                                  |  15 ++
  vllm/models/qwen4_exp/nvidia/model_state.py   |  98 ++++++++++
  .../qwen4_exp/nvidia/ngram_embedding.py       | 174 ++++++++++++++++--
- 5 files changed, 394 insertions(+), 22 deletions(-)
+ 5 files changed, 397 insertions(+), 22 deletions(-)
 
 diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
 index e245701b3b..c3d1da5eb0 100644
@@ -233,7 +236,7 @@ index 166d7c9154..7f0c3a9bb0 100644
 +        pipeline.stop()
 +        pipeline._thread.join(timeout=5)
 diff --git a/vllm/envs.py b/vllm/envs.py
-index a2f378893b..2b60cb0329 100755
+index a2f378893b..feae5a4f33 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -122,6 +122,8 @@ if TYPE_CHECKING:
@@ -241,23 +244,26 @@ index a2f378893b..2b60cb0329 100755
      VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
      VLLM_SAFETENSORS_DROP_CACHE: bool = False
 +    VLLM_PLE_GATHER_SYNC: bool = False
-+    VLLM_PLE_GATHER_PIPELINE: bool = True
++    VLLM_PLE_GATHER_PIPELINE: bool = False
      VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
-@@ -1127,6 +1129,16 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1127,6 +1129,19 @@ environment_variables: dict[str, Callable[[], Any]] = {
      # bytes are read once into VRAM and the resident pages only displace cache
      # worth keeping (config files, tokenizer, pinned tables' neighbors).
      # Default off to preserve current behavior; set 1 to enable.
 +    "VLLM_PLE_GATHER_SYNC": lambda: (
 +        os.getenv("VLLM_PLE_GATHER_SYNC", "0").lower() in ("1", "true")
 +    ),
-+    # Stage host-file-gather PLE rows for pure-prefill steps from a background
-+    # thread with host-computed ngram ids, so the worker never syncs on the
-+    # GPU backlog mid-prefill. Set 0 to force every step through the lockstep
-+    # gather; VLLM_PLE_GATHER_SYNC=1 disables the pipeline entirely.
++    # Opt-in: stage host-file-gather PLE rows for pure-prefill steps on a
++    # background thread with host-computed ngram ids, avoiding the lockstep
++    # whole-stream sync. Off by default: on the 4x170HX PP=4 testbed it
++    # measured slower than lockstep (100/4 at 389-414 s vs 276-380, cold 1M
++    # +2.5 s) because the gather wait it hides was never the batch
++    # bottleneck, while worker-side id compute taxes every prefill step.
++    # VLLM_PLE_GATHER_SYNC=1 additionally disables the pipeline machinery.
 +    "VLLM_PLE_GATHER_PIPELINE": lambda: (
-+        os.getenv("VLLM_PLE_GATHER_PIPELINE", "1").lower() in ("1", "true")
++        os.getenv("VLLM_PLE_GATHER_PIPELINE", "0").lower() in ("1", "true")
 +    ),
      "VLLM_SAFETENSORS_DROP_CACHE": lambda: (
          os.getenv("VLLM_SAFETENSORS_DROP_CACHE", "0").lower() in ("1", "true")
