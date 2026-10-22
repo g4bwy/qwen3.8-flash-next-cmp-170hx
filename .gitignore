@@ -11,3 +11,5 @@ logs/prof/
 TODO.md
 
 *.jsonl
+
+*.jsonl.gz
