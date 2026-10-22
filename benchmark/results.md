@@ -1717,3 +1717,27 @@ A same-boot lockstep rerun would still pin the exact pipeline-vs-lockstep
 delta, since the sync-era 276-380 spread predates the salt-step rule and may
 itself be partly salt-inflated. The salt-step rule is now in the bench
 protocol notes.
+
+### Promoted 9-patch cert battery (2026-10-22 15:03, idle host, banner dev142+g92c71e87d)
+
+Needles exit 0 and logprob A/B vs the sync capture passed earlier the same
+day (4.41% flips / 0.048 KL, verdict ok) while a background CPU job ran;
+the timing battery followed on the idle box.
+
+| cell | result | pinned-era band |
+|---|---|---|
+| cold 1M TTFT x3 (salts 93001-93003) | 92.6 / 92.8 / 92.9 s | 92.9-93.9 (N6) |
+| 100/4 wall x4 (bases 93100/93200/93300/93400, 100 apart) | 362.1 / 364.8 / 366.6 / 365.3 s | 350-357 |
+| 100/4 TTFT mean | 228.7-229.8 s, preempts 0 | 223.8 |
+| decode-window acceptance | 5.000 / 4.973 (trial1 discarded: 81 background drafts detected post-window) | 4.98-5.00 |
+
+Readings:
+- Cold 1M on the promoted tree sits at or under the pinned band; this
+  morning's 96.0-98.0 was the shelved pipeline's worker-side id cost.
+- 100/4 is deterministic to 0.6% (362-367 s) on clean salts. The sync-era
+  "bimodal 276-380" was largely the salt-overlap artifact plus the
+  post-boot first-touch run; lockstep was always ~365. The +3% against
+  pinned is the accepted cost of freeing 47.6 GiB pinned RAM and 27 s of
+  boot (loader table-sparing arithmetic confirmed at boot: 125.29 of
+  172.97 GiB dropped, 47.68 GiB spared).
+- Raw: logs/promo9-*.json, /tmp/promo9_batt.log.
