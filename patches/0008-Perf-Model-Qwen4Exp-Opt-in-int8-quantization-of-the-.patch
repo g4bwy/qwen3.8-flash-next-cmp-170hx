@@ -1,7 +1,7 @@
-From bf4c52bb956db993838fc1823bbd9b9d7573143f Mon Sep 17 00:00:00 2001
+From cf47383fdc575d2f0263e8e3513c8fbe1117114d Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 16 Oct 2026 11:21:02 +0200
-Subject: [PATCH 8/8] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
+Subject: [PATCH 8/9] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
  pipeline handoff
 
 The hyper-connection model ships the materialized 4-stream state

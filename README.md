@@ -17,11 +17,11 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
 - Depths: MTP-4 is the shipped depth. The fast lane builds an int8-dense
   variant with `checkpoint/` (+6 % on top of depth, +20 % over MTP-3).
 - Base commit: `8407bc0bb6b0061dacb731ae3cc54b6035f112b3` (vllm-project/vllm main, 2026-10-20; newest main with a published cu130 wheel, `0.32.1rc1.dev133+g8407bc0bb`).
-- 8 patches: six ours, two adopted from upstream PRs (#56444 as
-  patch 2, #58094 as patch 4; both still open upstream, so they survive
-  rebases as adopted commits). After
+- 9 patches: six ours, three adopted from upstream PRs (#56444 as
+  patch 2, #58094 as patch 4, #58815 as patch 9; all still open upstream,
+  so they survive rebases as adopted commits). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `f4652439f3869c845b3f537cbc02ba89095f2279`. If it does not, you applied
+  `8d59cef8cff1abe8e5fc2f04c6afd13280a80431`. If it does not, you applied
   something else or onto something else.
 - The base's `humming-kernels[cu13]` pin moved to 0.1.17 (0.1.12 fails the
   new `vllm/utils/humming.py` imports). The editable precompiled install
@@ -37,7 +37,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout 8407bc0bb6b0061dacb731ae3cc54b6035f112b3
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # f4652439f3869c845b3f537cbc02ba89095f2279
+git rev-parse 'HEAD^{tree}'   # 8d59cef8cff1abe8e5fc2f04c6afd13280a80431
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
@@ -299,9 +299,10 @@ about one position in 130 moves because of the quantization. Full tables:
 | 3 | core: build KV cache tensors from a group's projected layers (fixes `StopIteration` on PP ranks holding no PLE) |
 | 4 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Forwarding is gated to the MTP family: an independent draft model ships its own rope and target dicts must not resize it. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our earlier local version used |
 | 5 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Dual-head: eager mixed prefill windows draft with the full head, graphed uniform decode rounds keep the small one. Needs artifacts, build commands in checkpoint/README |
-| 6 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts), so the 173 GiB read-once load does not evict reusable cache at every boot |
+| 6 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts), so the 173 GiB read-once load does not evict reusable cache at every boot; under patch 9's file gather the drop is range-aware and spares PLE table bytes, keeping the resident table serving from cache |
 | 7 | Qwen4Exp PLE embedding honors fp8 n-gram tables inside compressed-tensors checkpoints: resolve the scheme (none -> unquantized, float8 -> fp8, else raise) instead of falling through to the Fp8Config-only gate |
 | 8 | opt-in int8 pipeline handoff (`VLLM_QWEN4EXP_PP_INT8_HOP=1`): the materialized 4-stream hyper-connection state (`hidden x hc_count` bf16, 42 MB per 2048-token chunk) crosses stages as per-token per-stream int8 plus fp32 scales, halving wire bytes on a link that is the prefill wall. Cold 1M TTFT 91.8 -> 79.9 s, 100/4 wall 386 -> 346 s, needles and acceptance clean; flag-off is byte-identical; a half-enabled pipeline raises instead of casting |
+| 9 | upstream PR #58815, adopted (drift-adapted port): `--engram-config '{"host_file_gather": true}'` serves PLE n-gram rows by per-step `preadv` from page-cache-resident checkpoint shards instead of a 47.6 GiB pinned host table. Boot load 1:16 -> 0:49, ~48 GiB pinned RAM freed, needles/acceptance unchanged; cost is a per-step worker stream sync in staging (100/4 276-380 s vs pinned ~350 steady, cold 1M +3 s). Pairs with patch 6's range-sparing; the threaded prefill-ahead variant was measured slower and shelved (experiments/0013, results.md) |
 
 ## Gotchas
 
@@ -344,7 +345,7 @@ about one position in 130 moves because of the quantization. Full tables:
 
 ```
 patchset-qwen38-pp/
-  patches/0001-*.patch .. 0008-*.patch   the series, git am
+  patches/0001-*.patch .. 0009-*.patch   the series, git am
   serve-4x-1m.sh                         the service lane: 4 gpus, 1M, YaRN 4.0 (PROF=1 arms the profiler)
   archive/                               retired lanes, the 3-card set, the TP=4 trial, and their tables
   benchmark/                             measurement tools, raw results, and the full record, see its README
