@@ -2156,3 +2156,40 @@ Findings:
 - bf16 here IS the production path (fp8 weights dequantize to bf16 at load).
 - Reproduction check: M=2048 CUTLASS/bf16 = 1.53-1.55x matches the Oct-16
   prefill shootout (1.51-1.52x) on the same two heads.
+
+## 0015 + 0016 built: W8A8 int8 for the draft head and the dense linears (2026-10-22)
+
+Branch lab/ple-int8-heads on the 10-patch tip, exports
+`experiments/0015-draft-head-w8a8.patch` and
+`experiments/0016-dense-linears-w8a8.patch`. Both env-gated, default off,
+CPU-verified (22 new tests; test_ple failure set unchanged at the 11 GPU-env
+entries; ruff clean).
+
+- 0015 `VLLM_QWEN4EXP_DRAFT_W8A8=1`: swaps the draft head's quant_method to
+  per-channel RTN + per-token dynamic quant + `cutlass_scaled_mm`. Directly
+  backed by the decode-M microbench (1.39-1.67x at every M, quant free).
+  sm_80 has no low-latency skinny-GEMM plans, so the bf16 GEMV replaced is
+  exactly what was benched. Expected: ~+1.5-2% single-stream decode.
+- 0016 `VLLM_QWEN4EXP_DENSE_W8A8=1`: in-place method swap on per-tensor-FP8
+  dense linears (suffix allowlist: qkv/o, GDN in/out, gate_up/down), int8
+  cache built at process_weights_after_loading from canonical checkpoint
+  bytes before the FP8 kernel rewrites them. Decode M<512 (inside the
+  capture range, max capture size here is 80) keeps today's path bit-for-bit;
+  only prefill pieces switch kernels. MoE untouched by construction
+  (exact-type Fp8LinearMethod claim). Backed by the Oct-16 prefill shootout
+  (1.29-1.68x on seven dense families at M=2048). Expected: the bigger lever,
+  sized at boot. One open question the boot must answer: which bf16 kernel
+  the FP8 selector actually picks on this box (Marlin vs dequant) - the
+  startup log names it; the int8 path replaces it either way. VRAM: int8
+  copies live next to the FP8 weights (a few GB on the last stage); check
+  the KV pool line stays 5.08-5.09M.
+- Boot plan (battery v2, owner all-clear required): trees tested separately,
+  one env variable per boot. Boot A = 0015 only, Boot B = 0016 only, Boot C
+  = both if A and B pass. Gates in battery-v2 order: needles, capture+repeat
+  floor + reference diff (note: reference must be re-captured against the
+  current corpus - the boot4 reference is INCOMPARABLE), corpus greedy+sampled,
+  cold trio (98100/98200/98300), 100/4 quartet (98400-98700), accept window,
+  deep plateau, E3, oversub. For 0016 the value gates matter most: dense
+  logits change, so quality_diff boot-vs-reference will legitimately read
+  above the floor; the acceptance bar there is corpus acc win >= 2.2 sampled
+  / 3.0 greedy floor and needles + match canary, not bit-identity.
