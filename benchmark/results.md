@@ -2116,3 +2116,43 @@ Salvaged idea, strictly better fit: run OUR 40k head itself as CUTLASS W8A8
 (our own kernel shootout: W8A8 beats bf16 1.51x on these shapes). Halves the
 207 MB to ~103 MB/pass, margin analysis says int8 logit error is far below the
 bf16 grid; est ~+1.5-2% decode for one boot to test. Candidate 0015.
+
+## Decode-M int8 head microbench (2026-10-22, GPU2 co-resident with the live
+server, ratios only; real draft-40k and lm_head weights; raw
+/tmp/head_int8_{no_shim,shim}.json, script /tmp/head_int8_bench.py)
+
+The regime nobody had measured - the draft head at decode sizes, in or near
+graph capture - with three backends: bf16 aten mm (status quo), CUTLASS W8A8
+(the plugin's op, scales fused, bf16 out), cuBLASLt torch._int_mm TN int8
+(int32 out, no scales - shown bare and under the ltautotune shim).
+
+| head | M | bf16 ms | CUTLASS | lt no-shim | lt +shim | bf/CUTLASS | bf/lt+shim |
+|---|---|---|---|---|---|---|---|
+| draft40k | 1 | 0.141 | 0.101 | n/a (torch needs M>16) | - | 1.39x | |
+| draft40k | 4 | 0.161 | 0.103 | n/a | - | 1.55x | |
+| draft40k | 16 | 0.172 | 0.107 | n/a | - | 1.61x | |
+| draft40k | 70 | 0.234 | 0.140 | 0.128 | 0.105 | 1.67x | 2.21x |
+| draft40k | 280 | 0.556 | 0.356 | 0.336 | 0.282 | 1.56x | 1.97x |
+| draft40k | 2048 | 2.827 | 1.827 | 2.062 | 1.567 | 1.55x | 1.80x |
+| lmfull 248k | 1 | 0.891 | 0.559 | n/a | - | 1.59x | |
+| lmfull 248k | 70 | 1.292 | 0.823 | 0.876 | 0.891 | 1.57x | 1.45x |
+| lmfull 248k | 2048 | 17.234 | 11.295 | 12.521 | 12.531 | 1.53x | 1.38x |
+
+Findings:
+- CUTLASS W8A8 wins EVERY decode-M point for the draft head, 1.39-1.67x, and
+  the per-token activation quant is free (+quant within 4us of the raw GEMM).
+  0015 premise CONFIRMED. Expected: 4 head calls/step, saving ~0.16 ms/step at
+  M=1 (about +1.7% single-stream decode) up to ~0.4 ms/step at batch 70.
+  Modest - the head is already only 4x40k bytes wide after patch 5.
+- The ltautotune shim is a real effect where cuBLASLt mispicks (40k head,
+  M>=17: up to 1.32x self-gain, ending up FASTER than CUTLASS) and a no-op
+  where the heuristic was already right (248k head, 0.98-1.00x). It cannot
+  serve the draft head in production: torch._int_mm refuses M<=16 (no GEMV
+  path at all), it outputs int32 needing a separate scale pass, and it
+  requires plain warm-up GEMMs per shape outside graph capture. Keep it as an
+  offline kernel-selection probe; no integration.
+- Absolute GEMV rates imply ~1.43 TB/s effective head streaming (92% of GA100
+  spec) - revises the agent's 1.1 TB/s cost model up ~30%; its ratios stand.
+- bf16 here IS the production path (fp8 weights dequantize to bf16 at load).
+- Reproduction check: M=2048 CUTLASS/bf16 = 1.53-1.55x matches the Oct-16
+  prefill shootout (1.51-1.52x) on the same two heads.
