@@ -1,0 +1,657 @@
+From c2a00421de120a8881daa8580b5ca43f38e1c399 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 01:23:03 +0200
+Subject: [PATCH] [Perf][Qwen4Exp] Stage pure-prefill PLE rows from
+ host-computed ids
+
+The host_file_gather staging path syncs the worker's whole stream every
+step to bring ngram ids back from the GPU before preadv'ing rows. Under
+PP=4 with concurrent prefills that CPU-side backlog wait collapses the
+RPC pipeline: batch prefill bimodally flips between ~275 s and ~370 s
+runs, while pinned-UVA holds a steady ~350. Moving the gather to a
+background thread alone does not fix it: decode ids depend on the
+previous step's sampled token, so the GPU round-trip stays on the
+critical path, and a step that reads the single staging buffer before
+its own barrier lands serves stale rows.
+
+Pure-prefill steps need no GPU round-trip at all. Every scheduled token
+is a prompt token, and the full prompt already reaches the worker in
+NewRequestData.prefill_token_ids. Mirror it per request in host memory;
+for batches that are prefill-only, draft-free, and covered by the
+mirror, compute ngram ids on the CPU and hand the gather thread pinned
+ids directly. The thread preadvs rows while the previous forward is in
+flight, then orders the H2D behind a submit-time event on the main
+stream and records a barrier; the worker places that barrier before
+this step's forward, so the staging write can neither race the previous
+read nor this one. The worker only waits the thread's enqueue, bounded
+by the gather itself and never by the GPU backlog.
+
+Decode, mixed, draft, mirror-uncovered, and pipeline-disabled steps
+keep the lockstep path unchanged. VLLM_PLE_GATHER_PIPELINE=0 forces the
+lockstep path for pure-prefill batches too; VLLM_PLE_GATHER_SYNC=1
+keeps the pre-pipeline behavior for every step.
+---
+ tests/models/qwen4_exp/test_config.py         |  68 ++++++-
+ tests/models/qwen4_exp/test_ple.py            |  64 ++++++-
+ vllm/envs.py                                  |  12 ++
+ vllm/models/qwen4_exp/nvidia/model_state.py   |  94 ++++++++++
+ .../qwen4_exp/nvidia/ngram_embedding.py       | 174 ++++++++++++++++--
+ 5 files changed, 390 insertions(+), 22 deletions(-)
+
+diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
+index e245701b3b..c3d1da5eb0 100644
+--- a/tests/models/qwen4_exp/test_config.py
++++ b/tests/models/qwen4_exp/test_config.py
+@@ -5,6 +5,7 @@ from importlib import import_module
+ from types import SimpleNamespace
+ from unittest.mock import patch
+ 
++import numpy as np
+ import pytest
+ import torch
+ from transformers import Qwen4ExpConfig, Qwen4ExpTextConfig
+@@ -20,7 +21,7 @@ from vllm.sequence import IntermediateTensors
+ from vllm.v1.worker.gpu.model_states.mamba_hybrid import MambaHybridModelState
+ 
+ from ...utils import spawn_new_process_for_each_test
+-from .test_ple import _make_file_gather_embedding
++from .test_ple import _make_file_gather_embedding, _reference_ngram_ids
+ 
+ 
+ def _text_config(**kwargs) -> Qwen4ExpTextConfig:
+@@ -383,6 +384,7 @@ def test_qwen4_exp_model_state_stages_file_gather_rows(monkeypatch, tmp_path) ->
+     model_state.ngram_context_offsets = torch.arange(-1, 0, dtype=torch.int64)
+     model_state.ple_query_start_loc = torch.empty(5, dtype=torch.int32)
+     model_state.file_gather_modules = [module]
++    model_state.gather_pipeline = None
+     input_batch = SimpleNamespace(
+         num_reqs=2,
+         num_reqs_after_padding=2,
+@@ -406,6 +408,70 @@ def test_qwen4_exp_model_state_stages_file_gather_rows(monkeypatch, tmp_path) ->
+     assert torch.equal(module.ngram_embedding._staging[:6], table[ids])
+ 
+ 
++def test_qwen4_exp_model_state_host_gather_ids_and_gates(monkeypatch, tmp_path) -> None:
++    """Pure-prefill ids come from the host mirror and equal the reference
++    hash; decode, draft, and uncovered batches fall back to lockstep."""
++    module, _ = _make_file_gather_embedding(monkeypatch, tmp_path)
++    state = object.__new__(Qwen4ExpModelState)
++    state.uses_ngram_embedding = True
++    state.ngram_context_len = 1
++    state.ngram_eos_token_id = 0
++    state.max_num_reqs = 4
++    state.file_gather_modules = [module]
++    state.gather_pipeline = object()
++    state._ple_host_tokens = None
++    state._ple_host_len = np.zeros(4, dtype=np.int64)
++
++    def add(req_index, tokens):
++        with patch.object(MambaHybridModelState, "add_request"):
++            state.add_request(req_index, SimpleNamespace(prefill_token_ids=tokens))
++
++    add(0, [7, 8, 9, 10, 11, 12])
++    add(1, [20, 21, 0, 30, 31])
++
++    def batch(*, drafts=0, prefill=(True, True), lens=(6, 5)):
++        state._ple_host_len[:2] = lens
++        return SimpleNamespace(
++            num_reqs=2,
++            has_prefill=True,
++            num_draft_tokens=drafts,
++            is_prefilling_np=np.array(prefill),
++            idx_mapping_np=np.array([0, 1]),
++            query_start_loc_np=np.array([0, 3, 6], dtype=np.int32),
++            num_computed_tokens_np=np.array([2, 0], dtype=np.int32),
++        )
++
++    host_ids = state._gather_host_ids(batch())
++    direct = module.compute_ngram_ids(
++        torch.tensor([9, 10, 11, 20, 21, 0]),
++        torch.tensor([0, 3, 6]),
++        torch.tensor([[8], [0]]),
++    )
++    assert torch.equal(host_ids[module], direct)
++    reference = _reference_ngram_ids(
++        torch.tensor([9, 10, 11, 20, 21, 0]),
++        torch.tensor([0, 3, 6]),
++        torch.tensor([[8], [0]]),
++        layer_multipliers=module.layer_multipliers,
++        ngram_heads_vocab_sizes=module.ngram_heads_vocab_sizes,
++        ngram_heads_offsets=module.ngram_heads_offsets,
++        eos_token_id=0,
++        heads_per_ngram=2,
++    )
++    assert torch.equal(direct, reference)
++
++    assert state._gather_host_ids(batch(drafts=4)) is None
++    assert state._gather_host_ids(batch(prefill=(True, False))) is None
++    assert state._gather_host_ids(batch(lens=(6, 2))) is None
++    assert state._gather_host_ids(batch(drafts=0, prefill=(False, False))) is None
++
++    # The mirror grows for longer prompts and keeps existing rows intact.
++    add(2, list(range(20_000)))
++    assert state._ple_host_tokens.shape == (4, 32_768)
++    np.testing.assert_array_equal(state._ple_host_tokens[0, :6], [7, 8, 9, 10, 11, 12])
++    assert state._ple_host_len[2] == 20_000
++
++
+ def test_qwen4_exp_model_state_prepares_stable_dummy_ngram_inputs() -> None:
+     model_state = object.__new__(Qwen4ExpModelState)
+     model_state.uses_ngram_embedding = True
+diff --git a/tests/models/qwen4_exp/test_ple.py b/tests/models/qwen4_exp/test_ple.py
+index 166d7c9154..7f0c3a9bb0 100644
+--- a/tests/models/qwen4_exp/test_ple.py
++++ b/tests/models/qwen4_exp/test_ple.py
+@@ -1380,9 +1380,9 @@ def test_file_gather_out_of_range_id_keeps_previous_staged_rows(
+             [10, 10],
+         ]
+     )
+-    embedding._host_ids[:11] = ids
++    embedding._host_ids[0][:11] = ids
+     embedding.stage_rows(11)
+-    embedding._host_ids[5, 1] = bad_id
++    embedding._host_ids[0][5, 1] = bad_id
+ 
+     with pytest.raises(IndexError):
+         embedding.stage_rows(11)
+@@ -1397,7 +1397,7 @@ def test_file_gather_short_read_raises_and_keeps_previous_staged_rows(
+     module, table = _make_file_gather_embedding(monkeypatch, tmp_path, bind=True)
+     embedding = module.ngram_embedding
+     ids = torch.arange(1, 21).reshape(10, 2)
+-    embedding._host_ids[:10] = ids
++    embedding._host_ids[0][:10] = ids
+     embedding.stage_rows(10)
+     path = tmp_path / "model.safetensors"
+     os.truncate(path, path.stat().st_size - 4)
+@@ -1436,7 +1436,7 @@ def test_file_gather_reads_ahead_the_coalesced_pages_of_staged_rows(
+         lambda fd, *args: calls.append((os.fstat(fd).st_ino, *args)),
+     )
+     ids = torch.tensor([[0, 1], [8, 7]])
+-    embedding._host_ids[:2] = ids
++    embedding._host_ids[0][:2] = ids
+ 
+     embedding.stage_rows(2)
+ 
+@@ -3003,3 +3003,59 @@ def test_amd_ngram_embedding_matches_reference_under_compile(
+     )
+     expected = loaded_weight[ngram_ids.cpu()].flatten(-2).to(device)
+     torch.testing.assert_close(output.float(), expected.float(), rtol=0, atol=0)
++
++
++@pytest.mark.cpu_test
++def test_gather_pipeline_lifecycle_and_cpu_fallback(monkeypatch, tmp_path) -> None:
++    """The thread starts and stops; CPU tensors take the lockstep path even
++    when a pipeline exists (capture and unit tests never race events)."""
++    from vllm.models.qwen4_exp.nvidia.ngram_embedding import (
++        _GatherPipeline,
++        stage_checkpoint_rows,
++    )
++
++    module, _ = _make_file_gather_embedding(monkeypatch, tmp_path, bind=True)
++    embedding = module.ngram_embedding
++    pipeline = _GatherPipeline()
++    try:
++        assert pipeline._thread.is_alive()
++        ids = torch.tensor([1, 2, 3])
++        qsl = torch.tensor([0, 3])
++        context = torch.full((1, 2), module.eos_token_id, dtype=torch.int32)
++        stage_checkpoint_rows([module], ids, qsl, context, pipeline=pipeline)
++        assert embedding._h2d_events == [None, None]
++        torch.testing.assert_close(
++            embedding._staging[:3],
++            embedding._host_rows[0][:3],
++        )
++    finally:
++        pipeline.stop()
++        pipeline._thread.join(timeout=5)
++    assert not pipeline._thread.is_alive()
++
++
++@pytest.mark.cpu_test
++def test_gather_pipeline_submit_handoff_without_cuda() -> None:
++    """Handoff fires even when the gather fails; the error surfaces on the
++    worker via join_step, and a failed barrier never reaches a stream."""
++    from vllm.models.qwen4_exp.nvidia.ngram_embedding import _GatherPipeline
++
++    pipeline = _GatherPipeline()
++    try:
++
++        class Boom:
++            _h2d_events = [None, None]
++
++            def _pread_slot(self, slot, num_tokens):
++                raise ValueError("gather failed")
++
++        handoff, barriers = pipeline.submit([(Boom(), 0, 1, object())])
++        handoff.wait(timeout=5)
++        assert handoff.is_set()
++        assert barriers == [None]
++        assert isinstance(pipeline.error, ValueError)
++        with pytest.raises(ValueError, match="gather failed"):
++            pipeline.join_step((handoff, barriers), object())
++    finally:
++        pipeline.stop()
++        pipeline._thread.join(timeout=5)
+diff --git a/vllm/envs.py b/vllm/envs.py
+index a2f378893b..2b60cb0329 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -122,6 +122,8 @@ if TYPE_CHECKING:
+     VLLM_USE_TRITON_AWQ: bool = False
+     VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
+     VLLM_SAFETENSORS_DROP_CACHE: bool = False
++    VLLM_PLE_GATHER_SYNC: bool = False
++    VLLM_PLE_GATHER_PIPELINE: bool = True
+     VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
+     VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
+     VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
+@@ -1127,6 +1129,16 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     # bytes are read once into VRAM and the resident pages only displace cache
+     # worth keeping (config files, tokenizer, pinned tables' neighbors).
+     # Default off to preserve current behavior; set 1 to enable.
++    "VLLM_PLE_GATHER_SYNC": lambda: (
++        os.getenv("VLLM_PLE_GATHER_SYNC", "0").lower() in ("1", "true")
++    ),
++    # Stage host-file-gather PLE rows for pure-prefill steps from a background
++    # thread with host-computed ngram ids, so the worker never syncs on the
++    # GPU backlog mid-prefill. Set 0 to force every step through the lockstep
++    # gather; VLLM_PLE_GATHER_SYNC=1 disables the pipeline entirely.
++    "VLLM_PLE_GATHER_PIPELINE": lambda: (
++        os.getenv("VLLM_PLE_GATHER_PIPELINE", "1").lower() in ("1", "true")
++    ),
+     "VLLM_SAFETENSORS_DROP_CACHE": lambda: (
+         os.getenv("VLLM_SAFETENSORS_DROP_CACHE", "0").lower() in ("1", "true")
+     ),
+diff --git a/vllm/models/qwen4_exp/nvidia/model_state.py b/vllm/models/qwen4_exp/nvidia/model_state.py
+index d1dcd8dedc..53906ef043 100644
+--- a/vllm/models/qwen4_exp/nvidia/model_state.py
++++ b/vllm/models/qwen4_exp/nvidia/model_state.py
+@@ -4,10 +4,14 @@
+ 
+ from typing import Any
+ 
++import numpy as np
+ import torch
+ import torch.nn as nn
+ 
++from vllm import envs
+ from vllm.config import VllmConfig
++from vllm.logger import init_logger
++from vllm.v1.core.sched.output import NewRequestData
+ from vllm.v1.worker.gpu.input_batch import InputBatch
+ from vllm.v1.worker.gpu.mm.encoder_cache import EncoderCache
+ from vllm.v1.worker.gpu.model_states.mamba_hybrid import MambaHybridModelState
+@@ -16,9 +20,12 @@ from vllm.v1.worker.gpu.states import RequestState
+ from .ngram_embedding import (
+     Qwen4ExpNGramEmbedding,
+     Qwen4ExpPLEFileGatherEmbedding,
++    _GatherPipeline,
+     stage_checkpoint_rows,
+ )
+ 
++logger = init_logger(__name__)
++
+ 
+ class Qwen4ExpModelState(MambaHybridModelState):
+     """Add rollback-safe PLE n-gram context to the model inputs."""
+@@ -67,6 +74,91 @@ class Qwen4ExpModelState(MambaHybridModelState):
+             if isinstance(module, Qwen4ExpNGramEmbedding)
+             and isinstance(module.ngram_embedding, Qwen4ExpPLEFileGatherEmbedding)
+         ]
++        self.gather_pipeline = None
++        if self.file_gather_modules and envs.VLLM_PLE_GATHER_SYNC:
++            logger.info_once(
++                "PLE gather pipeline disabled by VLLM_PLE_GATHER_SYNC; "
++                "staging runs lockstep with the scheduler thread."
++            )
++        elif (
++            self.file_gather_modules
++            and envs.VLLM_PLE_GATHER_PIPELINE
++            and self.device.type == "cuda"
++        ):
++            self.gather_pipeline = _GatherPipeline()
++        # Per-request mirror of prefill_token_ids; the fast path reads chunks
++        # and their left context from here so ngram ids need no GPU round-trip.
++        self._ple_host_tokens: np.ndarray | None = None
++        self._ple_host_len = np.zeros(self.max_num_reqs, dtype=np.int64)
++
++    def add_request(self, req_index: int, new_req_data: NewRequestData) -> None:
++        super().add_request(req_index, new_req_data)
++        if self.gather_pipeline is None:
++            return
++        tokens = new_req_data.prefill_token_ids
++        if tokens is None or req_index >= self.max_num_reqs:
++            self._ple_host_len[req_index] = 0
++            return
++        num_tokens = len(tokens)
++        host = self._ple_host_tokens
++        if host is None or host.shape[1] < num_tokens:
++            columns = 1 << max(13, (num_tokens - 1).bit_length())
++            grown = np.zeros((self.max_num_reqs, columns), dtype=np.int32)
++            if host is not None:
++                grown[:, : host.shape[1]] = host
++            self._ple_host_tokens = host = grown
++        host[req_index, :num_tokens] = tokens
++        self._ple_host_len[req_index] = num_tokens
++
++    def _gather_host_ids(self, input_batch: InputBatch) -> dict | None:
++        """Host ngram ids for a batch whose every new token is prompt-known.
++
++        Returns None for decode rows, draft tokens, rows the mirror does not
++        cover, or a missing pipeline, so staging falls back to lockstep.
++        """
++        if self.gather_pipeline is None:
++            return None
++        num_reqs = input_batch.num_reqs
++        if (
++            not input_batch.has_prefill
++            or input_batch.num_draft_tokens
++            or not bool(np.all(input_batch.is_prefilling_np[:num_reqs]))
++        ):
++            return None
++        host = self._ple_host_tokens
++        if host is None:
++            return None
++        req_indices = input_batch.idx_mapping_np[:num_reqs]
++        query_lens = np.diff(input_batch.query_start_loc_np[: num_reqs + 1])
++        computed = input_batch.num_computed_tokens_np[:num_reqs].astype(np.int64)
++        ends = computed + query_lens
++        if np.any(self._ple_host_len[req_indices] < ends):
++            return None
++        tokens = np.concatenate(
++            [
++                host[i, c : c + n]
++                for i, c, n in zip(req_indices, computed, query_lens, strict=True)
++            ]
++        )
++        context = np.full(
++            (num_reqs, self.ngram_context_len),
++            self.ngram_eos_token_id,
++            dtype=np.int32,
++        )
++        for row, (req_idx, start) in enumerate(zip(req_indices, computed, strict=True)):
++            low = max(0, start - self.ngram_context_len)
++            context[row, self.ngram_context_len - (start - low) :] = host[
++                req_idx, low:start
++            ]
++        query_start_loc = input_batch.query_start_loc_np[: num_reqs + 1]
++        return {
++            module: module.compute_ngram_ids(
++                torch.from_numpy(tokens),
++                torch.from_numpy(query_start_loc.astype(np.int64)),
++                torch.from_numpy(context),
++            )
++            for module in self.file_gather_modules
++        }
+ 
+     def _prepare_ngram_context(
+         self,
+@@ -117,6 +209,8 @@ class Qwen4ExpModelState(MambaHybridModelState):
+                 input_batch.input_ids,
+                 query_start_loc,
+                 ngram_context,
++                pipeline=self.gather_pipeline,
++                host_ids=self._gather_host_ids(input_batch),
+             )
+         model_inputs.update(
+             query_start_loc=query_start_loc,
+diff --git a/vllm/models/qwen4_exp/nvidia/ngram_embedding.py b/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
+index 35de96321c..7f5719cd2f 100644
+--- a/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
++++ b/vllm/models/qwen4_exp/nvidia/ngram_embedding.py
+@@ -4,6 +4,8 @@
+ 
+ import mmap
+ import os
++import queue
++import threading
+ from collections.abc import Iterable
+ 
+ import torch
+@@ -88,13 +90,20 @@ class Qwen4ExpPLEFileGatherEmbedding(Qwen4ExpPLEEmbedding):
+         self._dummy = get_current_vllm_config().load_config.load_format == "dummy"
+         shape = (max_total_tokens, num_ngram_heads, embedding_dim)
+         dtype, pin = self.weight.dtype, self.weight.device.type != "cpu"
++        # Device staging stays single-buffered: CUDA graph capture bakes its
++        # address. The host side is double-buffered so the gather thread can
++        # preadv step N+2 while step N+1's H2D still drains.
+         self._staging = torch.zeros(shape, dtype=dtype, device=self.weight.device)
+         self._host_ids = torch.empty(
+-            shape[:2], dtype=torch.int64, device="cpu", pin_memory=pin
++            (2, *shape[:2]), dtype=torch.int64, device="cpu", pin_memory=pin
+         )
+-        # Step N+1 writes these rows only after its stream sync, so after step N's H2D.
+-        self._host_rows = torch.empty(shape, dtype=dtype, device="cpu", pin_memory=pin)
+-        self._rows = torch.empty_like(self._host_rows).view(torch.uint8).flatten(0, 1)
++        self._host_rows = torch.empty(
++            (2, *shape), dtype=dtype, device="cpu", pin_memory=pin
++        )
++        self._rows = torch.empty_like(self._host_rows).view(torch.uint8).flatten(1, 2)
++        self._gather_slot = 0
++        self._gather_stream: torch.cuda.Stream | None = None
++        self._h2d_events: list[torch.cuda.Event | None] = [None, None]
+         self._shards: dict[int, torch.Tensor] | None = {}
+         self._shard_size = 0
+         self._bound = False
+@@ -155,11 +164,21 @@ class Qwen4ExpPLEFileGatherEmbedding(Qwen4ExpPLEEmbedding):
+         self._bound = True
+ 
+     def stage_rows(self, num_tokens: int) -> None:
+-        """Read the rows for ``_host_ids[:num_tokens]`` and copy them to staging."""
++        """Lockstep path: gather slot-0 ids and copy them to staging."""
++        drained = self._h2d_events[0]
++        if drained is not None:
++            drained.synchronize()
++        self._pread_slot(0, num_tokens)
++        self._staging[:num_tokens].copy_(
++            self._host_rows[0][:num_tokens], non_blocking=True
++        )
++
++    def _pread_slot(self, slot: int, num_tokens: int) -> None:
++        """Read the rows for ``_host_ids[slot]`` into pinned ``_host_rows[slot]``."""
+         if self._shards is None or not self._bound:
+             raise RuntimeError("PLE host file gather is unbound or was reloaded")
+-        ids = self._host_ids[:num_tokens].flatten()
+-        out = self._host_rows[:num_tokens].flatten(0, 1).view(torch.uint8)
++        ids = self._host_ids[slot][:num_tokens].flatten()
++        out = self._host_rows[slot][:num_tokens].flatten(0, 1).view(torch.uint8)
+         if not self._fds:
+             out.zero_()
+         else:
+@@ -179,7 +198,7 @@ class Qwen4ExpPLEFileGatherEmbedding(Qwen4ExpPLEEmbedding):
+                 os.posix_fadvise(
+                     fd, lo * page, (hi - lo + 1) * page, os.POSIX_FADV_WILLNEED
+                 )
+-            rows = self._rows[: ids.numel()]
++            rows = self._rows[slot][: ids.numel()]
+             for row, fd, offset in zip(
+                 rows.numpy(), self._fds_t[shard].tolist(), start.tolist()
+             ):
+@@ -189,9 +208,6 @@ class Qwen4ExpPLEFileGatherEmbedding(Qwen4ExpPLEEmbedding):
+                         f"truncated at offset {offset}"
+                     )
+             torch.index_select(rows, 0, inverse, out=out)
+-        self._staging[:num_tokens].copy_(
+-            self._host_rows[:num_tokens], non_blocking=True
+-        )
+ 
+     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+         """Return the rows staged for this step."""
+@@ -480,6 +496,10 @@ class Qwen4ExpNGramEmbedding(nn.Module):
+             )
+         input_ids = input_ids.long()
+         query_start_loc = query_start_loc.long()
++        host_const = input_ids.device.type != "cuda"
++        multipliers = (
++            self.layer_multipliers.cpu() if host_const else self.layer_multipliers
++        )
+         positions = torch.arange(num_tokens, device=input_ids.device, dtype=torch.int64)
+         packed = torch.full(
+             (num_reqs, num_tokens),
+@@ -517,13 +537,14 @@ class Qwen4ExpNGramEmbedding(nn.Module):
+         for ngram in range(2, self.ngram_size + 1):
+             start = (ngram - 2) * self.heads_per_ngram
+             end = start + self.heads_per_ngram
+-            mixed = shifted[0] * self.layer_multipliers[0]
++            mixed = shifted[0] * multipliers[0]
+             for index in range(1, ngram):
+-                mixed = torch.bitwise_xor(
+-                    mixed, shifted[index] * self.layer_multipliers[index]
+-                )
++                mixed = torch.bitwise_xor(mixed, shifted[index] * multipliers[index])
+             sizes = self.ngram_heads_vocab_sizes[start:end]
+             offsets = self.ngram_heads_offsets[start:end]
++            if host_const:
++                sizes = sizes.cpu()
++                offsets = offsets.cpu()
+             ids = torch.remainder(mixed.unsqueeze(-1), sizes) + offsets
+             id_blocks.append(ids[request_indices, adjusted_columns])
+         return torch.cat(id_blocks, dim=-1)
+@@ -675,17 +696,129 @@ class Qwen4ExpNGramEmbedding(nn.Module):
+         return loaded
+ 
+ 
++class _GatherPipeline:
++    """Background preadv + H2D for host-planned (pure-prefill) staging steps.
++
++    Prefill rows are host-computable: every prompt token reached the worker
++    in ``NewRequestData.prefill_token_ids``, so ids need no GPU round-trip.
++    The worker copies pinned ids, snapshots an order event on the main
++    stream, and submits. The gather thread preadvs rows (overlapping the
++    GPU's in-flight forward), then enqueues ``wait(order); H2D; barrier``
++    on the per-module side stream. The worker waits ONLY the thread's
++    enqueue (bounded by gather time, never the GPU backlog) and places the
++    barrier before this step's forward, so the staging write can neither
++    race the previous forward's read nor this one's.
++
++    Device staging stays single-buffered (graph capture bakes its
++    address); the pinned host slot is double-buffered and the thread
++    CPU-waits its own slot's previous barrier before overwriting.
++    """
++
++    _STOP = object()
++
++    def __init__(self) -> None:
++        self._jobs: queue.SimpleQueue = queue.SimpleQueue()
++        self.error: BaseException | None = None
++        self._thread = threading.Thread(
++            target=self._run, daemon=True, name="ple-gather"
++        )
++        self._thread.start()
++
++    def submit(
++        self,
++        jobs: list[
++            tuple["Qwen4ExpPLEFileGatherEmbedding", int, int, "torch.cuda.Event"]
++        ],
++    ) -> tuple[threading.Event, list["torch.cuda.Event | None"]]:
++        handoff = threading.Event()
++        barriers: list[torch.cuda.Event | None] = [None] * len(jobs)
++        self._jobs.put((jobs, barriers, handoff))
++        return handoff, barriers
++
++    def join_step(
++        self,
++        step: tuple[threading.Event, list["torch.cuda.Event | None"]],
++        current: "torch.cuda.Stream",
++    ) -> None:
++        handoff, barriers = step
++        handoff.wait()
++        if self.error is not None:
++            raise self.error
++        for barrier in barriers:
++            assert barrier is not None
++            current.wait_event(barrier)
++
++    def stop(self) -> None:
++        self._jobs.put(self._STOP)
++
++    def _run(self) -> None:
++        while True:
++            item = self._jobs.get()
++            if item is self._STOP:
++                return
++            jobs, barriers, handoff = item
++            try:
++                for index, (emb, slot, num_tokens, order_event) in enumerate(jobs):
++                    prev = emb._h2d_events[slot]
++                    if prev is not None:
++                        prev.synchronize()
++                    emb._pread_slot(slot, num_tokens)
++                    stream = emb._gather_stream
++                    if stream is None:
++                        stream = emb._gather_stream = torch.cuda.Stream()
++                    with torch.cuda.stream(stream):
++                        stream.wait_event(order_event)
++                        emb._staging[:num_tokens].copy_(
++                            emb._host_rows[slot][:num_tokens], non_blocking=True
++                        )
++                        barrier = torch.cuda.Event()
++                        barrier.record(stream)
++                    emb._h2d_events[slot] = barrier
++                    barriers[index] = barrier
++            except BaseException as exc:
++                self.error = exc
++            finally:
++                handoff.set()
++
++
+ def stage_checkpoint_rows(
+     modules: list[Qwen4ExpNGramEmbedding],
+     input_ids: torch.Tensor,
+     query_start_loc: torch.Tensor,
+     ngram_context: torch.Tensor,
++    pipeline: _GatherPipeline | None = None,
++    host_ids: dict[Qwen4ExpNGramEmbedding, torch.Tensor] | None = None,
+ ) -> None:
+-    """Stage host-file-gather PLE rows for one step behind a single stream sync."""
++    """Stage host-file-gather PLE rows for one step.
++
++    Fast path: ``host_ids`` (pure-prefill batches) goes through the gather
++    pipeline with no GPU round-trip. Anything else (decode, mixed, host
++    data unavailable, pipeline disabled) takes the legacy lockstep path,
++    which syncs the main stream after the id D2H.
++    """
+     num_tokens = input_ids.shape[0]
++    if (
++        pipeline is not None
++        and host_ids is not None
++        and input_ids.device.type == "cuda"
++    ):
++        current = torch.cuda.current_stream()
++        jobs = []
++        for module in modules:
++            emb = module.ngram_embedding
++            slot = emb._gather_slot
++            emb._gather_slot = 1 - slot
++            ids = host_ids[module]
++            emb._host_ids[slot][: ids.shape[0]].copy_(ids, non_blocking=True)
++            order_event = torch.cuda.Event()
++            order_event.record(current)
++            jobs.append((emb, slot, ids.shape[0], order_event))
++        pipeline.join_step(pipeline.submit(jobs), current)
++        return
++
+     for module in modules:
+         ids = module.compute_ngram_ids(input_ids, query_start_loc, ngram_context)
+-        module.ngram_embedding._host_ids[:num_tokens].copy_(ids, non_blocking=True)
++        module.ngram_embedding._host_ids[0][:num_tokens].copy_(ids, non_blocking=True)
+     if input_ids.device.type != "cpu":
+         torch.accelerator.current_stream().synchronize()
+     for module in modules:
+@@ -693,5 +826,12 @@ def stage_checkpoint_rows(
+ 
+ 
+ __all__ = [
++    "Qwen4ExpPLEDeviceEmbedding",
++    "Qwen4ExpPLEEmbedding",
++    "Qwen4ExpPLEEmbeddingMethod",
++    "Qwen4ExpPLEFp8EmbeddingMethod",
++    "Qwen4ExpPLENvFp4EmbeddingMethod",
++    "Qwen4ExpPLEPinnedHostEmbedding",
++    "Qwen4ExpPLEUnquantizedEmbeddingMethod",
+     "Qwen4ExpNGramEmbedding",
+ ]
+-- 
+2.55.0
+
