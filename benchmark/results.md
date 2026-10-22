@@ -1666,7 +1666,7 @@ spread is sync-vs-cadence, not disk.
   current forward, so a step could read `_staging` while its own H2D was
   writing it. Self-consistent staleness is invisible to self-comparing gates;
   use a two-path logprob diff for storage or pipeline swaps.
-- 0013 v2 (this patch, prefill-ahead): pure-prefill steps need no GPU
+- 0013 v2 (prefill-ahead; shelved 2026-10-22, see the battery below): pure-prefill steps need no GPU
   round-trip; prompt tokens are host-known. Model state mirrors
   `NewRequestData.prefill_token_ids` per request, computes ngram ids on the
   CPU for batches that are prefill-only, draft-free, and mirror-covered, and
@@ -1675,8 +1675,9 @@ spread is sync-vs-cadence, not disk.
   keep the lockstep path. CPU tests: mirror-sliced ids == `compute_ngram_ids`
   == `_reference_ngram_ids` (parity test).
 
-Knobs: VLLM_PLE_GATHER_PIPELINE=0 forces lockstep for prefill batches;
-VLLM_PLE_GATHER_SYNC=1 restores pre-pipeline behavior everywhere.
+Knobs (as shelved): VLLM_PLE_GATHER_PIPELINE defaults 0 (lockstep for all
+steps); =1 enables the prefill-ahead fast path for a rerun.
+VLLM_PLE_GATHER_SYNC=1 disables the pipeline machinery entirely.
 
 ### 0013 v2 hardware battery (2026-10-22, boot-4x-1m.log 11:07, tree 0010+0012+0013)
 
@@ -1707,9 +1708,12 @@ waiting was never the batch bottleneck, so hiding it cannot recover the
 cadence, and the worker CPU cost taxes every prefill step that used to
 run clean. Raw: logs/pipe2-*.json.
 
-Decision pending: shelve 0013 (default the fast path off or drop the
-commit) and keep 0010+0012 lockstep, which beat pinned at 100/4 median
-(~295 vs ~353) while freeing 47.6 GB of pinned RAM and 27 s of boot. A
-same-boot VLLM_PLE_GATHER_PIPELINE=0 rerun would attribute the
-cross-boot delta exactly; optional. The salt-step rule is now in the
-bench protocol notes.
+Decision (2026-10-22): 0013 is shelved, not promoted. The lab branch keeps
+the commit as a documented dead end; the export is regenerated with
+VLLM_PLE_GATHER_PIPELINE defaulting to 0, so the fast path is off unless a
+rerun opts in. Promote 0010+0012 lockstep only: it beat pinned at 100/4
+median (~295 vs ~353) while freeing 47.6 GB of pinned RAM and 27 s of boot.
+A same-boot lockstep rerun would still pin the exact pipeline-vs-lockstep
+delta, since the sync-era 276-380 spread predates the salt-step rule and may
+itself be partly salt-inflated. The salt-step rule is now in the bench
+protocol notes.
