@@ -1817,7 +1817,16 @@ Two conclusions, both now on fair ground:
 - io_uring, even hand-written in C and batched, does NOT beat a C preadv loop
   for page-cache-resident reads (38-46 vs 32 ms): there is no device latency
   to overlap, so the per-SQE prep and enter just add work over a syscall the
-  kernel services in ~1 us of copy. pyuring (the main maintained Python
-  io_uring lib) does not build on this host (needs liburing-dev headers, not
-  installed, and no apt on the serving box). io_uring is closed; a C preadv
-  gather helper is the open, worthwhile option.
+  kernel services in ~1 us of copy.
+
+After `liburing-dev` was installed, pyuring 0.3.3 - the only real Python
+io_uring library - was measured on the identical gather through its
+`UringCtx` ring: 163 ms, correct (5x slower than the Python preadv loop it
+aims to replace). It is a ctypes wrapper over liburing, paying per-op Python
+FFI plus one blocking `wait_completion` per CQE, and it has no batch
+scatter-read API (high-level surface is `copy`/`write_many`; reads are
+sequential `AsyncFile`). Linking the C extension against liburing proper was
+considered and skipped: the raw-UAPI ring already submits and reaps with one
+enter per window, which is what liburing does, and it still loses to C
+preadv. io_uring is closed on four grounds (ctypes, numpy ring, raw C,
+library); a C preadv gather helper is the open, worthwhile option.
