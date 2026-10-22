@@ -1755,26 +1755,38 @@ io_uring_setup and scattered buffered reads work from this container despite
 apparmor noise in dmesg; `io_uring_disabled=0` on the kernel.
 
 Measured on the real workload shape (32,768 scattered 2 KB page-cache-hot
-reads, deduped, same file):
+reads across 16 shard files, warmed; best of 5 per config; all variants
+byte-checked correct):
 
-| path | time | vs preadv |
+| path | ms | vs preadv |
 |---|---|---|
-| current per-row `os.preadv` loop | 49.9 ms | 1.00x |
-| io_uring, ctypes per-SQE fill, naive reap | 100.6 ms | 0.49x |
-| io_uring, numpy-SQE fill + vectorized reap | 61.0 ms | 0.82x |
+| current per-row `os.preadv` loop | 47.5 | 1.00x |
+| io_uring, per-SQE ctypes fill, naive reap | 100.6 | 0.49x |
+| io_uring, numpy-SQE fill, vectorized reap | 61.0 | 0.82x |
+| io_uring, contiguous slice fill, sync issue | 56.9 | 0.84x |
+| io_uring, IOSQE_ASYNC (default workers) | 47.5 | 1.00x |
+| io_uring, IOSQE_ASYNC + fixed-file table | 47.7 | 1.00x |
+| io_uring, IOSQE_ASYNC + 16 io-wq workers | 53.8 | 0.88x |
+| io_uring, IOSQE_ASYNC + 32 io-wq workers | 55.4 | 0.86x |
 
-Correctness of the ring path was fully verified (all rows byte-checked).
-
-Why it loses: the syscall trap is not the cost - ~0.3 us each; the per-row
-kernel work (page-cache lookup + 2 KB copy) is identical in both paths, and
-Python-side ring bookkeeping (fill + reap) adds back more than the traps it
-removes. io_uring pays when reads WAIT on the device (O_DIRECT, deep queue)
-or in C where a slot write is two pointer bumps. pidstat already showed the
-table is page-cache resident (0.8-144 kB/s reads in steady state), so there
-is no device wait left to win. The existing FADV_WILLNEED readahead covers
-the miss case asynchronously.
+The ctypes fill was indeed slow (three rebuilds halved the ring path:
+per-SQE field pokes -> numpy structured fill -> contiguous slice writes
+with strided CQ views and zero per-row FFI; along the way SQE stride is
+64 B not 128 B, CQ fields need stride-4/stride-2 slicing, and resetting
+kernel-owned ring pointers between batches silently no-ops the next
+submit - never do it). But the optimized ring only TIES the preadv loop,
+and extra io-wq workers make it worse (dispatch cost; same-file reads
+serialize on io-wq hash-wait). That is the real finding: the syscall
+trap is ~0.3 us inside ~1.4 us of unavoidable per-read VFS work (page
+lookup + 2 KB copy + file read helpers), which both paths pay identically.
+pidstat already showed the table page-cache resident (0.8-144 kB/s in
+steady state), so there is no device wait for io_uring to overlap. The
+existing FADV_WILLNEED readahead covers the cold-miss case asynchronously.
+SQPOLL was not pursued (needs CAP_SYS_NICE; enter is already one call
+per batch).
 
 The CPU time in staging is real (~15-20 ms per 2048-token step at batch,
 matching the +8 s cold gap vs pinned) but it is memcpy-bound; fewer syscalls
 does not touch it. Prototype kept at
-`experiments/ple_gather_iouring_probe.py` (runnable, self-checking).
+`experiments/ple_gather_iouring_probe.py` (runnable, self-checking; rebuild
+history in the table).
