@@ -1790,3 +1790,34 @@ matching the +8 s cold gap vs pinned) but it is memcpy-bound; fewer syscalls
 does not touch it. Prototype kept at
 `experiments/ple_gather_iouring_probe.py` (runnable, self-checking; rebuild
 history in the table).
+
+#### ctypes was the confound - proper C extension re-run (2026-10-22, same day)
+
+The ctypes table above measured Python loop vs Python ring; both carried the
+same per-iteration CPython cost, which is why they "tied". Rebuilt the two
+gatherers as a raw-syscall C extension (`experiments/ple_gather_c.c`, no
+liburing - only the kernel UAPI header, so it builds on the serving host with
+`cc -O2 -shared -fPIC`) and re-ran the identical 32,768-row warm read. Two
+C-ring bugs had to be fixed first: a static ring left half-drained by a failed
+call poisoned the next, and `io_uring_enter` needs its trailing sigset args
+passed explicitly (varargs syscall left them garbage -> EINVAL).
+
+| loop, all byte-correct | ms | vs C preadv |
+|---|---|---|
+| Python `os.preadv` loop (today's shape) | 56.4 | 0.56x |
+| C `preadv` loop | 31.7 | 1.00x |
+| C io_uring sync (submit-all/wait-all) | 38.3 | 0.83x |
+| C io_uring IOSQE_ASYNC | 45.6 | 0.70x |
+
+Two conclusions, both now on fair ground:
+- The real lever is the loop language, not the submission mechanism. Moving
+  the per-row gather from Python to a C preadv loop is ~1.8x (56 -> 32 ms)
+  because CPython's per-call overhead dominates 32k tiny calls, not the
+  kernel. That is the change that would recover GPU0 utilization.
+- io_uring, even hand-written in C and batched, does NOT beat a C preadv loop
+  for page-cache-resident reads (38-46 vs 32 ms): there is no device latency
+  to overlap, so the per-SQE prep and enter just add work over a syscall the
+  kernel services in ~1 us of copy. pyuring (the main maintained Python
+  io_uring lib) does not build on this host (needs liburing-dev headers, not
+  installed, and no apt on the serving box). io_uring is closed; a C preadv
+  gather helper is the open, worthwhile option.
