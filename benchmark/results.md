@@ -2261,3 +2261,43 @@ falls to BF16 because k/v are ignored, plus the MTP module). Quality bar
 unchanged: needles, canary, corpus floors, not bit-identity. VRAM watch:
 about +0.2 GB per stage for the int8 copies, note it if the pool line
 drops below 5.05M.
+
+### Boot B (0016 dense W8A8, retry #3): PASS, prefill +5-6% (2026-10-23 10:43-12:11)
+
+Tree = 10-patch series + 0016 only (fresh re-am, export sha fc9676cd, boot
+log claim lines 39/36/36/33 + MTP 3, pool 4,958,208 = -2.5% vs 5,086,567,
+the expected int8-copy cost). All 18 steps rc=0, every cell bg=0/0, zero
+preempts including oversub on the smaller pool. Raw: logs/battery-v2-boot-b/.
+
+| gate | boot B | boot A / mmap ref |
+|---|---|---|
+| needles | pass | pass |
+| floor (boot vs own repeat) | 8.725% flips, KL p50 0.0001 | A: 7.743% |
+| value vs mmap ref | 9.432% flips = floor +0.7pp | expected shift (dense logits change) |
+| accept-window (fixed salt 7770) | 4.998 (n=3) | 4.992 / 5.000 |
+| corpus greedy (acc win, two runs) | 2.902, 2.904 | A: 2.991, 3.166; floor >2.9 |
+| corpus sampled (acc win) | 2.389, 2.384 | A: 2.108, 2.367; floor >2.0 |
+| sampled/greedy ratio | 0.823 | floor >0.65 |
+| cold trio TTFT | 85.5 / 85.4 / 85.4 s | 90.2-90.6 |
+| 100/4 sustained | 360.9 / 363.9 / 364.7 / 367.2 | ref median 356.7 |
+| 100/4 in_tps | 11668-11847 (spread 1.5%) | A: 9352-11173 |
+
+Prefill is the target and it moved: cold TTFT -5.3%, cold in_tps +5-6%,
+n4 in_tps +6% vs boot A's clean median with a tighter spread (A's quartet
+ranged 9352-11173, B's 11668-11847). Quality controls hold: the
+fixed-content accept-window is unchanged, corpus floors pass in both probe
+runs, needles pass, KL medians at noise level.
+
+Two observations, neither a gate failure. (1) The within-boot floor itself
+reads +1pp vs boot A (8.725 vs 7.743); with dense numerics changed the
+repeat-pair flips shift slightly, and the vs-reference number (+0.7pp above
+this boot's own floor) is the correct comparison. (2) The third cold salt
+drifted via canary (match 0.0, acc 3.72) exactly as boot A's third cold
+salt did, and E3/deep read -4.6/-5.8% sustained with acceptance moving 1:1
+(4.97->4.55 on E3's salted content). 0016 cannot alter decode numerics
+(all captured and plateau batches are far below the M=512 gate), and the
+fixed-salt control is identical, so these are content effects. Deep-plateau
+level is the one residual to glance at on Boot C.
+
+Verdict: 0016 certified quality-neutral and +5-6% on prefill-dominated
+cells. Boot C (0015+0016 together, both envs) awaits the next owner boot.
