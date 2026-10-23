@@ -2352,3 +2352,19 @@ Series is 12 patches on 8407bc0bb6, tree `1882eb0cb1f20493faf233debeac06be108f59
 Both remain opt-in: `VLLM_QWEN4EXP_DRAFT_W8A8` and
 `VLLM_QWEN4EXP_DENSE_W8A8` default off. The serve script is untouched;
 flipping production is an owner boot decision.
+
+### Series rebased onto 4bceda5dbf (2026-10-23)
+
+12 patches from base 8407bc0bb6 moved +256 upstream commits to
+4bceda5dbf (newest main with a live cu130 wheel, dev390). Zero conflicts;
+the series delta is byte-identical except one dead variable ruff flagged in
+patch 6's test (squashed into that commit). Replay verified: the twelve new
+exports applied to the pristine base give tree
+`fff72613e0ec6997fd455d31b14d292d402618c7`, same as the branch. CPU suites:
+312 pass, 11 test_ple env failures identical to the pristine base. New
+upstream dependency on the serve import path: orjson (comes with the pinned
+wheel install). Nothing upstream merged that makes a patch redundant; the
+range holds no Qwen4Exp model changes except an MM-encoder PP skip. Fender
+keeps running the old-base tree (same content, banner dev145) until the
+owner reinstalls on the new base; boot check after that reinstall is the
+usual one-line gate plus needles, no full battery.

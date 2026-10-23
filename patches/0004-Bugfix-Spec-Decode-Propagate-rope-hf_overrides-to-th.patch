@@ -1,7 +1,7 @@
-From 8d5c3ddbb2f3f7015b7f321ed14524a4dd278b98 Mon Sep 17 00:00:00 2001
+From e191413b0740c3fac95ef8e27799d946974c8630 Mon Sep 17 00:00:00 2001
 From: gokay-ai <60583610+gokay-ai@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 04/10] [Bugfix][Spec Decode] Propagate rope hf_overrides to
+Subject: [PATCH 04/12] [Bugfix][Spec Decode] Propagate rope hf_overrides to
  the MTP draft
 
 Covers the --hf-overrides YaRN path: nested text_config.rope_parameters
@@ -163,11 +163,11 @@ index 39ebd7924b..65d9af5020 100644
  def test_callable_overrides_reach_the_draft_config():
      """A callable override (config-to-config transform) composes with the
 diff --git a/vllm/config/model.py b/vllm/config/model.py
-index 78dfeee653..3e5dead69c 100644
+index 2f306215ff..58b935599e 100644
 --- a/vllm/config/model.py
 +++ b/vllm/config/model.py
-@@ -513,8 +513,8 @@ class ModelConfig:
-             )
+@@ -524,8 +524,8 @@ class ModelConfig:
+             factors["mm_enable_mm_embeds"] = self.multimodal_config.enable_mm_embeds
          return hash_factors(factors)
  
 +    @staticmethod
@@ -176,7 +176,7 @@ index 78dfeee653..3e5dead69c 100644
          target: PreTrainedConfig | dict[str, Any],
          updates: dict[str, Any],
      ) -> None:
-@@ -532,7 +532,7 @@ class ModelConfig:
+@@ -543,7 +543,7 @@ class ModelConfig:
                      isinstance(nested_target, dict)
                      or hasattr(nested_target, "__dict__")
                  ):
@@ -185,7 +185,7 @@ index 78dfeee653..3e5dead69c 100644
                      continue
  
              # Set the value (base case)
-@@ -541,8 +541,8 @@ class ModelConfig:
+@@ -552,8 +552,8 @@ class ModelConfig:
              else:
                  setattr(target, key, value)
  
@@ -195,7 +195,7 @@ index 78dfeee653..3e5dead69c 100644
          config: PreTrainedConfig,
          overrides: dict[str, Any],
      ) -> None:
-@@ -553,7 +553,7 @@ class ModelConfig:
+@@ -564,7 +564,7 @@ class ModelConfig:
              attr = getattr(config, key, None)
              if attr is not None and isinstance(attr, PreTrainedConfig):
                  # It's a nested config - recursively update it
@@ -205,7 +205,7 @@ index 78dfeee653..3e5dead69c 100644
                  # It's a dict-valued parameter - set it directly
                  setattr(config, key, value)
 diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
-index d6c0dcc867..b82eea181e 100644
+index 1f4a04ef0c..70ed68f678 100644
 --- a/vllm/config/speculative.py
 +++ b/vllm/config/speculative.py
 @@ -35,6 +35,30 @@ else:
@@ -239,7 +239,7 @@ index d6c0dcc867..b82eea181e 100644
  MTPModelTypes = Literal[
      "deepseek_mtp",
      "dots3_note_mtp",
-@@ -1123,9 +1147,40 @@ class SpeculativeConfig:
+@@ -1147,9 +1171,40 @@ class SpeculativeConfig:
          hf_config = SpeculativeConfig.hf_config_override(hf_config)
          return target_hf_overrides(hf_config)
  
@@ -280,7 +280,7 @@ index d6c0dcc867..b82eea181e 100644
      ) -> Callable[[PreTrainedConfig], PreTrainedConfig]:
          """Build the ``hf_overrides`` for the draft ``ModelConfig``.
  
-@@ -1133,8 +1188,16 @@ class SpeculativeConfig:
+@@ -1157,8 +1212,16 @@ class SpeculativeConfig:
          (e.g. test harnesses shrinking ``num_hidden_layers``) and must also
          reach the draft config — otherwise a draft belonging to a large
          target is instantiated at full size even when the target is shrunk.
@@ -299,7 +299,7 @@ index d6c0dcc867..b82eea181e 100644
  
          The composed override must stay picklable: the draft ``ModelConfig``
          is sent to spawned engine-core processes, so a local closure would
-@@ -1142,11 +1205,25 @@ class SpeculativeConfig:
+@@ -1166,11 +1229,25 @@ class SpeculativeConfig:
          target via ``functools.partial`` over a module-referenceable static
          method instead.
          """
@@ -327,7 +327,7 @@ index d6c0dcc867..b82eea181e 100644
          )
  
      @staticmethod
-@@ -1315,11 +1392,9 @@ class SpeculativeConfig:
+@@ -1339,11 +1416,9 @@ class SpeculativeConfig:
              self.prompt_lookup_min = 0
  
              if self.model is not None:

@@ -1,7 +1,7 @@
-From 9022c0fb1c6fe2149d1d43b3e798c630906f308f Mon Sep 17 00:00:00 2001
+From 683eb8ba86e170ffa4b31c10b88a43a892055df8 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Wed, 21 Oct 2026 19:22:07 +0200
-Subject: [PATCH 09/10] [Model Loader][Qwen4Exp] Serve PLE rows from checkpoint
+Subject: [PATCH 09/12] [Model Loader][Qwen4Exp] Serve PLE rows from checkpoint
  files via page cache (host_file_gather)
 
 Adopt upstream PR #58815: --engram-config '{"host_file_gather": true}'
@@ -581,10 +581,10 @@ index b4382ebd15..166d7c9154 100644
      conv_state_len = 6
      dilation = 2
 diff --git a/tests/test_config.py b/tests/test_config.py
-index 985af62845..04ea0ff3d5 100644
+index cb52aea7b7..4999cf63d0 100644
 --- a/tests/test_config.py
 +++ b/tests/test_config.py
-@@ -1615,7 +1615,9 @@ def test_engram_tensor_parallel_size(dp_size: int, across_dp: bool, expected: in
+@@ -1660,7 +1660,9 @@ def test_engram_tensor_parallel_size(dp_size: int, across_dp: bool, expected: in
      assert config.get_parallel_size(parallel) == expected
  
  
@@ -595,7 +595,7 @@ index 985af62845..04ea0ff3d5 100644
  def test_engram_rejects_elastic_cross_dp(option):
      parallel = ParallelConfig(
          tensor_parallel_size=4,
-@@ -1839,12 +1841,46 @@ def test_engram_draft_config_validates_target(monkeypatch, target_has_ple, expli
+@@ -1884,12 +1886,46 @@ def test_engram_draft_config_validates_target(monkeypatch, target_has_ple, expli
              assert config.engram_config.cpu_offload is True
  
  
@@ -643,7 +643,7 @@ index 985af62845..04ea0ff3d5 100644
      assert len({config.compute_hash() for config in configs}) == len(configs)
  
 diff --git a/vllm/config/engram.py b/vllm/config/engram.py
-index 7a7ed8f277..16113760c5 100644
+index 156f6fca05..1c0457669c 100644
 --- a/vllm/config/engram.py
 +++ b/vllm/config/engram.py
 @@ -37,6 +37,11 @@ class EngramConfig:
@@ -658,7 +658,7 @@ index 7a7ed8f277..16113760c5 100644
      embedding_across_dp: bool = False
      """Shard embeddings across TP and all DP ranks when enabled.
      Otherwise, each DP rank has a separate TP-sharded embedding replica."""
-@@ -80,6 +85,11 @@ class EngramConfig:
+@@ -81,6 +86,11 @@ class EngramConfig:
                  "EngramConfig requires a model with supported Engram "
                  "embeddings and non-empty n-gram layer ids."
              )
@@ -670,7 +670,7 @@ index 7a7ed8f277..16113760c5 100644
  
      def resolve_dp_shared_memory(self, parallel_config: "ParallelConfig") -> None:
          """Share host tables by default wherever the configuration permits."""
-@@ -106,6 +116,8 @@ class EngramConfig:
+@@ -107,6 +117,8 @@ class EngramConfig:
              raise ValueError(
                  "Engram embedding_across_dp is not supported with elastic EP yet."
              )
