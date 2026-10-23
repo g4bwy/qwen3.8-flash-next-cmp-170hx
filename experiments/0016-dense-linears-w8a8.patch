@@ -1,59 +1,60 @@
-From df6d66bbd1d84c828374572fc13981988ac6a050 Mon Sep 17 00:00:00 2001
+From 8a58ee814c43831211cc279ee8cabaf2943d9836 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
-Date: Fri, 23 Oct 2026 09:51:25 +0200
-Subject: [PATCH] [Perf][Qwen4Exp] Score dense FP8 linears as W8A8 int8 on
+Date: Fri, 23 Oct 2026 10:09:31 +0200
+Subject: [PATCH] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8 on
  sm_80
 
-sm_80 has no FP8 tensor cores, so Qwen4Exp's dense linears (attention
-qkv/o, GDN projections, dense and shared MLP) run bf16 GEMMs on
-dequantized weights: the shipped checkpoint is block-128 FP8
-(weight_block_size [128,128]), which leaves the selector no tensor-core
-path at all. A W8A8 shootout on this box measures CUTLASS int8 at
-1.29-1.68x over that path at the production prefill chunk (M=2048),
+The shipped FP8 checkpoint quantizes only the routed experts: its
+quantization_config lists every dense linear (attention qkv/o, GDN
+projections, shared MLP) in modules_to_not_convert, so those layers
+load bf16 weights and run the unquantized GEMM dispatch. sm_80 int8
+tensor cores run at twice the bf16 rate on half the weight bytes, and
+a W8A8 shootout on this box measures CUTLASS int8 at 1.29-1.68x over
+the deployed dense GEMM at the production prefill chunk (M=2048),
 per-token activation quant included, with int8 losing only below ~2M
 weight elements or K<1024.
 
-VLLM_QWEN4EXP_DENSE_W8A8=1 (default off) walks the model once and swaps
-the quant method of eligible dense linears to a subclass that
-round-trips the effective bf16 weight to per-output-channel int8 once
-at process_weights_after_loading - from canonical checkpoint bytes,
-before the FP8 kernel rewrites them in place - then scores
-prefill-sized batches with dynamic per-token quant plus
-cutlass_scaled_mm. Block-128 grids requantize by row blocks (the fp32
-effective weight never materializes whole); per-tensor checkpoints
-take the equivalent single-scale route. Malformed or missing scale
-grids reject rather than quantize wrong.
+VLLM_QWEN4EXP_DENSE_W8A8=1 (default off) walks the model once and
+swaps the quant method of eligible bf16 dense linears to a subclass of
+UnquantizedLinearMethod: round-quantize the loaded weight to
+per-output-channel int8 at process_weights_after_loading (chunked by
+row blocks so fp32 intermediates never materialize the whole weight),
+then score prefill-sized batches with dynamic per-token quant plus
+cutlass_scaled_mm. The exact-type check leaves layers claimed by
+another method (draft W8A8 head, embedding methods, low-latency
+skinny GEMMs) alone.
 
 Everything else keeps today's path: decode batches below M=512 (all
-captured sizes here are <= 80, so replays are untouched), static
-activation scales, bias, MoE experts (grouped int8 loses on this box),
-batch-invariant mode, other architectures, and every GPU but sm_80.
+captured sizes here are <= 80, so replays are untouched), biased
+layers, routers, conv1d, indexer, PLE, MoE experts (grouped int8
+loses on this box), batch-invariant mode, other architectures, and
+every GPU but sm_80.
 
-The int8 cache lives next to the FP8 weight so the fallback stays
-live; costs roughly one extra byte per dense weight element on the
-last stages, listed for boot verification.
+The int8 cache lives next to the bf16 weight so the fallback stays
+live; costs roughly one extra byte per dense weight element, about
+0.2 GB per stage here, listed for boot verification.
 ---
- tests/models/qwen4_exp/test_dense_w8a8.py  | 390 +++++++++++++++++++++
+ tests/models/qwen4_exp/test_dense_w8a8.py  | 292 +++++++++++++++++++++
  vllm/envs.py                               |   9 +
- vllm/models/qwen4_exp/nvidia/dense_w8a8.py | 244 +++++++++++++
+ vllm/models/qwen4_exp/nvidia/dense_w8a8.py | 162 ++++++++++++
  vllm/models/qwen4_exp/nvidia/model.py      |   2 +
  vllm/models/qwen4_exp/nvidia/mtp.py        |   2 +
- 5 files changed, 647 insertions(+)
+ 5 files changed, 467 insertions(+)
  create mode 100644 tests/models/qwen4_exp/test_dense_w8a8.py
  create mode 100644 vllm/models/qwen4_exp/nvidia/dense_w8a8.py
 
 diff --git a/tests/models/qwen4_exp/test_dense_w8a8.py b/tests/models/qwen4_exp/test_dense_w8a8.py
 new file mode 100644
-index 0000000000..321a2f121e
+index 0000000000..42ee27b2e5
 --- /dev/null
 +++ b/tests/models/qwen4_exp/test_dense_w8a8.py
-@@ -0,0 +1,390 @@
+@@ -0,0 +1,292 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +"""CPU tests for the opt-in Qwen4Exp dense W8A8 int8 path.
 +
-+No GPU is needed: CUTLASS and the int8 activation quant are patched, and the
-+quant methods are built without running their FP8 kernel selection.
++No GPU is needed: CUTLASS and the int8 activation quant are patched, and
++the bf16 GEMM dispatch of the parent method is stood in for by a sentinel.
 +"""
 +
 +from types import SimpleNamespace
@@ -63,27 +64,21 @@ index 0000000000..321a2f121e
 +import torch
 +
 +from vllm import envs
-+from vllm.model_executor.layers.quantization.fp8 import Fp8LinearMethod
++from vllm.model_executor.layers.linear import UnquantizedLinearMethod
 +from vllm.models.qwen4_exp.nvidia import dense_w8a8
 +from vllm.models.qwen4_exp.nvidia.dense_w8a8 import (
-+    Qwen4ExpDenseW8A8Fp8LinearMethod,
++    Qwen4ExpDenseW8A8LinearMethod,
 +    enable_qwen4exp_dense_w8a8,
-+    quantize_effective_weight_per_channel,
++    quantize_weight_per_channel,
 +)
 +
-+FP8 = torch.float8_e4m3fn
 +_ELIGIBLE_PREFIX = "model.layers.3.self_attn.qkv_proj"
 +
 +
-+def _bare_fp8_method(
-+    *, block_quant: bool = False, act_q_static: bool = False, block: int = 128
-+):
-+    """An Fp8LinearMethod without the FP8 kernel selection of __init__."""
-+    method = Fp8LinearMethod.__new__(Fp8LinearMethod)
-+    method.block_quant = block_quant
-+    method.act_q_static = act_q_static
-+    method.weight_block_size = [block, block] if block_quant else None
-+    method.keep_state = "fp8_kernel"
++def _bare_unquantized_method(cls=UnquantizedLinearMethod):
++    """An UnquantizedLinearMethod without running __init__'s GEMM dispatch."""
++    method = cls.__new__(cls)
++    method.keep_state = "bf16_gemm"
 +    return method
 +
 +
@@ -93,18 +88,16 @@ index 0000000000..321a2f121e
 +    n: int = 4096,
 +    k: int = 2048,
 +    bias: torch.Tensor | None = None,
-+    dtype: torch.dtype = FP8,
++    dtype: torch.dtype = torch.bfloat16,
 +    method=None,
 +) -> torch.nn.Module:
 +    layer = torch.nn.Module()
 +    layer.prefix = prefix
 +    layer.weight = torch.randn(n, k).clamp(-4, 4).to(dtype)
-+    layer.weight_scale = torch.tensor([0.01, 0.02, 0.03])
-+    layer.logical_widths = [n // 2, n // 4, n // 4]
 +    layer.bias = bias
 +    layer.output_size_per_partition = n
 +    layer.input_size_per_partition = k
-+    layer.quant_method = method if method is not None else _bare_fp8_method()
++    layer.quant_method = method if method is not None else _bare_unquantized_method()
 +    return layer
 +
 +
@@ -141,7 +134,7 @@ index 0000000000..321a2f121e
 +    monkeypatch.setattr(dense_w8a8, "LinearBase", object)
 +    layer = _linear()
 +    enable_qwen4exp_dense_w8a8(_holder(layer))
-+    assert type(layer.quant_method) is Fp8LinearMethod
++    assert type(layer.quant_method) is UnquantizedLinearMethod
 +    assert not hasattr(layer, "_qwen4exp_dense_w8a8")
 +
 +
@@ -150,9 +143,9 @@ index 0000000000..321a2f121e
 +    method = layer.quant_method
 +    enable_qwen4exp_dense_w8a8(_holder(layer))
 +    assert layer.quant_method is method
-+    assert type(method) is Qwen4ExpDenseW8A8Fp8LinearMethod
-+    # The swap keeps the already selected FP8 kernel for the fallback path.
-+    assert method.keep_state == "fp8_kernel"
++    assert type(method) is Qwen4ExpDenseW8A8LinearMethod
++    # The swap keeps the already dispatched bf16 GEMM for the fallback path.
++    assert method.keep_state == "bf16_gemm"
 +
 +
 +@pytest.mark.parametrize(
@@ -164,27 +157,28 @@ index 0000000000..321a2f121e
 +        ({"k": 2047, "n": 8192}, "unaligned K"),
 +        ({"bias": torch.zeros(4096)}, "biased"),
 +        ({"prefix": "model.layers.3.mlp.gate"}, "router"),
-+        ({"prefix": "model.layers.3.linear_attn.conv1d"}, "conv1d"),
-+        ({"prefix": "model.layers.3.self_attn.indexer.index_qk_proj"}, "indexer"),
++        ({"prefix": "model.layers.3.mlp.shared_expert_gate"}, "expert gate"),
++        ({"prefix": "model.layers.3.linear_attn.in_proj_a"}, "ungated GDN proj"),
 +        ({"prefix": "model.layers.3.ple.kv_proj"}, "ple"),
 +        ({"prefix": "lm_head"}, "embedding head"),
-+        ({"dtype": torch.bfloat16}, "not an fp8 checkpoint tensor"),
++        ({"dtype": torch.float32}, "not a bf16/fp16 weight"),
 +        ({"prefix": "model.visual.patch_embed.proj"}, "vision"),
 +    ],
 +)
-+def test_guards_keep_the_fp8_path(int8_env, kwargs, reason) -> None:
++def test_guards_keep_the_bf16_path(int8_env, kwargs, reason) -> None:
 +    layer = _linear(**kwargs)
-+    assert not dense_w8a8._is_eligible(layer, layer.quant_method), reason
++    assert not dense_w8a8._is_eligible(layer), reason
 +    enable_qwen4exp_dense_w8a8(_holder(layer))
-+    assert type(layer.quant_method) is Fp8LinearMethod, reason
++    assert type(layer.quant_method) is UnquantizedLinearMethod, reason
 +
 +
-+@pytest.mark.parametrize("kwargs", [{"act_q_static": True}])
-+def test_guards_reject_other_fp8_schemes(int8_env, kwargs) -> None:
-+    layer = _linear(method=_bare_fp8_method(**kwargs))
-+    assert not dense_w8a8._is_eligible(layer, layer.quant_method)
++def test_subclasses_of_the_bf16_method_are_left_alone(int8_env) -> None:
++    class Claimed(UnquantizedLinearMethod):
++        pass
++
++    layer = _linear(method=_bare_unquantized_method(Claimed))
 +    enable_qwen4exp_dense_w8a8(_holder(layer))
-+    assert type(layer.quant_method) is Fp8LinearMethod
++    assert type(layer.quant_method) is Claimed
 +
 +
 +def test_guards_reject_other_platforms_and_batch_invariant(monkeypatch) -> None:
@@ -199,75 +193,79 @@ index 0000000000..321a2f121e
 +        monkeypatch.setattr(dense_w8a8, "current_platform", platform)
 +        layer = _linear()
 +        enable_qwen4exp_dense_w8a8(_holder(layer))
-+        assert type(layer.quant_method) is Fp8LinearMethod
++        assert type(layer.quant_method) is UnquantizedLinearMethod
 +
 +    _cuda80(monkeypatch)
 +    monkeypatch.setattr(envs, "VLLM_BATCH_INVARIANT", True, raising=False)
 +    layer = _linear()
 +    enable_qwen4exp_dense_w8a8(_holder(layer))
-+    assert type(layer.quant_method) is Fp8LinearMethod
++    assert type(layer.quant_method) is UnquantizedLinearMethod
 +
 +
 +def _dequant(b_int8: torch.Tensor, scale_b: torch.Tensor) -> torch.Tensor:
 +    return b_int8.t().float() * scale_b.t()
 +
 +
-+def _noop_pwal(self, layer) -> None:
-+    """Stand in for the FP8 kernel's weight rewrite in process_weights."""
-+
-+
 +def test_rtn_error_stays_within_half_an_int8_step() -> None:
 +    torch.manual_seed(0)
 +    n, k = 320, 128
-+    weight = torch.randn(n, k).clamp(-4, 4).to(FP8)
-+    weight_scale = torch.tensor([0.002, 0.05])
-+    logical_widths = [n // 2, n // 2]
++    weight = torch.randn(n, k).clamp(-4, 4).to(torch.bfloat16)
 +
-+    b_int8, scale_b = quantize_effective_weight_per_channel(
-+        weight, weight_scale, logical_widths
-+    )
++    b_int8, scale_b = quantize_weight_per_channel(weight)
 +    assert b_int8.shape == (k, n)
 +    assert b_int8.stride() == (1, k), "B must be a column-major (K, N) view"
 +    assert b_int8.dtype == torch.int8
 +    assert scale_b.shape == (1, n) and scale_b.dtype == torch.float32
 +
-+    effective = weight.float() * weight_scale.repeat_interleave(
-+        torch.tensor(logical_widths)
-+    ).unsqueeze(1)
++    effective = weight.float()
 +    error = (_dequant(b_int8, scale_b) - effective).abs().amax(dim=1, keepdim=True)
 +    # RTN is exact within half a quantization step of each output channel, up
 +    # to fp32 rounding of the row magnitude (the bound is tight at a tie).
 +    row_amax = effective.abs().amax(dim=1, keepdim=True)
 +    assert (error <= scale_b.t() * 0.5 + row_amax * 1e-7).all()
 +    assert (b_int8.t().abs() <= 127).all()
++    # A full row reaches the top of the int8 range.
 +    assert (b_int8.t().abs().amax(dim=1) == 127).all()
-+    # The two shards keep their own scale instead of a shared one.
-+    assert scale_b[0, : n // 2].max() < scale_b[0, n // 2 :].min()
 +
 +
 +def test_rtn_handles_a_zero_row_without_blowing_up() -> None:
-+    weight = torch.zeros(4, 8).to(FP8)
-+    b_int8, scale_b = quantize_effective_weight_per_channel(
-+        weight, torch.tensor([0.01]), [4]
-+    )
++    weight = torch.zeros(4, 8, dtype=torch.bfloat16)
++    b_int8, scale_b = quantize_weight_per_channel(weight)
 +    assert torch.isfinite(scale_b).all()
 +    assert (b_int8 == 0).all()
 +
 +
-+def test_single_scale_checkpoint_is_not_read_as_per_shard() -> None:
++def test_rtn_chunking_does_not_change_the_result(monkeypatch) -> None:
 +    torch.manual_seed(0)
-+    n, k = 64, 32
-+    weight = torch.randn(n, k).clamp(-4, 4).to(FP8)
-+    weight_scale = torch.full((3,), torch.finfo(torch.float32).min)
-+    weight_scale[0] = 0.01
++    n, k = 320, 128
++    weight = torch.randn(n, k).clamp(-4, 4).to(torch.bfloat16)
++    whole = quantize_weight_per_channel(weight)
++    monkeypatch.setattr(dense_w8a8, "_QUANT_BLOCK_ELEMS", 32 * 128)
++    chunked = quantize_weight_per_channel(weight)
++    assert torch.equal(whole[0], chunked[0])
++    assert torch.equal(whole[1], chunked[1])
 +
-+    b_int8, scale_b = quantize_effective_weight_per_channel(
-+        weight, weight_scale, [n // 2, n // 4, n // 4]
-+    )
-+    effective = weight.float() * 0.01
-+    error = (_dequant(b_int8, scale_b) - effective).abs()
-+    assert (error <= scale_b.t() / 2 + 1e-9).all()
-+    assert (scale_b > 0).all()
++
++def test_cache_is_built_after_loading_and_weight_is_kept() -> None:
++    n, k = 256, 128
++    layer = _linear(n=n, k=k)
++    seen: list[str] = []
++
++    def fake_parent_pwal(self, target):
++        seen.append("parent")
++
++    method = Qwen4ExpDenseW8A8LinearMethod.__new__(Qwen4ExpDenseW8A8LinearMethod)
++    with patch.object(
++        UnquantizedLinearMethod, "process_weights_after_loading", fake_parent_pwal
++    ):
++        method.process_weights_after_loading(layer)
++
++    assert seen == ["parent"]
++    b_int8, scale_b = layer._qwen4exp_dense_w8a8
++    assert b_int8.shape == (k, n) and b_int8.dtype == torch.int8
++    assert scale_b.shape == (1, n)
++    # The bf16 weight the fallback path and the captured graph use survives.
++    assert layer.weight.dtype is torch.bfloat16
 +
 +
 +def test_apply_uses_int8_only_for_prefill_sized_batches() -> None:
@@ -296,13 +294,11 @@ index 0000000000..321a2f121e
 +        )
 +        return torch.zeros(a.shape[0], b.shape[1], dtype=out_dtype)
 +
-+    def fp8_apply(self, target, x, bias=None):
-+        calls.append(("fp8", x.dim(), x.shape[0]))
++    def bf16_apply(self, target, x, bias=None):
++        calls.append(("bf16", x.dim(), x.shape[0]))
 +        return torch.zeros(x.reshape(-1, x.shape[-1]).shape[0], n, dtype=x.dtype)
 +
-+    method = Qwen4ExpDenseW8A8Fp8LinearMethod.__new__(Qwen4ExpDenseW8A8Fp8LinearMethod)
-+    method.block_quant = False
-+    method.weight_block_size = None
++    method = Qwen4ExpDenseW8A8LinearMethod.__new__(Qwen4ExpDenseW8A8LinearMethod)
 +    layer = _linear(n=n, k=k)
 +    layer._qwen4exp_dense_w8a8 = (
 +        torch.zeros(k, n, dtype=torch.int8),
@@ -313,7 +309,7 @@ index 0000000000..321a2f121e
 +    with (
 +        patch("vllm._custom_ops.scaled_int8_quant", fake_scaled_int8_quant),
 +        patch("vllm._custom_ops.cutlass_scaled_mm", fake_cutlass_scaled_mm),
-+        patch.object(Fp8LinearMethod, "apply", fp8_apply),
++        patch.object(UnquantizedLinearMethod, "apply", bf16_apply),
 +    ):
 +        out = method.apply(layer, x)
 +        assert out.shape == (1024, n) and out.dtype == torch.bfloat16
@@ -328,116 +324,23 @@ index 0000000000..321a2f121e
 +            None,
 +        )
 +
-+        # Decode batches, 3D input, fp32 input, and a bias stay on the FP8 path.
++        # Decode batches, 3D input, fp32 input, and a bias stay on bf16.
 +        calls.clear()
 +        method.apply(layer, torch.randn(256, k, dtype=torch.bfloat16))
 +        method.apply(layer, torch.randn(2, 512, k, dtype=torch.bfloat16))
 +        method.apply(layer, x, bias=torch.zeros(n))
 +        method.apply(layer, torch.randn(1024, k))
 +        assert calls == [
-+            ("fp8", 2, 256),
-+            ("fp8", 3, 2),
-+            ("fp8", 2, 1024),
-+            ("fp8", 2, 1024),
++            ("bf16", 2, 256),
++            ("bf16", 3, 2),
++            ("bf16", 2, 1024),
++            ("bf16", 2, 1024),
 +        ]
 +
-+
-+def test_cache_is_built_before_the_fp8_kernel_rewrites_weight() -> None:
-+    n, k = 128, 64
-+    layer = _linear(n=n, k=k)
-+    layer.logical_widths = [n // 2, n // 2]
-+    layer.weight_scale = torch.tensor([0.01, 0.02])
-+    seen: list[str] = []
-+
-+    def fake_parent_pwal(self, target):
-+        # What Marlin and Humming do: rewrite the canonical fp8 weight.
-+        seen.append("parent")
-+        target.weight = torch.zeros(k, n, dtype=torch.int32)
-+
-+    method = Qwen4ExpDenseW8A8Fp8LinearMethod.__new__(Qwen4ExpDenseW8A8Fp8LinearMethod)
-+    method.block_quant = False
-+    method.weight_block_size = None
-+    with patch.object(
-+        Fp8LinearMethod, "process_weights_after_loading", fake_parent_pwal
-+    ):
-+        method.process_weights_after_loading(layer)
-+
-+    assert seen == ["parent"]
-+    b_int8, scale_b = layer._qwen4exp_dense_w8a8
-+    assert b_int8.shape == (k, n) and b_int8.dtype == torch.int8
-+    assert scale_b.shape == (1, n)
-+
-+    # Weights that arrive already in runtime format build no cache.
-+    runtime_layer = _linear(n=n, k=k)
-+    runtime_layer.weight = torch.zeros(k, n, dtype=torch.int32)
-+    with patch.object(Fp8LinearMethod, "process_weights_after_loading", _noop_pwal):
-+        method.process_weights_after_loading(runtime_layer)
-+    assert not hasattr(runtime_layer, "_qwen4exp_dense_w8a8")
-+
-+    # A pre-processed checkpoint is already in runtime layout, even when its
-+    # dtype and a square shape happen to look canonical.
-+    square = _linear(n=n, k=n)
-+    square.logical_widths = [n // 2, n // 2]
-+    square.weight_scale = torch.tensor([0.01, 0.02])
-+    with (
-+        patch.object(Fp8LinearMethod, "process_weights_after_loading", _noop_pwal),
-+        patch.object(dense_w8a8, "is_weights_pre_processed", lambda: True),
-+    ):
-+        method.process_weights_after_loading(square)
-+    assert not hasattr(square, "_qwen4exp_dense_w8a8")
-+
-+
-+def _block_layer(*, n: int = 1152, k: int = 2048, scale_inv="ok") -> torch.nn.Module:
-+    block = 128
-+    layer = _linear(n=n, k=k, method=_bare_fp8_method(block_quant=True))
-+    layer.weight_scale = torch.tensor([1.0])
-+    layer.logical_widths = [n]
-+    shapes = {
-+        "ok": (n // block, k // block),
-+        "short": (n // block, k // block + 1),
-+        "none": None,
-+    }
-+    shape = shapes[scale_inv]
-+    layer.weight_scale_inv = (
-+        None if shape is None else torch.rand(*shape) * 0.01 + 0.001
-+    )
-+    return layer
-+
-+
-+def test_block_quant_layer_is_swapped_and_cache_built(int8_env) -> None:
-+    layer = _block_layer()
-+    enable_qwen4exp_dense_w8a8(_holder(layer))
-+    assert type(layer.quant_method) is Qwen4ExpDenseW8A8Fp8LinearMethod
-+    method = layer.quant_method
-+    with patch.object(Fp8LinearMethod, "process_weights_after_loading", _noop_pwal):
-+        method.process_weights_after_loading(layer)
-+    b_int8, scale_b = layer._qwen4exp_dense_w8a8
-+    assert b_int8.shape == (2048, 1152) and b_int8.dtype == torch.int8
-+    assert scale_b.shape == (1, 1152)
-+
-+
-+@pytest.mark.parametrize("scale_inv", ["none", "short"])
-+def test_guards_reject_malformed_block_scales(int8_env, scale_inv) -> None:
-+    layer = _block_layer(scale_inv=scale_inv)
-+    enable_qwen4exp_dense_w8a8(_holder(layer))
-+    assert type(layer.quant_method) is Fp8LinearMethod
-+
-+
-+def test_block_requant_matches_elementwise_reference() -> None:
-+    block, n, k = 4, 8, 12
-+    dense_w8a8._QUANT_BLOCK_ELEMS = 1 << 30  # force one chunk, tiny tensor
-+    weight = torch.randn(n, k).clamp(-4, 4).to(FP8)
-+    scales = (torch.rand(n // block, k // block) * 0.02 + 0.001).float()
-+    b_int8, scale_b = dense_w8a8.quantize_block_weight_per_channel(
-+        weight, scales, block
-+    )
-+    effective = weight.float() * scales.repeat_interleave(
-+        block, dim=0
-+    ).repeat_interleave(block, dim=1)
-+    expected_scale = effective.abs().amax(dim=1, keepdim=True) / 127.0
-+    expected = torch.round(effective / expected_scale).clamp_(-127, 127)
-+    assert torch.equal(scale_b.squeeze(), expected_scale.squeeze())
-+    assert torch.equal(b_int8.t(), expected.to(torch.int8))
++        # A layer whose cache was never built stays on bf16 at any size.
++        calls.clear()
++        method.apply(_linear(n=n, k=k), x)
++        assert calls == [("bf16", 2, 1024)]
 diff --git a/vllm/envs.py b/vllm/envs.py
 index 5d3aac6776..36261b5868 100755
 --- a/vllm/envs.py
@@ -467,27 +370,29 @@ index 5d3aac6776..36261b5868 100755
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/models/qwen4_exp/nvidia/dense_w8a8.py b/vllm/models/qwen4_exp/nvidia/dense_w8a8.py
 new file mode 100644
-index 0000000000..343112bd8a
+index 0000000000..0f06eefe07
 --- /dev/null
 +++ b/vllm/models/qwen4_exp/nvidia/dense_w8a8.py
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,162 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-+"""W8A8 int8 scoring for the per-tensor FP8 dense linears of Qwen4Exp.
++"""W8A8 int8 scoring for the dense linears of Qwen4Exp.
 +
-+sm_80 (CMP 170HX) has no FP8 tensor cores, so the dense FP8 linears
-+(attention qkv/o, GDN projections, dense and shared MLP) end up in a bf16
-+GEMM on dequantized weights. A W8A8 shootout on this box (2026-10-22,
-+results.md) measures CUTLASS int8 at 1.29-1.68x over that path at M=2048
-+including the per-token activation quant, and a loss below ~2M weight
-+elements or K<1024.
++The shipped FP8 checkpoint quantizes only the routed experts: its
++quantization_config lists every dense linear (attention qkv/o, GDN
++projections, shared MLP) in modules_to_not_convert, so those layers load
++their bf16 weights and run the unquantized bf16 GEMM. sm_80 (CMP 170HX)
++int8 tensor cores run at twice the bf16 rate on half the weight bytes, and
++a W8A8 shootout on this box (2026-10-22, results.md) measures CUTLASS int8
++at 1.29-1.68x over the deployed dense bf16 GEMM at M=2048, including the
++per-token activation quant.
 +
 +Enable with VLLM_QWEN4EXP_DENSE_W8A8=1. `enable_qwen4exp_dense_w8a8` swaps
-+the quant method of the eligible layers in place; the method requantizes the
-+effective bf16 weight (FP8 block-128 grid, or FP8 times its per-tensor
-+scale) to per-output-channel int8 once, while the checkpoint tensors are
-+still canonical, then scores with dynamic per-token activation quant plus
-+`cutlass_scaled_mm`. Everything else keeps the FP8 path it uses today.
++the quant method of the eligible layers in place; the method round-quantizes
++the loaded bf16 weight to per-output-channel int8 once after loading, then
++scores with dynamic per-token activation quant plus `cutlass_scaled_mm`.
++Batches below the benched size (decode, and everything CUDA graphs captured)
++keep calling the bf16 GEMM with the untouched weight.
 +"""
 +
 +import re
@@ -497,9 +402,10 @@ index 0000000000..343112bd8a
 +from vllm import _custom_ops as ops
 +from vllm import envs
 +from vllm.logger import init_logger
-+from vllm.model_executor.layers.linear import LinearBase
-+from vllm.model_executor.layers.quantization.fp8 import Fp8LinearMethod
-+from vllm.model_executor.utils import is_weights_pre_processed
++from vllm.model_executor.layers.linear import (
++    LinearBase,
++    UnquantizedLinearMethod,
++)
 +from vllm.platforms import current_platform
 +
 +logger = init_logger(__name__)
@@ -519,17 +425,13 @@ index 0000000000..343112bd8a
 +)
 +
 +
-+def quantize_effective_weight_per_channel(
++def quantize_weight_per_channel(
 +    weight: torch.Tensor,
-+    weight_scale: torch.Tensor,
-+    logical_widths: list[int],
 +) -> tuple[torch.Tensor, torch.Tensor]:
-+    """Round-to-nearest the dequantized weight to per-output-channel int8.
++    """Round-to-nearest a bf16 (N, K) weight to per-output-channel int8.
 +
 +    Args:
-+        weight: Checkpoint weight in ``(N, K)`` FP8 layout.
-+        weight_scale: One scale per logical shard of ``N``.
-+        logical_widths: Row counts of those shards, summing to ``N``.
++        weight: Dense weight in the ``(N, K)`` layout it was loaded in.
 +
 +    Returns:
 +        ``(B, scale_b)`` where ``B`` is a ``(K, N)`` column-major int8 view for
@@ -538,97 +440,30 @@ index 0000000000..343112bd8a
 +
 +    """
 +    n, k = weight.shape
-+    scale = weight_scale.float()
-+    # Mirror requantize_with_max_scale: a fused checkpoint carries one scale per
-+    # logical shard, while an unfused one ships a single scale and leaves the
-+    # remaining entries at their init value (see w8a8_utils.py).
-+    per_shard = scale.ndim != 0 and scale[-1] > torch.finfo(torch.float8_e4m3fn).min
-+    if per_shard:
-+        repeats = torch.tensor(logical_widths, device=weight.device, dtype=torch.long)
-+        row_scales = scale.repeat_interleave(repeats)
-+        assert row_scales.shape[0] == n, f"{logical_widths} does not cover {n} rows"
-+    else:
-+        row_scales = scale.max().reshape(1).expand(n)
-+
 +    quantized = torch.empty(n, k, dtype=torch.int8, device=weight.device)
 +    scales = torch.empty(n, 1, dtype=torch.float32, device=weight.device)
-+    step = max(1, _QUANT_BLOCK_ELEMS // k)
++    step = max(1, _QUANT_BLOCK_ELEMS // (2 * k))
 +    for i in range(0, n, step):
 +        block = weight[i : i + step].float()
-+        block *= row_scales[i : i + step].unsqueeze(1)
 +        block_scale = block.abs().amax(dim=1, keepdim=True).clamp_min(1e-8) / 127.0
 +        quantized[i : i + step] = torch.round(block / block_scale).clamp_(-127, 127)
 +        scales[i : i + step] = block_scale
 +    return quantized.t(), scales.t().contiguous()
 +
 +
-+def quantize_block_weight_per_channel(
-+    weight: torch.Tensor,
-+    scale_inv: torch.Tensor,
-+    block: int = 128,
-+) -> tuple[torch.Tensor, torch.Tensor]:
-+    """Round-to-nearest a block-quantized FP8 weight to per-channel int8.
++class Qwen4ExpDenseW8A8LinearMethod(UnquantizedLinearMethod):
++    """BF16 dense linear that also scores as W8A8 int8 through CUTLASS.
 +
-+    Args:
-+        weight: Canonical ``(N, K)`` FP8 checkpoint weight.
-+        scale_inv: ``(N/block, K/block)`` dequant scales, per scale grid cell.
-+        block: Quant block edge.
-+
-+    Returns:
-+        ``(B, scale_b)`` in the same layout as
-+        `quantize_effective_weight_per_channel`.
-+
-+    """
-+    n, k = weight.shape
-+    scales = scale_inv.data.float()
-+    quantized = torch.empty(n, k, dtype=torch.int8, device=weight.device)
-+    out_scales = torch.empty(n, 1, dtype=torch.float32, device=weight.device)
-+    rows = max(block, min(n, (_QUANT_BLOCK_ELEMS // (4 * k)) // block * block))
-+    for i in range(0, n, rows):
-+        count = min(rows, n - i)
-+        block_view = (
-+            weight[i : i + count]
-+            .float()
-+            .reshape(count // block, block, k // block, block)
-+        )
-+        cell_scales = scales[i // block : (i + count) // block]
-+        effective = (block_view * cell_scales[:, None, :, None]).reshape(count, k)
-+        row_scale = effective.abs().amax(dim=1, keepdim=True).clamp_min(1e-8) / 127.0
-+        quantized[i : i + count] = torch.round(effective / row_scale).clamp_(-127, 127)
-+        out_scales[i : i + count] = row_scale
-+    return quantized.t(), out_scales.t().contiguous()
-+
-+
-+class Qwen4ExpDenseW8A8Fp8LinearMethod(Fp8LinearMethod):
-+    """FP8 dense linear that scores as W8A8 int8 through CUTLASS.
-+
-+    Only the compute changes: weights are still loaded, requantized, and kept
-+    in the FP8 runtime format by the parent method, so any batch the int8 path
-+    declines to serve falls back to the FP8 path this deployment uses today.
++    The bf16 weight is kept exactly as the parent method uses it, so any
++    batch the int8 path declines to serve runs the same GEMM (and the same
++    captured CUDA graph) this deployment uses today.
 +    """
 +
 +    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-+        weight = getattr(layer, "weight", None)
-+        n, k = layer.output_size_per_partition, layer.input_size_per_partition
-+        # The cache must be built from the canonical checkpoint tensors, since
-+        # the FP8 kernel below rewrites layer.weight in place (Marlin packs it,
-+        # Humming repads it). Weights that arrive already in runtime format
-+        # have nothing canonical to read, so they keep the FP8 path.
-+        if (
-+            not is_weights_pre_processed()
-+            and weight is not None
-+            and weight.dtype in (torch.float8_e4m3fn, torch.float8_e5m2)
-+            and weight.shape == (n, k)
-+        ):
-+            if self.block_quant:
-+                layer._qwen4exp_dense_w8a8 = quantize_block_weight_per_channel(
-+                    weight, layer.weight_scale_inv, self.weight_block_size[0]
-+                )
-+            else:
-+                layer._qwen4exp_dense_w8a8 = quantize_effective_weight_per_channel(
-+                    weight, layer.weight_scale, layer.logical_widths
-+                )
 +        super().process_weights_after_loading(layer)
++        weight = getattr(layer, "weight", None)
++        if weight is not None and weight.dtype in (torch.bfloat16, torch.float16):
++            layer._qwen4exp_dense_w8a8 = quantize_weight_per_channel(weight.data)
 +
 +    def apply(
 +        self,
@@ -651,11 +486,8 @@ index 0000000000..343112bd8a
 +        return super().apply(layer, x, bias)
 +
 +
-+def _is_eligible(layer: torch.nn.Module, method: Fp8LinearMethod) -> bool:
++def _is_eligible(layer: torch.nn.Module) -> bool:
 +    if not _ELIGIBLE_SUFFIX.search(getattr(layer, "prefix", "") or ""):
-+        return False
-+    # Dynamic activation quant only: a calibrated input_scale would be dropped.
-+    if method.act_q_static:
 +        return False
 +    if getattr(layer, "bias", None) is not None:
 +        return False
@@ -663,23 +495,10 @@ index 0000000000..343112bd8a
 +    k = getattr(layer, "input_size_per_partition", 0)
 +    if n * k < _MIN_ELEMS or k < _MIN_K or (n % 16) or (k % 16):
 +        return False
-+    if method.block_quant:
-+        # Block-128 FP8 (the shipped checkpoint format): requantizable from
-+        # the canonical grid as long as the shapes divide and scales are there.
-+        block = method.weight_block_size[0] if method.weight_block_size else 0
-+        scale_inv = getattr(layer, "weight_scale_inv", None)
-+        if (
-+            block == 0
-+            or scale_inv is None
-+            or (n % block)
-+            or (k % block)
-+            or tuple(scale_inv.shape) != (n // block, k // block)
-+        ):
-+            return False
 +    weight = getattr(layer, "weight", None)
 +    if weight is None or weight.dim() != 2:
 +        return False
-+    return weight.dtype in (torch.float8_e4m3fn, torch.float8_e5m2)
++    return weight.dtype in (torch.bfloat16, torch.float16)
 +
 +
 +def enable_qwen4exp_dense_w8a8(module: torch.nn.Module) -> None:
@@ -689,11 +508,12 @@ index 0000000000..343112bd8a
 +    if envs.VLLM_BATCH_INVARIANT:
 +        logger.info("VLLM_QWEN4EXP_DENSE_W8A8 is ignored under batch invariant mode")
 +        return
-+    # The bench behind these thresholds ran on sm_80, where FP8 linears have no
-+    # tensor-core path. Everywhere else the FP8 kernels are the fast ones.
++    # The bench behind these thresholds ran on sm_80, where the dense GEMMs
++    # are bf16 and int8 doubles the tensor-core rate. Elsewhere the bf16
++    # GEMM and the FP8 kernels this deployment does not use are preferred.
 +    if not current_platform.is_cuda() or not current_platform.is_device_capability(80):
 +        logger.info_once(
-+            "VLLM_QWEN4EXP_DENSE_W8A8 is only supported on sm_80, staying on FP8"
++            "VLLM_QWEN4EXP_DENSE_W8A8 is only supported on sm_80, staying on bf16"
 +        )
 +        return
 +
@@ -703,15 +523,16 @@ index 0000000000..343112bd8a
 +            continue
 +        method = child.quant_method
 +        # Exact type so a layer already claimed by another Qwen4Exp method
-+        # (draft W8A8 head, low-latency skinny GEMM) is left alone.
-+        if type(method) is not Fp8LinearMethod or not _is_eligible(child, method):
++        # (the draft W8A8 head, low-latency skinny GEMMs) or an embedding
++        # method is left alone.
++        if type(method) is not UnquantizedLinearMethod or not _is_eligible(child):
 +            continue
-+        # In-place class swap keeps the FP8 kernel this method already picked,
-+        # which every fallback below still needs.
-+        method.__class__ = Qwen4ExpDenseW8A8Fp8LinearMethod
++        # In-place class swap keeps the dispatched bf16 GEMM the fallback
++        # below and the CUDA-graph capture still need.
++        method.__class__ = Qwen4ExpDenseW8A8LinearMethod
 +        swapped += 1
 +    logger.info(
-+        "Dense FP8 linears scored as W8A8 int8 via CUTLASS: %d of %d layers",
++        "Dense bf16 linears scored as W8A8 int8 via CUTLASS: %d of %d layers",
 +        swapped,
 +        sum(isinstance(c, LinearBase) for c in module.modules()),
 +    )

@@ -2223,3 +2223,41 @@ Verdict: 0015 PASS as quality-neutral and regression-free. Wall-clock
 justification is micro; its real value is as the safe half of the int8 pair
 and as the harness rehearsal for Boot B (0016), where prefill cells should
 move directly. Boot B awaits the next owner boot.
+
+### Boot B inert twice: the real root cause is the checkpoint, not the guards (2026-10-23)
+
+The 09:57 boot (export with the block-128 accept fix) again logged
+"scored as W8A8 int8 ... 0 of 151 layers", so the block-quant theory was
+wrong for both versions. Reading the served config settled it:
+`quantization_config` is fp8 block [128,128] with 943 entries in
+`modules_to_not_convert`, covering every dense linear (self_attn k_proj /
+o_proj on the full-attention layers, all linear_attn.in_proj_* and
+out_proj, mlp.shared_expert.*, hyper-connections, routers, lm_head,
+embed). The 75,264 `weight_scale_inv` tensors all belong to routed
+experts (plus the PLE table). Production dense linears therefore load as
+BF16 under `UnquantizedLinearMethod`, and no `Fp8LinearMethod` exists for
+them to match, which is why both claim checks returned zero. This also
+retroactively explains the Oct-16 shootout note "fp8 dequantize to bf16
+then aten::mm": that was plain BF16 unquantized all along, and the Marlin
+selection question was moot. The 0016 premise survives unchanged (int8
+replaces the dense BF16 GEMM, 1.29-1.68x benched, GA100 int8 tensor cores
+run at twice the bf16 rate).
+
+0016 rewritten (lab 8a58ee81, replaces df6d66bb):
+`Qwen4ExpDenseW8A8LinearMethod` subclasses `UnquantizedLinearMethod`.
+Allowlist, size floors, M>=512 runtime gate and fallback are unchanged.
+The int8 cache is built in `process_weights_after_loading` from the bf16
+weight, which stays canonical there (the parent rewrites nothing on CUDA),
+and the bf16 weight survives for the fallback and the captured graphs.
+21 CPU tests replace the FP8-era ones (per-shard / single-scale / block-
+grid tests dropped, subclass-avoidance and chunking-equality added).
+Re-exported `experiments/0016-dense-linears-w8a8.patch`; replay of series
+tip + 0015 + 0016 exports gives tree 1882eb0c, identical to the lab tree.
+
+Boot B retry #3 gates: the line "Dense bf16 linears scored as W8A8 int8
+via CUTLASS: N of M layers" must read N > 0 (expected per stage: GDN x3 +
+shared MLP x2 per layer + qkv/o on full-attention layers, the fused qkv
+falls to BF16 because k/v are ignored, plus the MTP module). Quality bar
+unchanged: needles, canary, corpus floors, not bit-identity. VRAM watch:
+about +0.2 GB per stage for the int8 copies, note it if the pool line
+drops below 5.05M.
