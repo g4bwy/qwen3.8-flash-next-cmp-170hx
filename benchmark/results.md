@@ -2301,3 +2301,46 @@ level is the one residual to glance at on Boot C.
 
 Verdict: 0016 certified quality-neutral and +5-6% on prefill-dominated
 cells. Boot C (0015+0016 together, both envs) awaits the next owner boot.
+
+### Boot C (0015+0016 both envs): PASS, acceptance dips are transient (2026-10-23)
+
+Tree = 10-patch series + 0015 + 0016 (both exports fresh am). Boot log:
+dense claim lines 39/36/36/33 + MTP 3/14 and draft-head line
+(mtp.py:512), pool 4,958,208 = identical to Boot B, no preemptions
+anywhere. Two full battery sessions, same boot: C-1 12:46-14:12
+(logs/battery-v2-boot-c/), C-2 14:36-16:00 (logs/battery-v2-c2/), plus
+five single-cell probes in between.
+
+| gate | C-1 | C-2 |
+|---|---|---|
+| needles / steps | pass, 18/18 rc=0 | pass, 19/19 rc=0, bg=0 all cells |
+| floor / vs-Boot-B / vs-mmap-ref | 8.597 / 8.500 / 9.372 % | 8.609 / 8.514 / 9.329 % |
+| accept-window (fixed salt) | 4.998 (n=3) | 4.995 (n=1) |
+| corpus floors | greedy 3.30/2.78, sampled 2.07/2.34, ratio 0.63/0.84 | greedy 2.90/3.08, sampled 2.16/2.31, ratio 0.74/0.75 |
+| cold trio acc | 1.67 / 1.44 / 4.38 | 4.83 / 4.84 / 4.75, all match 1.0 |
+| n4 quartet acc | 4.77/2.87/4.86/4.34 | 2.41/2.68/4.85/3.40 |
+| cold TTFT | 85.2-85.6 s | 85.2-85.6 s |
+
+The verifier is untouched by 0015: Boot-B-vs-Boot-C capture diff (8.50)
+sits below this boot's own floor (8.60), exactly as predicted for a
+draft-only change (teacher-forced scoring never calls the draft). Cold
+prefill gains reproduce to the tenth of a second.
+
+The story of this boot is the free-run acceptance dips. Same boot, same
+salt, different runs: 100200 read 1.44 then 4.18; 102400 read 2.41 then
+3.99; C-1's collapsed cold trio was fully healthy in C-2 (worst cold cell
+of C-1, 100100, re-read 2.11 - still recovering, timing intact); fresh
+salts probed mid-session read 4.77-4.79 with match 1.0. Every dip
+recovered, sustained prefill throughput never moved with them, and the
+fixed-content accept-window never moved either. Deep plateau on the
+identical fixed-content cell has now read 488 (A), 459 (B), 423 (C-1),
+592 (C-2), so that cell carries environment, not code. Decode numerics
+cannot explain the dips either: with both envs on, the int8 branch is
+unreachable below M=512, so C's decode path is the same code A ran clean.
+This is the box's known bimodality lottery (boot4-era 276-380 n4 spread)
+landing on more cells during C's hours than during A/B's.
+
+Verdict: 0015+0016 together certified quality-neutral on every gate that
+is deterministic or content-fixed; prefill +5-6% confirmed a second time.
+Caveat recorded: battery-v2's free-run cells stay noisy at 1M depth.
+Next: promotion decision for 0015/0016 into the series (patches 11/12).
