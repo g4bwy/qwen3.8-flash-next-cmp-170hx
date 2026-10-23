@@ -2368,3 +2368,17 @@ range holds no Qwen4Exp model changes except an MM-encoder PP skip. Fender
 keeps running the old-base tree (same content, banner dev145) until the
 owner reinstalls on the new base; boot check after that reinstall is the
 usual one-line gate plus needles, no full battery.
+
+### New-base boot certified (2026-10-23 16:54, dev402+g3b448e9a1)
+
+Fender reinstalled on 4bceda5dbf and booted the 12-patch am head (banner
+dev402 = wheel dev390 + 12 patches). All tree markers in the log: int8
+handoff active, dense claim lines 39/36/36/33 + MTP 3/14 with both int8
+envs on, draft-head line, mmap gather 320001536 rows / 33 mappings, pool
+4,958,208, zero errors, capture normal. Gate per plan, no battery: needles
+pass; one cold probe (salt 103100, logs/probe-newbase-cold-103100.json):
+TTFT 85.6 s (prefill gain intact), match 1.0, preempts 0, and sustained
+239.3 tok/s against the old base's 199.0 band at acceptance 4.31. The
+decode side reads faster than the pre-rebase envelope by more than content
+explains; single data point, watch it opportunistically on the next
+fixed-content accept-window run, no dedicated bench.
