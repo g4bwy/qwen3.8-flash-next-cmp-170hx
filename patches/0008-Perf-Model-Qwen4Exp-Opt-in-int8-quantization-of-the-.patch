@@ -1,7 +1,7 @@
-From cf47383fdc575d2f0263e8e3513c8fbe1117114d Mon Sep 17 00:00:00 2001
+From 64c80e86d8fb51c4c673a4af9163b4998ea8b4f8 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 16 Oct 2026 11:21:02 +0200
-Subject: [PATCH 08/10] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
+Subject: [PATCH 08/12] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
  pipeline handoff
 
 The hyper-connection model ships the materialized 4-stream state
@@ -27,10 +27,10 @@ corrupt values.
  2 files changed, 69 insertions(+), 2 deletions(-)
 
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 2dc7ef8b13..a2f378893b 100755
+index 72d7638d2f..eb37037adb 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -122,6 +122,7 @@ if TYPE_CHECKING:
+@@ -123,6 +123,7 @@ if TYPE_CHECKING:
      VLLM_USE_TRITON_AWQ: bool = False
      VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
      VLLM_SAFETENSORS_DROP_CACHE: bool = False
@@ -38,7 +38,7 @@ index 2dc7ef8b13..a2f378893b 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1129,6 +1130,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1139,6 +1140,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_SAFETENSORS_DROP_CACHE": lambda: (
          os.getenv("VLLM_SAFETENSORS_DROP_CACHE", "0").lower() in ("1", "true")
      ),
@@ -49,7 +49,7 @@ index 2dc7ef8b13..a2f378893b 100755
      "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index 07ff3ed696..3440496e00 100644
+index dc621e676f..8b14c7db22 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
 @@ -13,6 +13,7 @@ from vllm import envs

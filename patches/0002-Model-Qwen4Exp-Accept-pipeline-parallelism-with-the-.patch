@@ -1,7 +1,7 @@
-From 4d09254464265fd579048fe76706f9b2bf0916c5 Mon Sep 17 00:00:00 2001
+From aba9fe54f93bfeb4cc04e08e2fbd89d5c4e94055 Mon Sep 17 00:00:00 2001
 From: Vaishnavi220506 <183067453+Vaishnavi220506@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
-Subject: [PATCH 02/10] [Model][Qwen4Exp] Accept pipeline parallelism with the
+Subject: [PATCH 02/12] [Model][Qwen4Exp] Accept pipeline parallelism with the
  N-gram PLE
 
 Upstream rejects PP>1 for this checkpoint: verify_and_update_config and
@@ -126,10 +126,10 @@ index 4ccd437176..9c91e52412 100644
  
  def test_qwen4_exp_model_state_prepares_ngram_context() -> None:
 diff --git a/vllm/model_executor/models/config.py b/vllm/model_executor/models/config.py
-index 12ba253671..fa2c7db0bf 100644
+index 91379e1e8f..a75c30710a 100644
 --- a/vllm/model_executor/models/config.py
 +++ b/vllm/model_executor/models/config.py
-@@ -1007,14 +1007,6 @@ class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConf
+@@ -1036,14 +1036,6 @@ class Qwen4ExpForConditionalGenerationConfig(Qwen3_5ForConditionalGenerationConf
              raise NotImplementedError(
                  "Qwen4Exp PLE/QSA does not support dual-batch overlap or microbatching"
              )
@@ -145,7 +145,7 @@ index 12ba253671..fa2c7db0bf 100644
          if multimodal_config is not None and multimodal_config.language_model_only:
              _strip_qwen4_exp_mrope(vllm_config.model_config)
 diff --git a/vllm/models/qwen4_exp/amd/model.py b/vllm/models/qwen4_exp/amd/model.py
-index b8e8e39a64..cc9f864771 100644
+index 8030eb0b54..75f077d4ae 100644
 --- a/vllm/models/qwen4_exp/amd/model.py
 +++ b/vllm/models/qwen4_exp/amd/model.py
 @@ -63,7 +63,6 @@ from vllm.model_executor.models.utils import (
@@ -228,7 +228,7 @@ index ec2a0fef8b..dc8c959ec4 100644
          if self.ngram_context_len <= 0:
              raise ValueError("N-gram embedding requires context length >= 1.")
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index 826db4efd3..07ff3ed696 100644
+index a5afd6bc8d..dc621e676f 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
 @@ -64,7 +64,6 @@ from vllm.model_executor.models.utils import (

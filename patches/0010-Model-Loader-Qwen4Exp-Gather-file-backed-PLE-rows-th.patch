@@ -1,7 +1,7 @@
-From 0002ba6a4ea65cddae267e3e04d80232844e2be1 Mon Sep 17 00:00:00 2001
+From b84e39dd0c75d763f3946325701f3744ae08ddad Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 16:55:55 +0200
-Subject: [PATCH 10/10] [Model Loader][Qwen4Exp] Gather file-backed PLE rows
+Subject: [PATCH 10/12] [Model Loader][Qwen4Exp] Gather file-backed PLE rows
  through a persistent mmap
 
 host_file_gather serves each step's PLE rows with one preadv syscall per
@@ -153,10 +153,10 @@ index 166d7c9154..b79b179d95 100644
      conv_state_len = 6
      dilation = 2
 diff --git a/tests/test_config.py b/tests/test_config.py
-index 04ea0ff3d5..037854a9dc 100644
+index 4999cf63d0..42c9b4c5e4 100644
 --- a/tests/test_config.py
 +++ b/tests/test_config.py
-@@ -1874,6 +1874,11 @@ def test_engram_host_file_gather_requires_cuda_qwen4exp(
+@@ -1919,6 +1919,11 @@ def test_engram_host_file_gather_requires_cuda_qwen4exp(
          config.verify_model_config(model)
  
  
@@ -168,7 +168,7 @@ index 04ea0ff3d5..037854a9dc 100644
  def test_engram_hash_tracks_execution_options():
      configs = [
          EngramConfig(cpu_offload=True),
-@@ -1881,6 +1886,7 @@ def test_engram_hash_tracks_execution_options():
+@@ -1926,6 +1931,7 @@ def test_engram_hash_tracks_execution_options():
          EngramConfig(cpu_offload=True, embedding_across_dp=True),
          EngramConfig(cpu_offload=True, dp_shared_memory=True),
          EngramConfig(host_file_gather=True),
@@ -177,7 +177,7 @@ index 04ea0ff3d5..037854a9dc 100644
      assert len({config.compute_hash() for config in configs}) == len(configs)
  
 diff --git a/vllm/config/engram.py b/vllm/config/engram.py
-index 16113760c5..942700c409 100644
+index 1c0457669c..709901e679 100644
 --- a/vllm/config/engram.py
 +++ b/vllm/config/engram.py
 @@ -42,6 +42,13 @@ class EngramConfig:
@@ -194,7 +194,7 @@ index 16113760c5..942700c409 100644
      embedding_across_dp: bool = False
      """Shard embeddings across TP and all DP ranks when enabled.
      Otherwise, each DP rank has a separate TP-sharded embedding replica."""
-@@ -67,6 +74,8 @@ class EngramConfig:
+@@ -68,6 +75,8 @@ class EngramConfig:
              raise ValueError(
                  "use_thp requires cpu_offload=True and dp_shared_memory=False"
              )

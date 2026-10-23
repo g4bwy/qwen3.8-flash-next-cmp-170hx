@@ -1,4 +1,4 @@
-From 334c793e4601f467be1f99d153e0eabf3999feed Mon Sep 17 00:00:00 2001
+From 3bd3be9830a143ef90df5dc5efa29f341bdac36f Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 23:52:14 +0200
 Subject: [PATCH 11/12] [Perf][MTP] Score the Qwen4Exp draft head with W8A8
@@ -74,10 +74,10 @@ index b79b179d95..64cf47004b 100644
 +    assert seen == [(torch.float32, False), (torch.bfloat16, True)]
 +    assert not hasattr(fp32_layer, "_draft_w8a8")
 diff --git a/vllm/envs.py b/vllm/envs.py
-index a2f378893b..5d3aac6776 100755
+index eb37037adb..ec17da7588 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -123,6 +123,7 @@ if TYPE_CHECKING:
+@@ -124,6 +124,7 @@ if TYPE_CHECKING:
      VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
      VLLM_SAFETENSORS_DROP_CACHE: bool = False
      VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
@@ -85,7 +85,7 @@ index a2f378893b..5d3aac6776 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1133,6 +1134,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1143,6 +1144,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_PP_INT8_HOP": lambda: (
          os.getenv("VLLM_QWEN4EXP_PP_INT8_HOP", "0").lower() in ("1", "true")
      ),
