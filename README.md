@@ -5,7 +5,8 @@ No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nons
 The thing's basically debugging and optimizing itself, so expect some slop, but trying to avoid it as much as possible.
 
 - Box: 4x NVIDIA CMP 170HX (GA100, unlocked to 64 GB and 74 SM), one NUMA node,
-  PLE n-gram table in pinned host RAM. Every number here is at a 200 W per-card
+  PLE n-gram table served by mmap file gather (patches 9-10), no pinned table.
+  Every number here is at a 200 W per-card
   cap.
 - PCIe is the limit. Gen2, GPU1 at x16, GPU0/2/3 at x4, and `nvidia-smi topo -m`
   puts every pair at NODE distance. A ring is only as wide as its narrowest
@@ -100,8 +101,9 @@ Retired configs are in [archive/](archive/README.md): the 3-card set, the
 
 The script sets:
 
-- MTP-4 spec decode, and the PLE n-gram table offloaded to pinned host RAM
-  (`--engram-config '{"cpu_offload": true}'`).
+- MTP-4 spec decode, and the PLE n-gram table served by mmap file gather
+  (`--engram-config '{"cpu_offload": true, "host_file_gather": true,
+  "host_file_gather_mmap": true}'`).
 - Prefix caching with `--mamba-cache-mode align`,
   `--prefix-cache-retention-interval 16160` and `--prefix-match-unit 16`.
   MTP-4 forces a 1616 scheduler block (1600 + 16 per extra draft row) and the
@@ -224,7 +226,7 @@ results.md, and the two tasks are not interchangeable.
 
 | lane | context | KV pool | headroom |
 |---|---|---:|---:|
-| 4 cards, official FP8, MTP-4 | 1M YaRN 4.0 | 2,423,913 | 2.42x |
+| 4 cards, official FP8, MTP-4 | 1M YaRN 4.0 | 5,086,567 | 5.09x |
 | 4 cards, W8A16 dense, MTP-4 | 1M YaRN 4.0 | 2,594,720 | 2.59x |
 
 Per-rank weight and KV columns, and the retired 3-card / 262k / 524k rows:
@@ -243,11 +245,16 @@ Rates are tok/s unless the cell shows a duration. All rows: 74 SMs, partition
 | 4 cards, 1M, official, MTP-4 | 90.6 s | 10.4k | 205-215 (median 212) | wall 386 s at 100/4, 2-3 of 4 resident |
 | 4 cards, 1M, W8A16 lane, MTP-4 | 93.5 s | 10.1k | 217-226 | 400 s wall at 100/4, batch-neutral |
 | + int8 handoff (patch 8), bf16 KV | 79.9 s | 12.4k | 205-215 | wall 346 s at 100/4, 4/4 would-fit, pool 2.65M |
-| + int8 handoff + fp8 KV = SHIP | 92.9-93.9 s | 10.1k | 1024-tok cell 10.1 s | wall 356.5-356.8 s at 100/4, 4/4 resident, pool 5.08M |
+| + int8 handoff + fp8 KV | 92.9-93.9 s | 10.1k | 1024-tok cell 10.1 s | wall 356.5-356.8 s at 100/4, 4/4 resident, pool 5.08M |
+| + int8 heads & dense (patches 11+12 on) = SHIP | 85.2-85.6 s | 11.6k | 186-189 (decode path unchanged) | wall 333.7-338.8 s at 100/4, 4/4 resident, pool 4.96M |
 
 - The sustained column is a 1.5 s peak that typically lands in the wind-down
   of the run. Compare grids on wall or out tok/s. Full grids, repeat runs and
   the salt law: [benchmark/results.md](benchmark/results.md).
+- The last row is boot C, two battery sessions plus boot B (results.md). The
+  int8 pair moves prefill-bound cells only: decode stays on the bf16 kernels
+  (the int8 branch needs M>=512, captured batches are <=80), so single-stream
+  repeats the env-off band and 205-215 remains the pinned-salt figure.
 - Since 2026-10-22 the battery adds a four-resident deep-plateau cell, an
   8192-decode batch cell, and an oversubscription cell (results.md, Protocol
   battery v2). The 100/4 wall cells are mostly serialized prefill, so they
