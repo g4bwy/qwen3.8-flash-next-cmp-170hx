@@ -1,8 +1,8 @@
 From 8a58ee814c43831211cc279ee8cabaf2943d9836 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 10:09:31 +0200
-Subject: [PATCH] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8 on
- sm_80
+Subject: [PATCH 12/12] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8
+ on sm_80
 
 The shipped FP8 checkpoint quantizes only the routed experts: its
 quantization_config lists every dense linear (attention qkv/o, GDN

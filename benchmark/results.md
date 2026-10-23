@@ -2344,3 +2344,11 @@ Verdict: 0015+0016 together certified quality-neutral on every gate that
 is deterministic or content-fixed; prefill +5-6% confirmed a second time.
 Caveat recorded: battery-v2's free-run cells stay noisy at 1M depth.
 Next: promotion decision for 0015/0016 into the series (patches 11/12).
+
+### 0015 and 0016 promoted to series patches 11 and 12 (2026-10-23)
+
+Series is 12 patches on 8407bc0bb6, tree `1882eb0cb1f20493faf233debeac06be108f59eb`
+(verified by `git am` of all twelve exports from base in a clean worktree).
+Both remain opt-in: `VLLM_QWEN4EXP_DRAFT_W8A8` and
+`VLLM_QWEN4EXP_DENSE_W8A8` default off. The serve script is untouched;
+flipping production is an owner boot decision.
