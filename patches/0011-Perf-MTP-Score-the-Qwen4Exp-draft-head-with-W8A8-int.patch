@@ -1,8 +1,8 @@
 From 334c793e4601f467be1f99d153e0eabf3999feed Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 23:52:14 +0200
-Subject: [PATCH 1/2] [Perf][MTP] Score the Qwen4Exp draft head with W8A8 int8
- via CUTLASS
+Subject: [PATCH 11/12] [Perf][MTP] Score the Qwen4Exp draft head with W8A8
+ int8 via CUTLASS
 
 The vocab-truncated draft head runs a bf16 GEMV four times per graphed
 decode step (once per MTP position) and is pure weight bandwidth on

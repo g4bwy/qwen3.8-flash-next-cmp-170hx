@@ -17,11 +17,11 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
 - Depths: MTP-4 is the shipped depth. The fast lane builds an int8-dense
   variant with `checkpoint/` (+6 % on top of depth, +20 % over MTP-3).
 - Base commit: `8407bc0bb6b0061dacb731ae3cc54b6035f112b3` (vllm-project/vllm main, 2026-10-20; newest main with a published cu130 wheel, `0.32.1rc1.dev133+g8407bc0bb`).
-- 10 patches: seven ours, three adopted from upstream PRs (#56444 as
+- 12 patches: nine ours, three adopted from upstream PRs (#56444 as
   patch 2, #58094 as patch 4, #58815 as patch 9; all still open upstream,
   so they survive rebases as adopted commits). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `09f7f92dfcf86bb58ce3621cf6608e94d42104bd`. If it does not, you applied
+  `1882eb0cb1f20493faf233debeac06be108f59eb`. If it does not, you applied
   something else or onto something else.
 - The base's `humming-kernels[cu13]` pin moved to 0.1.17 (0.1.12 fails the
   new `vllm/utils/humming.py` imports). The editable precompiled install
@@ -37,7 +37,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout 8407bc0bb6b0061dacb731ae3cc54b6035f112b3
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # 09f7f92dfcf86bb58ce3621cf6608e94d42104bd
+git rev-parse 'HEAD^{tree}'   # 1882eb0cb1f20493faf233debeac06be108f59eb
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
@@ -310,6 +310,8 @@ about one position in 130 moves because of the quantization. Full tables:
 | 8 | opt-in int8 pipeline handoff (`VLLM_QWEN4EXP_PP_INT8_HOP=1`): the materialized 4-stream hyper-connection state (`hidden x hc_count` bf16, 42 MB per 2048-token chunk) crosses stages as per-token per-stream int8 plus fp32 scales, halving wire bytes on a link that is the prefill wall. Cold 1M TTFT 91.8 -> 79.9 s, 100/4 wall 386 -> 346 s, needles and acceptance clean; flag-off is byte-identical; a half-enabled pipeline raises instead of casting |
 | 9 | upstream PR #58815, adopted (drift-adapted port): `--engram-config '{"host_file_gather": true}'` serves PLE n-gram rows by per-step `preadv` from page-cache-resident checkpoint shards instead of a 47.6 GiB pinned host table. Boot load 1:16 -> 0:49, ~48 GiB pinned RAM freed, needles/acceptance unchanged; cost is a per-step worker stream sync in staging (100/4 276-380 s vs pinned ~350 steady, cold 1M +3 s). Pairs with patch 6's range-sparing; the threaded prefill-ahead variant was measured slower and shelved (experiments/0013, results.md) |
 | 10 | opt-in `host_file_gather_mmap` gather backend for patch 9: one read-only mmap per checkpoint shard at bind, then per-step `index_select` instead of a per-row `preadv` loop, `FADV_WILLNEED` pre-queue kept. Cold 1M 92.6 -> 90.9 s (pinned parity), 100/4 362 -> 358-362 s, byte-identical rows (logprob A/B at the noise floor). Off by default so memory-tight hosts keep the reclaim-friendly preadv path |
+| 11 | opt-in `VLLM_QWEN4EXP_DRAFT_W8A8=1`: the 40k MTP draft head scores as per-channel int8 (dynamic per-token activation quant + `cutlass_scaled_mm`) instead of a bf16 GEMM. sm_80 int8 tensor cores run at twice the bf16 rate, and CUTLASS beat the bf16 head at every decode-M point benched (1.39-1.67x, quant cost free). The verifier never sees it: teacher-forced logprob captures differ below the boot's own noise floor, and the Boot-A battery was quality-neutral |
+| 12 | opt-in `VLLM_QWEN4EXP_DENSE_W8A8=1`: the shipped FP8 checkpoint keeps all dense linears (attention qkv/o, GDN projections, shared MLP) in BF16, only routed experts are FP8, so this claims those `UnquantizedLinearMethod` layers and scores prefill-sized batches (M>=512) as W8A8 int8 via CUTLASS. Decode stays bf16 and inside the captured graphs; the int8 copy lives next to the weight (pool -2.5%). Cold 1M TTFT 90.4 -> 85.4 s, 100/4 in_tps +6% at a quarter of the old spread, quality gates (needles, accept-window, corpus floors) clean in two battery sessions |
 
 ## Gotchas
 
@@ -354,7 +356,7 @@ about one position in 130 moves because of the quantization. Full tables:
 
 ```
 patchset-qwen38-pp/
-  patches/0001-*.patch .. 0010-*.patch   the series, git am
+  patches/0001-*.patch .. 0012-*.patch   the series, git am
   serve-4x-1m.sh                         the service lane: 4 gpus, 1M, YaRN 4.0 (PROF=1 arms the profiler)
   archive/                               retired lanes, the 3-card set, the TP=4 trial, and their tables
   benchmark/                             measurement tools, raw results, and the full record, see its README
