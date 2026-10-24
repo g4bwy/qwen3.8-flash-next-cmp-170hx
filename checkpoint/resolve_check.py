@@ -30,10 +30,20 @@ else:
     held = [m for m in mods if not CONVERT_RE.match(m + ".weight")]
     print(f"ignore entries: {len(held)} (of {len(mods)})")
     qc = CompressedTensorsConfig.from_config(build_ct_config(held))
-qc.packed_modules_mapping = {
-    "qkv_proj": ["q_proj", "k_proj", "v_proj"],
-    "gate_up_proj": ["gate_proj", "up_proj"],
-}
+# The runtime fusion is a property of the model, not of this test. vLLM expands a
+# fused module through the model class's packed_modules_mapping, and
+# should_ignore_layer raises when that expansion mixes ignored and quantized
+# shards. Hardcoding the mapping here once hid exactly that failure (upstream
+# folded self_attn.indexer.index_qk_proj into qkv_proj), so read it from the model.
+from vllm.models.qwen4_exp.nvidia.model import (  # noqa: E402
+    Qwen4ExpForConditionalGeneration,
+)
+
+qc.packed_modules_mapping = dict(
+    Qwen4ExpForConditionalGeneration.packed_modules_mapping
+)
+print("packed_modules_mapping[qkv_proj]:",
+      qc.packed_modules_mapping.get("qkv_proj"))
 print("config parsed ok")
 
 
@@ -76,8 +86,12 @@ cases = [
      rt("model.language_model.layers.0.attn_hyper_connection.input_mix_weight_up"), None),
     ("held gdn in_proj", fake(MergedColumnParallelLinear),
      rt("model.language_model.layers.0.linear_attn.in_proj_qkv"), None),
-    ("held indexer", fake(MergedColumnParallelLinear),
-     rt("model.language_model.layers.3.self_attn.indexer.index_qk_proj"), None),
+    ("indexer int8 (fused with qkv)", fake(MergedColumnParallelLinear),
+     rt("model.language_model.layers.3.self_attn.indexer.index_qk_proj"), "int8"),
+    # The fused runtime module must resolve as a unit: if the indexer shard and
+    # q/k/v disagree, should_ignore_layer raises instead of returning.
+    ("qkv fused resolves whole", fake(QKVParallelLinear),
+     "model.layers.3.self_attn.qkv_proj", "int8"),
 ]
 
 fails = 0

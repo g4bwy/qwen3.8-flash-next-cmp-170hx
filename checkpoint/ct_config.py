@@ -3,8 +3,10 @@
 
 group_0: routed experts (main + mtp draft) keep the official fp8 e4m3
          block-128 bytes; FusedMoE dispatch + block weight strategy.
-group_1: 228 main-body dense modules become int8 symmetric group-32,
-         bf16 activations (weight-only W8A16).
+group_1: 228 main-body dense modules plus the 12 QSA indexer projections the
+         fused qkv_proj folds in become int8 symmetric group-32, bf16
+         activations (weight-only W8A16). A fused module resolves as one unit,
+         so the indexer cannot stay bf16 while q/k/v go int8.
 ignore:  the official release's remaining modules_to_not_convert.
 PLE ngram fp8 is selected by text_config.ple_embedding_dtype in the model
 code, before any quant-config type check, so it needs no group.
@@ -15,6 +17,10 @@ CONVERT_RE = re.compile(
     r"^model\.language_model\.layers\.\d+\."
     r"(?:linear_attn\.out_proj"
     r"|self_attn\.(?:q|k|v|o)_proj"
+    # vLLM folds the QSA indexer into the fused qkv_proj module, and a fused
+    # module must carry one scheme for all its shards, so the indexer travels
+    # with q/k/v. It stays int8 weight-only, the same recipe as its shards.
+    r"|self_attn\.indexer\.index_qk_proj"
     r"|mlp\.shared_expert\.(?:gate|up|down)_proj)\.weight$"
 )
 
@@ -27,6 +33,7 @@ INT8_TARGETS = [
     r"re:.*model\.layers\.\d+\.linear_attn\.out_proj$",
     r"re:.*model\.layers\.\d+\.self_attn\.qkv_proj$",
     r"re:.*model\.layers\.\d+\.self_attn\.(q|k|v|o)_proj$",
+    r"re:.*model\.layers\.\d+\.self_attn\.indexer\.index_qk_proj$",
     r"re:.*model\.layers\.\d+\.mlp\.shared_expert\.gate_up_proj$",
     r"re:.*model\.layers\.\d+\.mlp\.shared_expert\.(gate|up|down)_proj$",
 ]
