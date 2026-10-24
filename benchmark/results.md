@@ -18,13 +18,24 @@ Cells are greedy at temperature 0 with a unique salted prompt per row, so each
 row pays a full prefill unless the section says otherwise. Headlines live in the
 top-level README.
 
-Tools. `bench.py` fill sweeps and concurrency cells, `sustained_decode.py`
-decode plateaus, `mtp_ab_probe.py` acceptance A/B, `accept_window.py` and
-`corpus_accept_probe.py` fixed-salt quality gates, `itl_probe.py` inter-token gap
-classification, `phase_probe.py` and `phase_report.py` step anatomy,
-`dense_weight_bytes.py` decode byte traffic, and `pth_attn_gate.py`,
-`qsa_byte_floor.py`, `qsa_decode_tune.py`, `qsa_decode_dtype.py`,
-`pth_vs_qsa_fp8.py` for the QSA kernel work of 2026-10-24.
+Tools. Each row states what the script measures, condensed from its own docstring.
+
+| tool | measures |
+|---|---|
+| `bench.py` | context fill and concurrency cells |
+| `sustained_decode.py` | sustained concurrent decode capacity, isolated from prefill |
+| `mtp_ab_probe.py` | MTP draft acceptance at a chosen context depth |
+| `accept_window.py` | decode-window acceptance bracket for certification |
+| `corpus_accept_probe.py` | acceptance and decode rate on held-out corpus text |
+| `itl_probe.py` | whether a starved decode is slow or deferred |
+| `phase_probe.py` | arms the profiler around one fixed-salt decode cell |
+| `phase_report.py` | attributes decode-step time from torch profiler traces |
+| `dense_weight_bytes.py` | dense weight bytes per pipeline rank from safetensors headers |
+| `pth_attn_gate.py` | correctness of the int8 attention op on sm_80 |
+| `qsa_byte_floor.py` | QSA sparse read floor and split-K sensitivity on one card |
+| `qsa_decode_dtype.py` | whether QSA decode cost tracks bytes or elements |
+| `qsa_decode_tune.py` | QSA decode tile shape against its gather ceiling |
+| `pth_vs_qsa_fp8.py` | equal-bytes A/B, served fp8 kernel against the int8 op |
 
 ## Fill sweeps (decode 128)
 
