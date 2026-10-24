@@ -1286,11 +1286,11 @@ VLLM_QWEN4EXP_PP_INT8_HOP=1, PLAIN bf16-KV boot (one variable), pool
 
 | Metric | bf16-hop anchor | int8-hop | delta |
 |---|---|---|---|
-| Cold TTFT x3 fresh salts | 91.8 s | 79.9 / 79.8 / 79.9 | **-13.0%** |
+| Cold TTFT x3 fresh salts | 91.8 s | 79.9 / 79.8 / 79.9 | -13.0% |
 | Warm cell wall (1024 tok) | 9.2-9.7 s | 9.5 s | none |
 | Acceptance direct cells | 4.7-4.9 band | 4.79 / 4.86 | in band |
 | Needles / grown turns | pass | pass, exit 0 | - |
-| 100/4 wall x2 (fresh salts) | ~386 s cold-grade | 345.6 / 346.0 | **-10.5%**, 0 preempts |
+| 100/4 wall x2 (fresh salts) | ~386 s cold-grade | 345.6 / 346.0 | -10.5%, 0 preempts |
 | 100/4 TTFT mean | 235-254 s | 210.5 / 210.4 | -11..17% |
 
 Method note: cold trio with salts totalling > pool evicts the first salt;
@@ -1809,7 +1809,7 @@ passed explicitly (varargs syscall left them garbage -> EINVAL).
 | C io_uring sync (submit-all/wait-all) | 38.3 | 0.83x |
 | C io_uring IOSQE_ASYNC | 45.6 | 0.70x |
 
-Two conclusions, both now on fair ground:
+Two conclusions, from a corrected measurement:
 - The real lever is the loop language, not the submission mechanism. Moving
   the per-row gather from Python to a C preadv loop is ~1.8x (56 -> 32 ms)
   because CPython's per-call overhead dominates 32k tiny calls, not the
@@ -1843,7 +1843,7 @@ table in experiments/ple_gather_mmap_probe.py):
 | C preadv loop | 32-36 |
 | C io_uring / pyuring | 38-46 / 163 |
 | C mmap + memcpy loop | 11.3 |
-| **torch `index_select` from mmap, per-shard `out=` slices** | **2.7** |
+| torch `index_select` from mmap, per-shard `out=` slices | 2.7 |
 
 Mechanism: preadv re-does the kernel's page lookup on every call
 (fdget, xarray walk, kmap, ref/unref, fput) for pages the process could
@@ -2086,7 +2086,7 @@ all-four-decoding window in the final ~37 s: 507 agg / 127 per stream.
 Four 1M streams resident do decode together at 3.4x the single-stream
 aggregate (concurrency reclaiming the PP bubble, as the step anatomy
 predicts), and the measurement only exists because the tool now shows the
-window it averaged. Decode 8192 widens the honest window; the spec line is
+window it averaged. Decode 8192 widens the window. The spec line is
 updated.
 
 ## INT8 draft-screen evaluation (2026-10-22, offline, artifacts in /tmp/int8_screen)
@@ -2714,7 +2714,7 @@ anatomy on the seven-patch tree:
    Acceptance differs cell by cell (4.87, 4.88, 4.70 against 4.83, 4.84, 4.85), so
    normalize it out: step time is acceptance over rate, 23.30, 22.59 and 22.49 ms
    against 23.91, 23.96 and 23.96 ms. That is -4.8% mean, all three cells in the
-   same direction. The anatomy says -2.8%. Take the honest range as 3 to 5%, so
+   same direction. The anatomy says -2.8%. Take the range as 3 to 5%, so
    212 toward roughly 220 tok/s single-stream.
 4. Third cell caveat: patch 13's 104200 cell accepted 4.70 where the control
    accepted 4.85 on the identical prompt, which is the int8 logits steering the
@@ -2823,7 +2823,7 @@ separates them. Raw `logs/w8a16-plateau5.json`, 1,147 samples.
 5. Cost of running this shape at all: 576 s of wall for 20,480 generated tokens, and
    four of the five streams spend most of that time starved. A service that actually
    runs five concurrent 1M sessions on this box gets a short all-five window and very
-   poor latency for early arrivals, so the lane's extra residency is worth having only
+   poor latency for early arrivals, so the lane's extra residency helps only
    with a scheduling change that decouples prefill admission from decode rate.
 ### Five resident on both trees: the control (2026-10-24)
 
@@ -2837,7 +2837,7 @@ of the result.
 | cell | wall s | first tokens s | plateau agg | per stream | requests per s | out tok/s over wall |
 |---|---:|---|---:|---:|---:|---:|
 | official, 4 streams | 396.3 | 92.5, 170.7, 261.1, 351.2 | 513 | 128 | 0.01009 | 41.4 |
-| official, 5 streams | 899.8 | 92.5, 170.7, 261.1, 351.2, **818.1** | 472 | 94 | 0.00556 | 22.8 |
+| official, 5 streams | 899.8 | 92.5, 170.7, 261.1, 351.2, 818.1 | 472 | 94 | 0.00556 | 22.8 |
 | W8A16 lane, 5 streams | 576.4 | 100.1, 186.6, 277.1, 376.8, 475.5 | 640.6 | 128.1 | 0.00867 | 35.5 |
 
 1. The pool is the constraint, proven directly. On the official tree the fifth
@@ -2954,7 +2954,7 @@ Three concurrent 995k prompts, 2,048 tokens each:
    404 the three prefills interleave and all finish at about 270 s, instead of one
    at a time at 91, 169 and 258 s, so there is almost no window in which one stream
    decodes while another prefills. My predicted 666 to 205 ms inside that regime
-   was never testable, and the honest result is a change of shape rather than a
+   was never testable, and the result is a change of shape rather than a
    rate improvement. Measuring the in-regime cadence needs a staggered-start probe,
    which `itl_probe.py` does not do yet.
 2. The cost is the first arrival. Without the cap the session that arrived first
@@ -3021,7 +3021,7 @@ almost always are the next five real tokens. Cell: `bench.py --fills 50
    residency, which the five-stream test showed is limited by prefill starvation
    rather than memory, and a different checkpoint.
 
-## QSA sparse attention on sm_80 runs at 28% of its own gather ceiling (2026-10-24)
+## QSA sparse attention on sm_80, first measurement (2026-10-24)
 
 The question started as "can the pth-flash-attn int8 kernel replace our fp8 KV read
 path". Static reading said no, because their op has no per-query index argument. That
@@ -3086,7 +3086,7 @@ does not exist on the serving lane.
 both arms moving 10.0 MiB. GPU2 beside the live server, so the arms are interleaved in
 paired blocks and only the ratio is quoted. Arm A's cache holds e4m3 bit patterns read
 through the linear byte decode, so its numerics are meaningless and its traffic is
-correct; arm B's numerics are the ones the gate certified. `logs/pth-ab-fp8-117100.txt`
+correct. Arm B's numerics are the ones the gate certified. `logs/pth-ab-fp8-117100.txt`
 with salt 117100.
 
 | quantity | value |
@@ -3102,14 +3102,14 @@ so arm A was timed at 64 splits, which the served kernel never uses on sm_80, an
 also near arm B's worst setting. The 1.61 is an artifact of that pairing.
 
 The ceiling probe matters more than the ratio. A linear read is the wrong reference for
-sparse attention, and `uint8.sum()` is wrong twice over because it is an integer
+sparse attention, and `uint8.sum()` is the wrong probe twice over, it is an integer
 reduction that reports 88 GB/s on a card doing 895 in production. Gathering bf16 rows
 and reducing them measures this pattern at 338 GB/s, which puts our kernel at 28% of
 what the access pattern allows. If the card was partly busy both efficiencies are
 understated by the same factor, so the ratio stands and the 28% is a floor on how much
 headroom exists.
 
-### What it is worth
+### Share of the decode step
 
 3 full-attention layers per PP rank out of 12, because `layer_types` gives 12
 full_attention and 36 linear_attention with `full_attention_interval` 4. Ranks are
@@ -3118,7 +3118,7 @@ serial for one stream. At the corrected 3.1x the saving is 3 layers times 4 rank
 promoted for 3 to 5%. The 2.3% figure this section first carried came from the superseded
 1.61x pairing.
 
-### The two conclusions that matter
+### Consequences for the lane
 
 1. Adopting their kernel is possible and worth about 3.8% of the decode step. It is a
    real change: their op cannot read the cache QSA writes today, so a `StreamCache`
@@ -3158,7 +3158,7 @@ of adjacent. `logs/pth-ab-fp8-unified-118000.txt`, salt 118000.
 The headline moves from 1.61x to about 3.1x, which is what both the matched pairing at
 the config ours really uses (3.08) and each arm at its own best (3.18) give. The value
 follows: 3 full-attention layers per rank, 4 ranks serial, 71.8 us per layer, 862 us of
-the 22.79 ms step, so **3.8%** rather than the 2.3% the earlier pairing implied.
+the 22.79 ms step, so 3.8% rather than the 2.3% the earlier pairing implied.
 
 The production cache strides turned out not to matter. Two 256 B runs per token instead
 of one 512 B run moved arm A by about 1 us, well inside the spread, so our kernel sits at
@@ -3185,7 +3185,7 @@ Microseconds per layer-step, 10.0 MiB moved, gather ceiling 291 GB/s measured in
 same run, so the best cell still reaches only 34% of it. The `bn=16` cell at 128 splits
 is the one clear failure at 212 us.
 
-## Step 1 of the QSA decode defect: it is not bytes, and no knob moves it (2026-10-24)
+## QSA decode cost is not bytes, and no launch knob moves it (2026-10-24)
 
 `benchmark/qsa_decode_dtype.py` runs the served kernel on one selection, one stride
 pattern and one page size, twice: once with a bf16 cache and once with the uint8 e4m3
@@ -3240,7 +3240,7 @@ kernel source and the emitted PTX instead of speculating. `/tmp/qsa-asm/`, compi
 The decode is already hand-optimized. `vllm/models/qwen4_exp/nvidia/ops/qsa.py:40-53`
 is inline PTX that expands four e4m3 bytes to fp16 with one `shf.r.wrap.b32`, one
 `lop3.b32`, two `prmt.b32` and two `and.b32`, so about six instructions per four
-elements. It exists because **sm_80 has no hardware fp8 convert at all**, which is also
+elements. It exists because sm_80 has no hardware fp8 convert at all, which is also
 why the cache is `torch.uint8` holding e4m3 bits rather than a real fp8 tensor, and why
 the earlier ceiling probe found no fp8 or nvfp4 formats on this card. There is nothing
 left to optimize there, and the A/B already proved it was not the constraint.
@@ -3282,12 +3282,12 @@ closes any material part of the gap.
 occupancy, stall reasons and tensor pipe utilization. It locks clocks and replays
 kernels, so it cannot run beside the serving stack and belongs in the paused window.
 
-## VOID: the three sections above timed the Python wrapper, not the kernel (2026-10-24)
+## Eager timings measured the Python wrapper, earlier numbers here are void (2026-10-24)
 
 I fell into the trap recorded in this file twice already, eager timing inverting
 decode-path rankings, and I only caught it because a scaling test came out impossible:
 growing the selection from 512 to 4102 tokens, eight times the work, made the kernel
-**faster**, 166.1 us down to 112.9 us. Growing rows from 1 to 40, forty times the work,
+faster, 166.1 us down to 112.9 us. Growing rows from 1 to 40, forty times the work,
 cost only 1.45x. No kernel does that. A Python wrapper does that, when its fixed cost
 dominates everything else.
 
@@ -3322,7 +3322,7 @@ sample, five samples, median.
 | theirs | `S=2` / `S=8` / `S=16` | 61.8 / 41.2 / 40.5 us |
 | theirs | `S=1` | 113.0 us |
 
-**Ours is 1.54x faster than theirs**, not 3.1x slower. Under graph timing our kernel is
+Ours is 1.54x faster than theirs, not 3.1x slower. Under graph timing our kernel is
 also strongly config-sensitive after all, 24.6 us at 16 splits against 58.6 at 64, which
 is the opposite of what the eager sweep appeared to show. The shipped table already picks
 17 splits, so there is no config prize here either way, but for the right reason.
@@ -3337,12 +3337,12 @@ narrower and still decisive: as a sparse-selection kernel on this shape, it lose
 ### What the decode step actually spends on attention
 
 At 24.6 us per layer-step and 3 full-attention layers per rank, the sparse KV read is
-about 74 us of a rank-step and about 295 us of the 22.79 ms step, **1.3%**. Making it
+about 74 us of a rank-step and about 295 us of the 22.79 ms step, 1.3%. Making it
 free would buy 1.3%. That agrees with the profiler, which is a GPU-side measurement and
 was never affected by this error: the `qsa-attn` bucket is 0.43 ms per rank-step on ranks
 0 to 2, and the kernel names inside it are dominated by `_qsa_mqa_paged_uniform_kernel`
 at 327 us and `persistent_topk_kernel` at 315 us per rank-step on rank 3, both of which
-are **selection**, not reading.
+are selection, not reading.
 
 So the target in the QSA path is the indexer scan and the top-k pick, roughly 1.4 ms of
 the step across four ranks, and unlike the read it grows with context depth. That is
@@ -3359,13 +3359,13 @@ graph or do not time at all.
 - Their op captures into a CUDA graph and replays bit-identically, which was the hard
   requirement and is now known to hold.
 - The int8 `int8_per_token_head` cache mode already exists in this tree, including the
-  store kernel, and our FP8 checkpoint ships **no** KV scale tensors, so the served e4m3
+  store kernel, and our FP8 checkpoint ships no KV scale tensors, so the served e4m3
   cache runs with per-tensor scale 1.0, uncalibrated. That is an accuracy argument for
   per-token-head scales, independent of speed, and it is the only reason left to change
   the format.
 
 
-## Correction, again, and this time from the real endpoint (2026-10-24)
+## The controlled endpoint profile moves the read figure (2026-10-24)
 
 The live lane answers `POST /start_profile` and `POST /stop_profile`, and its
 `torch_profiler_dir` is inside this repo, because the host path `/ssd/ai/workspace` is
@@ -3388,7 +3388,7 @@ implied, and across four serial ranks about 1.55 ms of the 45.2 ms step, 3.4%. S
 is about the same size again, and it is the part that grows with context depth while the
 read does not.
 
-Two notes on method, because I have now been wrong about this twice in one day. The 24.6
+Two method notes. The 24.6
 us graph-replay number is not wrong, it is a 5-row shape, and the lane is not running 5
 rows, so a microbenchmark has to be sized to production before its ratio is quoted even
 when it is timed correctly. And the ordering did not change: our kernel is still faster
@@ -3423,7 +3423,7 @@ ValueError("type fp8e4nv not supported in this architecture.
 Same Ampere limitation that stopped my own harness earlier today: sm_80 Triton cannot
 compile the e4m3 type. `nvidia/indexer_qsa.py:152-163` maps `"fp8"` to
 `torch.float8_e4m3fn` and hands that tensor to the store and logits kernels, so nothing
-can run. The **main** cache avoids this by storing e4m3 bits in a `torch.uint8` tensor
+can run. The main cache avoids this by storing e4m3 bits in a `torch.uint8` tensor
 and decoding bytes in-kernel, and the indexer side cache has no such path. The comment at
 `indexer_qsa.py:150-151`, "the logits kernels dot fp8 x fp8 directly", is a newer-arch
 assumption. Do not retry this flag without code.
@@ -3456,7 +3456,7 @@ From the fresh window only, rank 0, 36 real decode steps:
 | `_qsa_mqa_paged_prefill_kernel`, arriving prefill | 835.8 | 279 |
 
 At the 40-row ceiling a read call moves about 84 MB, which is 119.1 us, so about
-**79% of the 895 GB/s this card sustains in production**. If the decode batch during that
+79% of the 895 GB/s this card sustains in production. If the decode batch during that
 window really was near 40 rows, the read is bandwidth-bound in situ and this entire axis
 is closed, by config, by int8, and by any third-party kernel. The trace does not record
 shapes, so the row count is not in evidence, and at 8 rows the same arithmetic gives
@@ -3479,12 +3479,12 @@ rank, so every count below is one launch per layer per step on the serving lane.
 |---|---|---|---|
 | `persistent_topk_kernel<512, 4u>` | 56.9 | 171 | select |
 | `_qsa_mqa_paged_uniform_kernel` | 48.2 | 145 | score the prefix |
-| `_qsa_sparse_paged_gqa_splitk_kernel` | 22.4 | 67 | **read** |
+| `_qsa_sparse_paged_gqa_splitk_kernel` | 22.4 | 67 | read |
 | `_qsa_merge_splitk_kernel` | 5.2 | 16 | read combine |
 
-Two conclusions, and the first one retracts something I wrote twice today.
+The first finding retracts a number published earlier in this file.
 
-**The 387 us per rank-step figure for the read is void.** It came from a directory holding
+The 387 us per rank-step figure for the read is void. It came from a directory holding
 traces from four boots and from a window that contained arriving prefill work, where
 `_qsa_mqa_paged_prefill_kernel` averages 836 us over 12 calls and lands in the same
 category bucket. Under a controlled single-stream load the read is 22.4 us per call, which
@@ -3492,7 +3492,7 @@ matches my synthetic CUDA-graph measurement of 24.6 us at 5 rows to within 10%. 
 microbenchmark was right, the endpoint number was wrong, and the 3.4% step share it implied
 is really about 1.2%, read plus combine, 67 plus 16 us per rank-step.
 
-**Selection is the target, at 3.8x the read.** Score and select cost 105 us per call
+Selection is the target, at 3.8x the read. Score and select cost 105 us per call
 against 27.6 us for reading and combining, so 316 us of a rank-step against 83 us. Across
 four serial ranks that is about 1.26 ms of the 22.79 ms step, 5.5%, against 1.5% for the
 read. `persistent_topk` is now the single most expensive kernel in the QSA path, and this
@@ -3512,12 +3512,12 @@ knob matters at all given the scan appears to be doing far more work per byte th
 would allow.
 
 
-## Two things I had written down wrong about the pipeline bubble (2026-10-25)
+## Two corrections about the pipeline bubble (2026-10-25)
 
 A static read of the p13 trace and of `vllm/distributed/` corrected two claims of mine,
 one in this file and one in the tool.
 
-**1. `generation_0(0)` spans are not draft waves.** The annotation is
+1. `generation_0(0)` spans are not draft waves. The annotation is
 `execute_context_{num_ctx_requests}({ctx_tokens})_generation_{num_gen_requests}({gen_tokens})`
 (`vllm/v1/worker/gpu_worker.py:1298-1315`), so `generation_0(0)` is a step with zero
 scheduled requests. All 113 of them in that capture launch zero kernels, which is why they
@@ -3526,12 +3526,12 @@ inside `sample_tokens`, which is un-annotated: rank 3 replays 5 graphs per step 
 for ranks 0 to 2. `phase_report.py:6-7` states the wrong interpretation and this file
 repeated it in an earlier section.
 
-**2. The read bandwidth denominator was wrong.** I have been comparing QSA kernels against
-895 GB/s all day, which is a **copy** rate, read plus write. This card is GA100 with 4096
+2. The read bandwidth denominator was wrong. I have been comparing QSA kernels against
+895 GB/s all day, which is a copy rate, read plus write. This card is GA100 with 4096
 bit HBM2e at 2.9 Gbps, 1.49 TB/s theoretical, and a pure streaming read sustains roughly
 1.33 TB/s. That reframes every roofline in the sections above, and in one case it reverses
 the conclusion: `_qsa_mqa_paged_uniform_kernel` is not inefficient, it reads 63.2 MB of bf16
-index cache in 48.2 us, which is 1.33 TB/s, about **89% of the card's peak read rate**. It
+index cache in 48.2 us, which is 1.33 TB/s, about 89% of the card's peak read rate. It
 is at the roofline and there is nothing algorithmic left in it.
 
 ### What `nccl-spin` actually is
@@ -3553,7 +3553,7 @@ dependency rather than work.
 
 The part that is not structural: kernel compute is flat at about 26 ms per cycle while the
 period grew from 26.7 ms in the best-packed cycles to 41 to 44 ms in steady state, so roughly
-**14 ms per step is host time that lands in the spin column**. On rank 0, once per real step,
+14 ms per step is host time that lands in the spin column. On rank 0, once per real step,
 `cudaStreamSynchronize` blocks the worker's only CPU thread for 30.5 to 34.9 ms, then about
 2.6 ms of per-request Python bookkeeping runs, then a 0.78 ms `cudaGraphLaunch` before the
 next forward is even queued.
@@ -3573,7 +3573,7 @@ transfer and makes the reading obvious. A third line is worth adding, `period mi
 compute across ranks`, which is the time when no GPU on the box is computing, 18.0 ms per
 step in steady cycles against 3.8 ms in the best-packed ones.
 
-Also recorded so nobody re-learns it: `nvidia-smi` GPU-Util answers only "was any kernel
+Note: `nvidia-smi` GPU-Util answers only "was any kernel
 resident during the sample", so a 4-warp spin scores the same as a full-width GEMM. On this
 box utilization, memory-used and power draw are not load signals. `/metrics` counters, step
 and ITL histograms, and per-kernel durations from a trace are.
@@ -3591,12 +3591,12 @@ analysis used. Rows 5, `seq_len` 988000, `stride` 1000304:
 
 | smem cap | CTAs per group | groups | row iterations | barrier round-trips | launch smem | occupancy |
 |---|---|---|---|---|---|---|
-| 48 KiB, shipped | 86 | **1** | **5** | **30** | 48,608 B | 2 |
+| 48 KiB, shipped | 86 | 1 | 5 | 30 | 48,608 B | 2 |
 | 82 KiB | 49 | 1 | 5 | 30 | 83,744 B | 2 |
 | 164 KiB | about 17 | 2 | 3 | 18 | 162,144 B | 1 |
 
-At the shipped cap the whole 148-CTA budget goes to a single group, so **the five MTP rows
-are selected one at a time**, five sequential passes, each paying about six global-memory
+At the shipped cap the whole 148-CTA budget goes to a single group, so the five MTP rows
+are selected one at a time, five sequential passes, each paying about six global-memory
 spin barriers, thirty in total. At 4.95 MB moved that is 87 GB/s, roughly 17x off the
 1.49 TB/s this card can read at, so the time is barrier latency plus seven shared-memory
 rescans per element and not data movement.
@@ -3623,7 +3623,7 @@ small row counts, which is a new kernel, about 1.5% of the single-stream step at
 `max_seq_len`. That value is the padded row width, page table columns times page size, so
 1000304 on this lane, while the contract at `vllm/model_executor/layers/indexer_topk.py:334-338`
 says the argument is the host-side maximum real sequence length across rows. Consequence:
-`needs_cooperative` tests `max_seq_len > 32768` and is therefore **always true at decode**,
+`needs_cooperative` tests `max_seq_len > 32768` and is therefore always true at decode,
 even for a 200 token prompt, which selects the multi-CTA radix path with its headroom
 penalty and per-call workspace bookkeeping where the single-CTA path would apply.
 
@@ -3635,7 +3635,7 @@ requests, which is most traffic on a lane capable of 1M. Correct fix is to threa
 per-step tight value may be frozen from capture, so the zero-risk form separates the two
 roles, keeping the clamp at `stride` and passing the tight value only as the host hint.
 
-### Putting the pieces in order by size
+### Remaining cost, ranked
 
 | target | per step | as share of a 45 ms single-stream step |
 |---|---|---|
