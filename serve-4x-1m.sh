@@ -108,12 +108,20 @@ if [ -n "${LPT:-}" ] && [ "${LPT:-0}" != "0" ]; then
     LPT_ARGS=(--long-prefill-token-threshold "$LPT")
 fi
 
-# Diagnostic, not a series patch: `FANOUT=1` exports VLLM_MOE_FANOUT_PROBE so the
-# worker processes inherit it from this shell rather than depending on how the
-# frontend spawns the engine. Logs distinct experts per MoE forward, bucketed by row
-# count. Rollback: drop FANOUT. See experiments/0015-moe-fanout-probe.patch.
-if [ "${FANOUT:-0}" = "1" ]; then
-    export VLLM_MOE_FANOUT_PROBE=1
+# Flag-only A/B of the QSA index cache. The selection scan streams the compressed
+# key cache, and the lane default is "auto", which the QSA indexer resolves to bf16
+# (nvidia/indexer_qsa.py:152-163 accepts only "bf16" or "fp8"). IKD=fp8 stores those
+# rows as e4m3, halving the bytes the scan reads at a cost of selection accuracy, so
+# it must be certified with the fixed-salt accept window, not on speed alone. The
+# index cache is not the KV pool, so the pool line should not move. Unset keeps the
+# shipped behaviour. Rollback: drop IKD.
+IKD_ARGS=()
+if [ -n "${IKD:-}" ]; then
+    case "$IKD" in
+        bf16|fp8) ;;
+        *) echo "serve-4x-1m.sh: IKD must be bf16 or fp8, got '$IKD'" >&2; exit 1 ;;
+    esac
+    IKD_ARGS=(--attention-config "{\"indexer_kv_dtype\":\"$IKD\"}")
 fi
 
 # The default prefix match granularity is the GCD of the cacheable KV group
@@ -125,6 +133,7 @@ fi
 exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     ${PROF_ARGS[@]+"${PROF_ARGS[@]}"} \
     ${LPT_ARGS[@]+"${LPT_ARGS[@]}"} \
+    ${IKD_ARGS[@]+"${IKD_ARGS[@]}"} \
     --served-model-name qwen3.8-flash-next-fp8 \
     --port 8000 \
     --pipeline-parallel-size 4 \

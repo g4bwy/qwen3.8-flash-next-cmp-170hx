@@ -3020,3 +3020,632 @@ almost always are the next five real tokens. Cell: `bench.py --fills 50
    compute does not exist on sm_80. What remains from the original list is batch
    residency, which the five-stream test showed is limited by prefill starvation
    rather than memory, and a different checkpoint.
+
+## QSA sparse attention on sm_80 runs at 28% of its own gather ceiling (2026-10-24)
+
+The question started as "can the pth-flash-attn int8 kernel replace our fp8 KV read
+path". Static reading said no, because their op has no per-query index argument. That
+was wrong, and building and testing their kernel on this box proved it wrong while
+exposing something more useful: our own sparse attention kernel is far off the
+bandwidth this access pattern can reach.
+
+### Their kernel works on sm_80, where nobody had run it
+
+Their `docs/benchmarks.md:618` states only compute capability 8.6 was ever measured
+and that sm80 and sm89 are build-and-CPU-gate only. Built here with
+
+```
+CUDA_HOME=/usr/local/cuda PATH=/usr/local/cuda/bin:$PATH TORCH_CUDA_ARCH_LIST=8.0 \
+  /home/gab/test/vllm/.venv/bin/python setup.py build_ext --inplace
+```
+
+which needs no source edits under CUDA 13.4, g++ 16.2 and torch 2.13. The result is
+2.94 MB of SASS, 2161 symbols all `compute_80`/`sm_80`, 24 `mma...satfinite.s32.s8.s32`
+IMMA instructions, and ptxas reports 0 bytes spilled, 33 registers, 8 KB shared memory.
+`benchmark/pth_attn_gate.py` runs 8 shapes on a CMP 170HX and all pass against a
+dequantized reference at 0.25 to 0.54% relative error, covering `BS` of 1, 2, 4, 8, 16,
+816 and an MTP verify length of 5.
+
+### Token-level sparse selection is expressible, no kernel edit
+
+Their geometry is `j = block_table[r][i]`, `o = i % BS`
+(`csrc/pth_attn/cache_geometry.cuh:10-13`). At `BS = 1` every page holds one token, so
+`o` is always zero and `block_table[r][i]` is a plain per-token list. Position enters
+their math only through the bottom-right causal bound "positions `j <= limit(r) =
+seq_len - q_len + tok`" (`csrc/pth_attn/mask.cuh:8`), and there is no rotary term
+anywhere in `mask.cuh`, `attn_kernel.cuh` or `cache_geometry.cuh`, because K is stored
+after RoPE. So any subset is a legal visible set, and a permuted table is exactly a
+selection. The gate test above scatters physical pages deliberately, and the result
+still matches the reference, which is the direct proof.
+
+Two details that make this work at our shapes. `block_table` is indexed by request
+rather than by query row, and one decode step carries 5 rows in one request, so the
+rows go over as 5 pseudo-requests with `query_start_loc` `[0,1,2,3,4,5]`. And our
+selector groups are 4 consecutive tokens with `block_topk` 512
+(`vllm/models/qwen4_exp/config.py:152`), which is finer than the page size their vLLM
+wrapper allows, so the per-token list at `BS = 1` is what closes that gap. Their
+wrapper's floor of `BS >= 8` and the multiple-of-16 rule are Python-side refusals on a
+kernel that takes `BS` at runtime.
+
+### The byte story I assumed is dead, so this became a kernel story
+
+`serve-4x-1m.sh:138` passes `--kv-cache-dtype fp8` and the boot log confirms it,
+"Using fp8 data type to store kv cache" (`boot-4x-1m.log:15`). The served tree supports
+it in QSA: `supported_kv_cache_dtypes = ["auto", "bfloat16", "fp8", "fp8_e4m3"]`
+(`vllm/models/qwen4_exp/nvidia/qsa.py:154-159` on the 13-patch tip), storing e4m3 bytes
+in a uint8 cache and dequantizing on load inside the Triton kernel. One byte per
+element already, so int8 buys no bytes, no pool and no capacity. `/home/gab/test/vllm`
+holds an older bf16-only variant of this kernel that asserts `torch.bfloat16`, which is
+what made the first A/B compare bf16 against int8 and report a 2x byte advantage that
+does not exist on the serving lane.
+
+### Measured at equal bytes, their kernel is 1.6x ours
+
+`benchmark/pth_vs_qsa_fp8.py`, one layer-step at the real decode shape, 5 rows times
+2048 selected tokens over a 200k logical prefix, D=256, 24 query heads, 2 KV heads,
+both arms moving 10.0 MiB. GPU2 beside the live server, so the arms are interleaved in
+paired blocks and only the ratio is quoted. Arm A's cache holds e4m3 bit patterns read
+through the linear byte decode, so its numerics are meaningless and its traffic is
+correct; arm B's numerics are the ones the gate certified. `logs/pth-ab-fp8-117100.txt`
+with salt 117100.
+
+| quantity | value |
+|---|---|
+| random gather ceiling, 10240 rows of 1024 B | 338 GB/s, 341 at start |
+| arm A, our served fp8 Triton kernel | 110.3 us, 95 GB/s, 28% of ceiling |
+| arm B at split count 64 | 67.4 us, 156 GB/s, 46% |
+| arm B best, split count 4 | 35.9 us, 292 GB/s, 86% |
+| ratio with both arms at 64 splits | 1.61, spread 0.023 over 4 blocks |
+
+This run is superseded by the next section. It asked `_select_config` without `is_fp8`,
+so arm A was timed at 64 splits, which the served kernel never uses on sm_80, and 64 is
+also near arm B's worst setting. The 1.61 is an artifact of that pairing.
+
+The ceiling probe matters more than the ratio. A linear read is the wrong reference for
+sparse attention, and `uint8.sum()` is wrong twice over because it is an integer
+reduction that reports 88 GB/s on a card doing 895 in production. Gathering bf16 rows
+and reducing them measures this pattern at 338 GB/s, which puts our kernel at 28% of
+what the access pattern allows. If the card was partly busy both efficiencies are
+understated by the same factor, so the ratio stands and the 28% is a floor on how much
+headroom exists.
+
+### What it is worth
+
+3 full-attention layers per PP rank out of 12, because `layer_types` gives 12
+full_attention and 36 linear_attention with `full_attention_interval` 4. Ranks are
+serial for one stream. At the corrected 3.1x the saving is 3 layers times 4 ranks times
+71.8 us, 862 us of the 22.79 ms step, 3.8%. That is the same order as patch 13, which was
+promoted for 3 to 5%. The 2.3% figure this section first carried came from the superseded
+1.61x pairing.
+
+### The two conclusions that matter
+
+1. Adopting their kernel is possible and worth about 3.8% of the decode step. It is a
+   real change: their op cannot read the cache QSA writes today, so a `StreamCache`
+   split is needed so the attention rows become int8 with per-token-head scales while
+   the indexer keeps its e4m3 byte stream. The earlier size read said about 500 lines
+   with about 100 in vLLM and the rest in their package.
+2. The defect is in our kernel body, not in a knob. `benchmark/qsa_decode_tune.py`
+   swept 30 combinations of `BLOCK_N` from 16 to 256 against split counts from 4 to 128
+   on the served tree. Every cell lands between 105.6 and 112.0 us, the best buys 1% of
+   this kernel's time and 0.08% of the step, so there is no configuration prize here.
+   Recovering the 3.8% means editing the Triton kernel, most likely the e4m3 byte decode
+   in the inner loop, which the shipped sm_80 path already works around by widening
+   tiles: `if is_fp8 and _is_sm80(): BLOCK_N, num_warps = 128, 4`, commented "Wider
+   tiles measured faster for the byte-decode path on A100"
+   (`vllm/models/qwen4_exp/nvidia/ops/qsa.py:629-633`). That the override was measured
+   on A100 and never on this card is itself a loose end.
+
+### Corrected A/B at the real fp8 config, the number to quote (2026-10-24)
+
+Three fixes at once, all from reading the served contract properly instead of assuming.
+The 1M lane runs `--block-size 1616`, so the kernel page is 1616 tokens and not 64. The
+packed selection buffer is `indexer_budget + compress_ratio - 1 = 2051` wide plus the
+count column, not 2048. And on sm_80 with an fp8 cache the served kernel overrides the
+GB300 table with `BLOCK_N=128` and `splits=16`. Arm A's cache is now a view of the
+unified `[num_blocks, num_kv_heads, 1616, 512]` buffer split the way
+`nvidia/qsa.py:145` splits it, so a token's two KV heads sit 827,392 bytes apart instead
+of adjacent. `logs/pth-ab-fp8-unified-118000.txt`, salt 118000.
+
+| quantity | value |
+|---|---|
+| random gather ceiling, 10255 rows of 512 B | 348 GB/s start, 354 end |
+| our served kernel, shipped config | 104.8 us, 100 GB/s, 28% |
+| their kernel at 16 splits, the same count | 34.8 us, 302 GB/s, 86% |
+| their kernel at its best, 4 splits | 33.0 us, 318 GB/s, 90% |
+| paired ratio at 16 splits, four blocks | 3.08, spread 0.076 |
+
+The headline moves from 1.61x to about 3.1x, which is what both the matched pairing at
+the config ours really uses (3.08) and each arm at its own best (3.18) give. The value
+follows: 3 full-attention layers per rank, 4 ranks serial, 71.8 us per layer, 862 us of
+the 22.79 ms step, so **3.8%** rather than the 2.3% the earlier pairing implied.
+
+The production cache strides turned out not to matter. Two 256 B runs per token instead
+of one 512 B run moved arm A by about 1 us, well inside the spread, so our kernel sits at
+28% of the gather ceiling under either layout.
+
+### Sweep of our own kernel, the negative result (2026-10-24)
+
+The shipped decode config on the served tree is `BLOCK_N=128`, `warps=4`, `tiles=16`,
+`splits=16`, because the fp8 branch overrides the GB300 table on sm_80. The A/B above
+called `_select_config` without `is_fp8`, which returns `BLOCK_N=32` and `splits=64`, so
+arm A was timed at a config the server does not use. The sweep makes that mistake
+harmless, the whole grid is flat to within 1%, but the label was wrong and is corrected
+here.
+
+| BLOCK_N | splits 4 | 8 | 16 | 32 | 64 | 128 |
+|---|---|---|---|---|---|---|
+| 16 | 109.0 | 111.7 | 108.2 | 108.1 | 107.8 | 212.0 |
+| 32 | 110.7 | 108.9 | 107.6 | 107.2 | 106.9 | 107.1 |
+| 64 | 111.9 | 108.9 | 108.7 | 107.1 | 109.3 | 108.0 |
+| 128 shipped | 107.0 | 106.0 | 109.0 | 108.3 | 108.0 | 108.2 |
+| 256 | 109.3 | 107.1 | 106.6 | 105.6 | 106.9 | 105.8 |
+
+Microseconds per layer-step, 10.0 MiB moved, gather ceiling 291 GB/s measured in the
+same run, so the best cell still reaches only 34% of it. The `bn=16` cell at 128 splits
+is the one clear failure at 212 us.
+
+## Step 1 of the QSA decode defect: it is not bytes, and no knob moves it (2026-10-24)
+
+`benchmark/qsa_decode_dtype.py` runs the served kernel on one selection, one stride
+pattern and one page size, twice: once with a bf16 cache and once with the uint8 e4m3
+cache the lane actually uses. `logs/qsa-dtype-119000.txt`, salt 119000.
+
+| arm | bytes per layer-step | time | GB/s | its own gather ceiling |
+|---|---|---|---|---|
+| e4m3 in uint8 | 10.0 MiB | 105.0 us | 100 | 236 GB/s, 42% |
+| bf16 | 20.0 MiB | 104.3 us | 201 | 342 GB/s, 59% |
+| ratio | 2.00x | 0.99x | | |
+
+Twice the bytes, the same time, to within 1%. The kernel is not bandwidth-bound, so the
+"28% of the gather ceiling" framing was the wrong diagnostic and the ceiling itself was
+too generous, because a 512 B random gather only reaches 236 GB/s here rather than the
+348 GB/s measured with 1024 B runs. What the time tracks is elements touched, which is
+identical in both arms.
+
+`benchmark/qsa_decode_tune.py --stages` then tests whether it is a pipeline depth
+problem, which the dependent index, page, then K address chain in the inner loop would
+suggest. `logs/qsa-stages-119100.txt`. Stages 1, 2 and 3 give 111.6, 114.8 and 111.3 us.
+Stage 4 and above are rejected with `OutOfResources`. So the kernel is already at the
+shared memory edge, deeper pipelining is not available to it, and depth is not the lever.
+
+Combined with the tile sweep, three independent launch knobs are flat: `BLOCK_N` 16 to
+256, splits 4 to 128, stages 1 to 3, all inside 105.6 to 118.1 us. The work per
+layer-step is 2 rows of arithmetic, 5 rows x 24 heads x 2051 tokens x 256 dims x 2
+tensors, which is 2.5 GFLOP, so the kernel sustains about 24 TFLOPS against the 182
+TFLOPS bf16 peak measured on this die. It is 7.6x off its own compute ceiling and no
+launch configuration gets it there.
+
+Their kernel does the same element count in 33.0 us, about 76 TFLOPS, using int8 tensor
+cores for the QK product and folding the value scale into the probabilities so V is
+never dequantized. That is the mechanism, and it has a consequence for the plan: int8
+MMA needs an int8 cache, so the cache format change is on the critical path for any
+route to this win, including rewriting our own Triton kernel to do the same thing.
+
+### CUDA graph capture holds on sm_80
+
+The lane runs `cudagraph_mode=FULL_AND_PIECEWISE`, so every decode step is a graph
+replay and a kernel that allocates or reads a host scalar at capture time cannot serve.
+Their docs claim graph safety because vLLM adaptive decode depth depends on it, so it is
+now tested rather than trusted. `benchmark/pth_attn_gate.py` captures the op, replays it
+five times after mutating the query buffer in place, and compares against an eager call:
+bit identical, error 0.0000. All 9 gate cases pass.
+
+## Where the QSA decode time actually goes, read from the generated code (2026-10-24)
+
+The dtype A/B said the e4m3 decode costs nothing, which was surprising, so I read the
+kernel source and the emitted PTX instead of speculating. `/tmp/qsa-asm/`, compiled from
+`wt-p13` at the decode shape.
+
+The decode is already hand-optimized. `vllm/models/qwen4_exp/nvidia/ops/qsa.py:40-53`
+is inline PTX that expands four e4m3 bytes to fp16 with one `shf.r.wrap.b32`, one
+`lop3.b32`, two `prmt.b32` and two `and.b32`, so about six instructions per four
+elements. It exists because **sm_80 has no hardware fp8 convert at all**, which is also
+why the cache is `torch.uint8` holding e4m3 bits rather than a real fp8 tensor, and why
+the earlier ceiling probe found no fp8 or nvfp4 formats on this card. There is nothing
+left to optimize there, and the A/B already proved it was not the constraint.
+
+Instruction mix in the compiled decode variant, one fully unrolled body, zero loop
+labels:
+
+| instruction class | count | reading |
+|---|---|---|
+| `mma.sync.m16n8k16.f32.bf16.bf16` | 64 | QK product, tensor cores already in use |
+| `mma.sync.m16n8k16.f32.f16.f16` | 64 | P times V, in fp16, a different dtype from QK |
+| `ld.shared` | 370 | dominates global loads, 10 of them |
+| `prmt` / `and.b32` / `cvt.` | 448 / 360 / 430 | the byte decode plus f32 to f16 to bf16 casts |
+| `cp.async` | 102 | async copies present |
+| `ex2` | 18 | softmax |
+| shared memory per CTA | 77,824 B | at most 2 CTAs per SM on this die |
+
+Two things follow. First, our kernel is already using Ampere tensor cores and
+`cp.async`, so the gap to their 3.1x is not "missing hardware instructions". Second, at
+2.5 GFLOP per layer-step in 105 us we sustain about 24 TFLOPS against a measured 182
+TFLOPS bf16 peak, which is 13% of peak, while their kernel at 33 us sustains about 76
+TFLOPS against a measured 334 TFLOPS int8 peak, which is 23% of peak.
+
+So both kernels are latency and structure bound rather than at any roofline, and the
+decomposition of their 3.1x is roughly half from int8 having 1.84x more compute peak on
+this die and half from a better structured inner loop. That matters for the plan in a
+way I had backwards earlier in this session. Route 1, matching their speed in our Triton
+kernel without touching the cache format, must recover the whole gap as structure,
+because bf16 tops out at 182 TFLOPS and no one reaches that on a per-token gather at
+decode batch sizes. Route 2 gets 1.84x of it from the format change on day one and then
+inherits a kernel whose structure is already measured better.
+
+I corrected this claim twice in one session, so stating the final position plainly: the
+e4m3 software decode is not the bottleneck, int8 tensor-core peak is a real and
+immediately available advantage, and no launch configuration on the current kernel
+closes any material part of the gap.
+
+`ncu` is available in this container, Nsight Compute 2026.3.1, and would give achieved
+occupancy, stall reasons and tensor pipe utilization. It locks clocks and replays
+kernels, so it cannot run beside the serving stack and belongs in the paused window.
+
+## VOID: the three sections above timed the Python wrapper, not the kernel (2026-10-24)
+
+I fell into the trap recorded in this file twice already, eager timing inverting
+decode-path rankings, and I only caught it because a scaling test came out impossible:
+growing the selection from 512 to 4102 tokens, eight times the work, made the kernel
+**faster**, 166.1 us down to 112.9 us. Growing rows from 1 to 40, forty times the work,
+cost only 1.45x. No kernel does that. A Python wrapper does that, when its fixed cost
+dominates everything else.
+
+`benchmark/pth_vs_qsa_fp8.py` and its friends measured `qsa_sparse_paged_attention()`
+called eagerly in a loop. That call allocates the split-K partials, `torch.empty` of
+fp32 `[S, T, Hq, D]`, runs `_select_config`, does the shape validation and launches two
+kernels, every iteration. Measured directly:
+
+| arm | eager | graph replay | difference |
+|---|---|---|---|
+| ours, `qsa_sparse_paged_attention` | 166.2 us | 24.6 us | 141.6 us of CPU |
+| theirs, `pth_flash_attn_fwd` | 38.1 us | 37.9 us | 0.2 us |
+
+The lane runs `-cc.cudagraph_mode=FULL_AND_PIECEWISE` and captures decode at sizes
+`[1, 2, 4, 5, 8, 10, 16, 20, 24, 32, 40, ...]`, so at replay time that 141.6 us of CPU
+does not exist. Every number in the three preceding sections that came from arm A is
+therefore void, including "our kernel sustains 24 TFLOPS", "28% of the gather ceiling",
+and "the 30-cell sweep is flat so no configuration buys anything". All three were
+measurements of CPython.
+
+### Retimed inside CUDA graphs, both arms at their own best configuration
+
+Same shapes as before, 5 rows, 2051 tokens, page 1616, unified e4m3 cache for arm A and
+int8 with `BS=1` per-token pages for arm B, 10.0 MiB per layer-step, 400 replays per
+sample, five samples, median.
+
+| arm | config | graph replay |
+|---|---|---|
+| ours | shipped `(BLOCK_N=128, warps=4, tiles=17, splits=17)` | 24.6 us at splits 16 |
+| ours | splits 8 / 32 / 64 | 26.9 / 31.2 / 58.6 us |
+| theirs | best, `S=4, wm=1` | 37.9 us |
+| theirs | `S=2` / `S=8` / `S=16` | 61.8 / 41.2 / 40.5 us |
+| theirs | `S=1` | 113.0 us |
+
+**Ours is 1.54x faster than theirs**, not 3.1x slower. Under graph timing our kernel is
+also strongly config-sensitive after all, 24.6 us at 16 splits against 58.6 at 64, which
+is the opposite of what the eager sweep appeared to show. The shipped table already picks
+17 splits, so there is no config prize here either way, but for the right reason.
+
+One caveat in their favour, and it is a real one. `BS=1` is the only page size that
+expresses a per-token sparse selection, and their loader is built for whole pages, one
+`cp.async` row per token instead of one per 64. Their published wins, 2.56x against
+Triton `unified_attention`, are for dense and sliding-window attention at `BS=864`, which
+is their design centre and is not what we would be asking of it. What this test says is
+narrower and still decisive: as a sparse-selection kernel on this shape, it loses to ours.
+
+### What the decode step actually spends on attention
+
+At 24.6 us per layer-step and 3 full-attention layers per rank, the sparse KV read is
+about 74 us of a rank-step and about 295 us of the 22.79 ms step, **1.3%**. Making it
+free would buy 1.3%. That agrees with the profiler, which is a GPU-side measurement and
+was never affected by this error: the `qsa-attn` bucket is 0.43 ms per rank-step on ranks
+0 to 2, and the kernel names inside it are dominated by `_qsa_mqa_paged_uniform_kernel`
+at 327 us and `persistent_topk_kernel` at 315 us per rank-step on rank 3, both of which
+are **selection**, not reading.
+
+So the target in the QSA path is the indexer scan and the top-k pick, roughly 1.4 ms of
+the step across four ranks, and unlike the read it grows with context depth. That is
+where step 1 of this investigation should have been pointed from the start, and the
+lesson is the one already written down twice in this file: on the decode path, time the
+graph or do not time at all.
+
+### What survives from the investigation
+
+- Their extension builds for sm_80 with no source edits and runs correct on this card.
+  That is genuinely new, their own docs say sm80 was never executed.
+- `BS=1` makes their block table a per-token list, so their kernel *can* express our
+  selection semantically. Verified by test, with deliberately scattered physical pages.
+- Their op captures into a CUDA graph and replays bit-identically, which was the hard
+  requirement and is now known to hold.
+- The int8 `int8_per_token_head` cache mode already exists in this tree, including the
+  store kernel, and our FP8 checkpoint ships **no** KV scale tensors, so the served e4m3
+  cache runs with per-tensor scale 1.0, uncalibrated. That is an accuracy argument for
+  per-token-head scales, independent of speed, and it is the only reason left to change
+  the format.
+
+
+## Correction, again, and this time from the real endpoint (2026-10-24)
+
+The live lane answers `POST /start_profile` and `POST /stop_profile`, and its
+`torch_profiler_dir` is inside this repo, because the host path `/ssd/ai/workspace` is
+this container's `/home/gab/test`. A GPU-side trace of the serving stack therefore needs
+no reboot. Read `logs/prof`, 23:39, 36 real decode steps per rank at a 45.2 ms period.
+
+That trace says my "1.3%" for the sparse read was too small. My synthetic shape used 5
+query rows, while the lane runs decode batches up to `max_num_seqs` 8 times 5 MTP rows.
+Measured on the endpoint:
+
+| kernel | us per rank-step | launches per step |
+|---|---|---|
+| `_qsa_sparse_paged_gqa_splitk_kernel`, the read | 387 | 3.2 |
+| `_qsa_mqa_paged_prefill_kernel`, the scan | 279 | 0.3 |
+| `persistent_topk_kernel<512, 4u>` | 173 | 3.2 |
+| `qsa-attn` category total, rank 0 | 960 | |
+
+The read is about 387 us of a rank-step, roughly 5x what the 5-row microbenchmark
+implied, and across four serial ranks about 1.55 ms of the 45.2 ms step, 3.4%. Selection
+is about the same size again, and it is the part that grows with context depth while the
+read does not.
+
+Two notes on method, because I have now been wrong about this twice in one day. The 24.6
+us graph-replay number is not wrong, it is a 5-row shape, and the lane is not running 5
+rows, so a microbenchmark has to be sized to production before its ratio is quoted even
+when it is timed correctly. And the ordering did not change: our kernel is still faster
+than the third-party one at equal work, so the read prize is available only by improving
+our own kernel, not by swapping it.
+
+The cheapest untested lever is therefore on the selection side. `serve-4x-1m.sh` now
+takes `IKD=fp8`, which passes `--attention-config '{"indexer_kv_dtype":"fp8"}'`. The QSA
+indexer accepts `bf16` or `fp8` for the compressed key cache
+(`nvidia/indexer_qsa.py:152-163`) and the lane leaves it at `auto`, which resolves to
+bf16, so those rows are 128 dimensions per group either wide or narrow. fp8 halves the
+bytes the scan streams. It changes which blocks get selected, so it is certifiable with
+the fixed-salt accept window rather than on speed alone, and the pool line should not
+move, because the index cache is not the KV pool.
+
+
+## `IKD=fp8` cannot boot on sm_80, and the read is probably already at the wall (2026-10-24)
+
+`boot-4x-1m-ikd.log`. The flag reached the engine, the config echo carries
+`indexer_kv_dtype='fp8'`, and then the first forward died during
+`profile_cudagraph_memory`, before the pool was sized:
+
+```
+File "vllm/models/qwen4_exp/nvidia/ops/qsa.py", line 980, in qsa_store_cache_rows
+    _store_qsa_rows_kernel[(rows.shape[0],)](
+triton.compiler.errors.CompilationError: at 1:0:
+def _store_qsa_rows_kernel(
+ValueError("type fp8e4nv not supported in this architecture.
+            The supported fp8 dtypes are ('fp8e4b15', 'fp8e5')")
+```
+
+Same Ampere limitation that stopped my own harness earlier today: sm_80 Triton cannot
+compile the e4m3 type. `nvidia/indexer_qsa.py:152-163` maps `"fp8"` to
+`torch.float8_e4m3fn` and hands that tensor to the store and logits kernels, so nothing
+can run. The **main** cache avoids this by storing e4m3 bits in a `torch.uint8` tensor
+and decoding bytes in-kernel, and the indexer side cache has no such path. The comment at
+`indexer_qsa.py:150-151`, "the logits kernels dot fp8 x fp8 directly", is a newer-arch
+assumption. Do not retry this flag without code.
+
+Fixing it means mirroring the byte trick into the side cache, which on Ampere buys only
+the bandwidth, because there is no fp8 MMA. The knob stays in the script as
+`bf16|fp8` with a validator, since the intent is sound on sm_89 and above.
+
+Also removed `FANOUT=` from the script. The probe is not in `patches/`, it is
+`experiments/0015-moe-fanout-probe.patch` on `lab/moe-fanout-probe`, so on the shipped
+tree the knob only exported an environment variable that nothing reads, which implies a
+capability the lane does not have. The measurement it produced stands on its own.
+
+### One more method note, because this one nearly cost me the conclusion
+
+`benchmark/phase_report.py --dir logs/prof` globs `*rank*.pt.trace.json*`, and that
+directory holds traces from four separate boots on three different trees, Oct 13, Oct 16,
+Oct 24 00:25 and Oct 24 23:38, plus both stale `profiler_out_N.txt` and fresh
+`dp0_pp*_rank*.profiler_out.txt`. Grepping the wrong one reported 25.1 us per read launch
+against 119.1 us from the current window, a 5x error with no warning. Filter by timestamp
+before quoting anything from there.
+
+From the fresh window only, rank 0, 36 real decode steps:
+
+| kernel | us per call | us per rank-step |
+|---|---|---|
+| `_qsa_sparse_paged_gqa_splitk_kernel`, the read | 119.1 | 387 |
+| `persistent_topk_kernel<512, 4u>`, the select | 54.5 | 173 |
+| `_qsa_mqa_paged_uniform_kernel`, the decode scan | 21.1 | 63 |
+| `_qsa_mqa_paged_prefill_kernel`, arriving prefill | 835.8 | 279 |
+
+At the 40-row ceiling a read call moves about 84 MB, which is 119.1 us, so about
+**79% of the 895 GB/s this card sustains in production**. If the decode batch during that
+window really was near 40 rows, the read is bandwidth-bound in situ and this entire axis
+is closed, by config, by int8, and by any third-party kernel. The trace does not record
+shapes, so the row count is not in evidence, and at 8 rows the same arithmetic gives
+141 GB/s and the conclusion inverts. Settle it with `vllm:num_requests_running` around the
+next capture before treating it as finished.
+
+The number that does not fit is `persistent_topk` at 54.5 us per call, 2.6x the decode
+scan that feeds it. Selecting 512 groups should not cost that. That is the next thing.
+
+
+## Controlled endpoint profile: the read is fine, selection is 3.8x it (2026-10-24 23:55)
+
+`phase_probe.py --salt 121000 --decode 2048`, one stream at 100% fill, 987,972 prompt
+tokens, TTFT 85.4 s, acceptance length 4.95, match 100%, zero preemptions, 209 tok/s
+aggregate. The profiler armed during steady decode and self-closed at 150 engine steps,
+111 kernel calls per rank, which is 37 real decode steps and 3 full-attention layers per
+rank, so every count below is one launch per layer per step on the serving lane.
+
+| kernel | us per call | us per rank-step | role |
+|---|---|---|---|
+| `persistent_topk_kernel<512, 4u>` | 56.9 | 171 | select |
+| `_qsa_mqa_paged_uniform_kernel` | 48.2 | 145 | score the prefix |
+| `_qsa_sparse_paged_gqa_splitk_kernel` | 22.4 | 67 | **read** |
+| `_qsa_merge_splitk_kernel` | 5.2 | 16 | read combine |
+
+Two conclusions, and the first one retracts something I wrote twice today.
+
+**The 387 us per rank-step figure for the read is void.** It came from a directory holding
+traces from four boots and from a window that contained arriving prefill work, where
+`_qsa_mqa_paged_prefill_kernel` averages 836 us over 12 calls and lands in the same
+category bucket. Under a controlled single-stream load the read is 22.4 us per call, which
+matches my synthetic CUDA-graph measurement of 24.6 us at 5 rows to within 10%. The
+microbenchmark was right, the endpoint number was wrong, and the 3.4% step share it implied
+is really about 1.2%, read plus combine, 67 plus 16 us per rank-step.
+
+**Selection is the target, at 3.8x the read.** Score and select cost 105 us per call
+against 27.6 us for reading and combining, so 316 us of a rank-step against 83 us. Across
+four serial ranks that is about 1.26 ms of the 22.79 ms step, 5.5%, against 1.5% for the
+read. `persistent_topk` is now the single most expensive kernel in the QSA path, and this
+was measured at the worst case for depth, a 988k context, which is the one axis where the
+scan and select grow while the read stays fixed at 2051 tokens.
+
+Two things to hold loosely. The arithmetic does not close: 5 query rows scoring 247k
+compressed groups at 128 bf16 dimensions would be 316 MB in 48 us, about 6.6 TB/s, which
+this card cannot do, so either the rows share a pass or the logits are not recomputed from
+scratch every step, and I have not established which. And a single stream at 988k is the
+deep end of the distribution, so the selection share will not look like this on shallow
+traffic.
+
+Next question, in priority order: what `persistent_topk<512, 4u>` actually costs per
+element and why it is slower than the scan that feeds it, and whether the index cache dtype
+knob matters at all given the scan appears to be doing far more work per byte than a copy
+would allow.
+
+
+## Two things I had written down wrong about the pipeline bubble (2026-10-25)
+
+A static read of the p13 trace and of `vllm/distributed/` corrected two claims of mine,
+one in this file and one in the tool.
+
+**1. `generation_0(0)` spans are not draft waves.** The annotation is
+`execute_context_{num_ctx_requests}({ctx_tokens})_generation_{num_gen_requests}({gen_tokens})`
+(`vllm/v1/worker/gpu_worker.py:1298-1315`), so `generation_0(0)` is a step with zero
+scheduled requests. All 113 of them in that capture launch zero kernels, which is why they
+looked like empty spans. The real draft waves are the extra CUDA graph replays on rank 3
+inside `sample_tokens`, which is un-annotated: rank 3 replays 5 graphs per step against 1
+for ranks 0 to 2. `phase_report.py:6-7` states the wrong interpretation and this file
+repeated it in an earlier section.
+
+**2. The read bandwidth denominator was wrong.** I have been comparing QSA kernels against
+895 GB/s all day, which is a **copy** rate, read plus write. This card is GA100 with 4096
+bit HBM2e at 2.9 Gbps, 1.49 TB/s theoretical, and a pure streaming read sustains roughly
+1.33 TB/s. That reframes every roofline in the sections above, and in one case it reverses
+the conclusion: `_qsa_mqa_paged_uniform_kernel` is not inefficient, it reads 63.2 MB of bf16
+index cache in 48.2 us, which is 1.33 TB/s, about **89% of the card's peak read rate**. It
+is at the roofline and there is nothing algorithmic left in it.
+
+### What `nccl-spin` actually is
+
+One real NCCL device kernel, `ncclDevKernel_Broadcast_RING_LL`, 1 block of 128 threads,
+carrying 68 bytes of metadata, the sampled token, accept counts and 4 draft tokens, from the
+last pipeline stage to the other three. Not an event wait, not double counted. Ranks 0 to 2
+run it as consumers and it stays resident until stage 3 has sampled and drafted, so it
+absorbs every millisecond the loop loses anywhere, including host-side stalls. Rank 3 is the
+producer and its copy costs 9 us, which is why the spin staircase r0 31.31, r1 27.52, r2
+18.01, r3 3.24 ms is one stage of compute wide, and why the `true gap` column is its exact
+inverse, a rank that is idle *inside* a spin kernel reads as busy.
+
+It costs essentially no GPU resource, 4 warps on 1 of 74 SMs at zero achieved occupancy, and
+it does not even overlap the useful kernels on its own device, `union_nccl` plus
+`union_comp` equals `union_all` on rank 0, so the report columns legitimately sum to wall
+time. Deleting the kernel would not shorten a step by one microsecond, because the time is a
+dependency rather than work.
+
+The part that is not structural: kernel compute is flat at about 26 ms per cycle while the
+period grew from 26.7 ms in the best-packed cycles to 41 to 44 ms in steady state, so roughly
+**14 ms per step is host time that lands in the spin column**. On rank 0, once per real step,
+`cudaStreamSynchronize` blocks the worker's only CPU thread for 30.5 to 34.9 ms, then about
+2.6 ms of per-request Python bookkeeping runs, then a 0.78 ms `cudaGraphLaunch` before the
+next forward is even queued.
+
+### Two tooling defects worth fixing
+
+`phase_report.py:145-158` divides whole-capture GPU time by the count of real steps. In the
+45 ms capture that produces spin 47.02 ms per step against a 45.23 ms period, and 55.92 ms of
+total GPU work per step, which is arithmetically impossible inside a steady cycle. Time
+recorded after the last counted step is charged to the counted steps. It needs per-window
+attribution, clipping each event to `[step_i, step_i+1]`.
+
+The same file puts every kernel whose name contains `nccl` into one bucket with no duration
+filter (`:147-149`), which mixes a 3.8 ms receive wait with a 23 us payload. Splitting the
+column into `nccl-wait` above 2 ms and `nccl-xfer` turns 80.09 ms into 79.9 wait plus 0.2
+transfer and makes the reading obvious. A third line is worth adding, `period minus the sum of
+compute across ranks`, which is the time when no GPU on the box is computing, 18.0 ms per
+step in steady cycles against 3.8 ms in the best-packed ones.
+
+Also recorded so nobody re-learns it: `nvidia-smi` GPU-Util answers only "was any kernel
+resident during the sample", so a 4-warp spin scores the same as a full-width GEMM. On this
+box utilization, memory-used and power draw are not load signals. `/metrics` counters, step
+and ITL histograms, and per-kernel durations from a trace are.
+
+
+## Why the select kernel is slow, and why no cap fixes it (2026-10-25)
+
+`tools/qsa_topk_geometry.py`, in the `wt-int8kv` worktree, reproduces the host-side launch
+geometry of `persistent_topk_kernel` from `csrc/topk.cu`, pure Python, no GPU. It is the
+first tool in this set that predicts a shape I can check against a measurement, and the
+measurement is the 988k single-stream profile, 56.9 us per call.
+
+The important numbers are at the depth the lane actually runs, not at the 247k the first
+analysis used. Rows 5, `seq_len` 988000, `stride` 1000304:
+
+| smem cap | CTAs per group | groups | row iterations | barrier round-trips | launch smem | occupancy |
+|---|---|---|---|---|---|---|
+| 48 KiB, shipped | 86 | **1** | **5** | **30** | 48,608 B | 2 |
+| 82 KiB | 49 | 1 | 5 | 30 | 83,744 B | 2 |
+| 164 KiB | about 17 | 2 | 3 | 18 | 162,144 B | 1 |
+
+At the shipped cap the whole 148-CTA budget goes to a single group, so **the five MTP rows
+are selected one at a time**, five sequential passes, each paying about six global-memory
+spin barriers, thirty in total. At 4.95 MB moved that is 87 GB/s, roughly 17x off the
+1.49 TB/s this card can read at, so the time is barrier latency plus seven shared-memory
+rescans per element and not data movement.
+
+This kills the cheap fix. The 82 KiB cap that looked strictly better at 247k, halving
+iterations at unchanged occupancy, does nothing at depth, same five iterations and thirty
+barriers, and it shrinks the group from 86 CTAs to 49, so it is worse. The 164 KiB cap does
+reduce barriers to 18 but pays for it by halving occupancy to one CTA per SM. Trading
+barrier count against parallelism at a fixed small batch is a coin flip, not a win, so I am
+not spending a build on the cap. The experiment patch stays at
+`wt-int8kv/qsa-topk-smem-experiment.patch`, gated by `VLLM_QSA_TOPK_SMEM_CAP_KIB`, default
+off, for whoever wants the coin flip measured.
+
+The real shape of the problem is that this kernel is built for many short rows and this
+workload is a few very long ones. The kernel designed for exactly this case,
+`cooperative_topk`, uses TMA cluster loads and a 1024-bin histogram through distributed
+shared memory with a hardware `cluster.sync()` instead of global spin barriers, and it needs
+sm_90. It cannot run on GA100. A proper fix is a two-phase sampled-then-filtered select for
+small row counts, which is a new kernel, about 1.5% of the single-stream step at best.
+
+### A separate real bug, and it costs the short-context case
+
+`vllm/models/qwen4_exp/nvidia/ops/qsa_indexer.py:504` passes `logits.shape[1]` as
+`max_seq_len`. That value is the padded row width, page table columns times page size, so
+1000304 on this lane, while the contract at `vllm/model_executor/layers/indexer_topk.py:334-338`
+says the argument is the host-side maximum real sequence length across rows. Consequence:
+`needs_cooperative` tests `max_seq_len > 32768` and is therefore **always true at decode**,
+even for a 200 token prompt, which selects the multi-CTA radix path with its headroom
+penalty and per-call workspace bookkeeping where the single-CTA path would apply.
+
+Not a correctness bug, the kernel clamps reads with `min(stride, max_seq_len)`, and not a
+cost at the deep end, where the long row genuinely needs the wide path. It costs the shallow
+requests, which is most traffic on a lane capable of 1M. Correct fix is to thread
+`compressed_metadata.max_seq_len` into the decode call the way it already is for prefill at
+`indexer_qsa.py:471`, with one trap: `_run_qsa` is `@eager_break_during_capture`, and a
+per-step tight value may be frozen from capture, so the zero-risk form separates the two
+roles, keeping the clamp at `stride` and passing the tight value only as the host hint.
+
+### Putting the pieces in order by size
+
+| target | per step | as share of a 45 ms single-stream step |
+|---|---|---|
+| host-side bubble, `cudaStreamSynchronize` plus bookkeeping plus launch | about 14 ms | 31% |
+| MoE and GEMM compute on the critical path, rank 3 heaviest | about 26 ms of GPU work | the serial floor |
+| QSA select | 683 us | 1.5% |
+| QSA index cache bytes, bf16 to a narrower format | about 290 us | 0.6% |
+| QSA sparse read | 269 us | 0.6% |
+
+The QSA path is now fully accounted for and every item in it is small. The largest single
+number on this box is not a kernel at all, it is the 14 ms per step the pipeline loses to
+the host on the rank-0 handoff, which is consistent with the older finding that four
+concurrent streams raise aggregate throughput far more than any kernel change has.

@@ -1,0 +1,513 @@
+From 553faa42cb73fcf574610d4081430e2fc957cc33 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 23:35:32 +0200
+Subject: [PATCH] [WIP][Qwen4Exp] Give QSA an INT8 per-token-head KV cache
+
+Serves the main attention cache as int8 with one fp32 scale per (token, KV head)
+per side, reusing the mode that already exists in the tree rather than inventing
+one: CacheDType "int8_per_token_head", KVQuantMode.INT8_PER_TOKEN_HEAD, and the
+store kernel triton_reshape_and_cache_flash_per_token_head_quant.
+
+Scales ride in inline cell padding, the way TritonAttentionBackend does it, and
+NOT in a companion tensor. Prefix-cache block hashes are group-scoped, so data
+and scales in different groups could hit or evict independently and pair a
+block of data with an unrelated block of scales, which is silent numerical
+corruption rather than a failure.
+
+Read path deliberately unimplemented: qsa_sparse_paged_attention raises for this
+mode and the warmup raises too, so an int8 boot fails loudly at startup instead
+of computing wrong numbers. The fused qsa_prepare writer is refused for this
+mode on every capability, not only below sm_89, because it derives the head
+width from shape[-1] // 2 and has no output for a per-token scale.
+
+PARKED, not for promotion. Its reason for existing was a measured 3.1x attention
+speedup in a third-party int8 kernel. That measurement timed a Python wrapper
+eagerly and was wrong; under CUDA graph replay our own kernel is 1.54x faster
+than theirs, and the whole sparse read is 1.3% of the decode step. What is left
+of the motivation is accuracy: this FP8 checkpoint ships no KV scale tensors and
+QSA only registers default 1.0 scales, so the served e4m3 cache is uncalibrated.
+
+Co-authored-by: Maki
+---
+ tests/models/qwen4_exp/test_qsa_reference.py  |   3 +
+ .../warmup/qwen4_exp_qsa_warmup.py            |   1 +
+ vllm/models/qwen4_exp/nvidia/indexer_qsa.py   |   8 +-
+ vllm/models/qwen4_exp/nvidia/ops/qsa.py       |  26 ++-
+ vllm/models/qwen4_exp/nvidia/qsa.py           | 215 +++++++++++++++---
+ 5 files changed, 218 insertions(+), 35 deletions(-)
+
+diff --git a/tests/models/qwen4_exp/test_qsa_reference.py b/tests/models/qwen4_exp/test_qsa_reference.py
+index a55cc028f9..da7ab0a352 100644
+--- a/tests/models/qwen4_exp/test_qsa_reference.py
++++ b/tests/models/qwen4_exp/test_qsa_reference.py
+@@ -1112,6 +1112,9 @@ def test_qsa_sparse_paged_attention_correctness(
+         k_scale=k_scale,
+         v_scale=v_scale,
+         output_gate=output_gate,
++        kv_quant_mode=(
++            qsa_ops.KVQuantMode.FP8_PER_TENSOR if fp8 else qsa_ops.KVQuantMode.NONE
++        ),
+     )
+     expected = _qsa_sparse_paged_attention_reference(
+         q,
+diff --git a/vllm/model_executor/warmup/qwen4_exp_qsa_warmup.py b/vllm/model_executor/warmup/qwen4_exp_qsa_warmup.py
+index 2065b38338..748679616f 100644
+--- a/vllm/model_executor/warmup/qwen4_exp_qsa_warmup.py
++++ b/vllm/model_executor/warmup/qwen4_exp_qsa_warmup.py
+@@ -81,6 +81,7 @@ def qwen4_exp_qsa_triton_warmup(worker: "Worker") -> None:
+         block_table_for(owner.layer_name),
+         num_query_heads=owner.num_heads,
+         selection_width=indexer.output_width,
++        kv_quant_mode=owner.kv_quant_mode,
+     )
+     logger.info(
+         "Warmed up Qwen4Exp QSA sparse attention kernels: %s.",
+diff --git a/vllm/models/qwen4_exp/nvidia/indexer_qsa.py b/vllm/models/qwen4_exp/nvidia/indexer_qsa.py
+index c8ffa0dbfb..4fbd0f6fe3 100644
+--- a/vllm/models/qwen4_exp/nvidia/indexer_qsa.py
++++ b/vllm/models/qwen4_exp/nvidia/indexer_qsa.py
+@@ -14,6 +14,7 @@ from vllm.model_executor.layers.layernorm import GemmaRMSNorm
+ from vllm.model_executor.layers.linear import ReplicatedLinear
+ from vllm.model_executor.layers.quantization import QuantizationConfig
+ from vllm.model_executor.layers.rotary_embedding.mrope import triton_mrope
++from vllm.v1.kv_cache_interface import KVQuantMode
+ 
+ from ..common.qsa_cache import (
+     QSACompressedKeyCache,
+@@ -304,8 +305,13 @@ class QSAIndexer(nn.Module):
+                 self.index_head_dim,
+                 dtype=self.indexer_dtype,
+             )
++            if attn.kv_quant_mode.is_per_token_head:
++                raise NotImplementedError(
++                    "the fused QSA prepare writes one host scale for K and V, so "
++                    "it cannot fill a per-token-head quantized cache"
++                )
+             main_kv_cache = attn.kv_cache.transpose(1, 2)
+-            if attn.kv_cache_dtype in ("fp8", "fp8_e4m3"):
++            if attn.kv_quant_mode == KVQuantMode.FP8_PER_TENSOR:
+                 main_kv_cache = main_kv_cache.view(torch.float8_e4m3fn)
+             main_outputs = qsa_prepare(
+                 projected_q,
+diff --git a/vllm/models/qwen4_exp/nvidia/ops/qsa.py b/vllm/models/qwen4_exp/nvidia/ops/qsa.py
+index 9230be24a8..cc32c2f8b6 100644
+--- a/vllm/models/qwen4_exp/nvidia/ops/qsa.py
++++ b/vllm/models/qwen4_exp/nvidia/ops/qsa.py
+@@ -14,6 +14,7 @@ from vllm.model_executor.warmup.jit_warmup_triton_helper import (
+ )
+ from vllm.platforms import current_platform
+ from vllm.triton_utils import HAS_TRITON, tl, triton
++from vllm.v1.kv_cache_interface import KVQuantMode
+ 
+ 
+ @lru_cache(maxsize=1)
+@@ -647,6 +648,7 @@ def qsa_sparse_paged_attention(
+     v_scale: float | None = None,
+     *,
+     output_gate: torch.Tensor,
++    kv_quant_mode: KVQuantMode = KVQuantMode.NONE,
+ ) -> torch.Tensor:
+     """Run sparse GQA directly over paged BF16 or FP8-e4m3 K/V caches.
+ 
+@@ -675,13 +677,21 @@ def qsa_sparse_paged_attention(
+         raise ValueError(
+             "QSA packed indices need selection columns plus the count column"
+         )
++    if kv_quant_mode.is_per_token_head:
++        raise NotImplementedError(
++            f"QSA sparse attention cannot read a {kv_quant_mode.name} KV cache "
++            "yet: the kernel must load the fp32 scale stored in each head's "
++            "inline padding and descale K per (token, head) before the QK dot "
++            "and V before the PV dot, and for int8 route both dots through "
++            "int8 tensor cores. K/V cache writes already work."
++        )
+     if q.shape[2] != k_cache.shape[3] or q.shape[1] % k_cache.shape[2]:
+         raise ValueError("QSA sparse attention requires valid grouped-query heads")
+     head_dim = q.shape[2]
+     assert head_dim >= 16 and (head_dim & (head_dim - 1)) == 0
+     assert q.dtype == torch.bfloat16
+     assert k_cache.dtype == v_cache.dtype
+-    is_fp8 = k_cache.dtype != torch.bfloat16
++    is_fp8 = kv_quant_mode == KVQuantMode.FP8_PER_TENSOR
+     if is_fp8:
+         assert k_scale is not None and v_scale is not None
+         # Host pre-multiply: fold the K dequant scale into the attention scale
+@@ -695,6 +705,11 @@ def qsa_sparse_paged_attention(
+             output_scale *= 256.0
+         else:
+             assert k_cache.dtype == torch.float8_e4m3fn
++    elif k_cache.dtype != torch.bfloat16:
++        raise NotImplementedError(
++            f"QSA sparse attention got {k_cache.dtype} K/V with "
++            f"{kv_quant_mode.name} quantization"
++        )
+     else:
+         softmax_scale = head_dim**-0.5
+         output_scale = 1.0
+@@ -814,13 +829,20 @@ def warmup_qsa_sparse_paged_attention(
+     *,
+     num_query_heads: int,
+     selection_width: int,
++    kv_quant_mode: KVQuantMode = KVQuantMode.NONE,
+ ) -> tuple[tuple[int, int, int], ...]:
+     """Compile every production-reachable split-K/merge specialization."""
++    if kv_quant_mode.is_per_token_head:
++        raise NotImplementedError(
++            f"QSA sparse attention cannot read a {kv_quant_mode.name} KV cache "
++            "yet, so its specializations cannot be warmed up; see "
++            "qsa_sparse_paged_attention."
++        )
+     head_dim = kv_cache.shape[-1] // 2
+     key_cache, value_cache = kv_cache.transpose(1, 2).split(head_dim, dim=-1)
+     # An fp8 cache is allocated as uint8 storage; warm the dtype the impl hands
+     # over: an e4m3 view on sm_89+, the raw bytes below.
+-    is_fp8 = kv_cache.dtype == torch.uint8
++    is_fp8 = kv_quant_mode == KVQuantMode.FP8_PER_TENSOR
+     fp8_dtype = (
+         torch.float8_e4m3fn
+         if current_platform.has_device_capability(89)
+diff --git a/vllm/models/qwen4_exp/nvidia/qsa.py b/vllm/models/qwen4_exp/nvidia/qsa.py
+index f82cca1c2a..8f5de90b59 100644
+--- a/vllm/models/qwen4_exp/nvidia/qsa.py
++++ b/vllm/models/qwen4_exp/nvidia/qsa.py
+@@ -5,6 +5,7 @@
+ from __future__ import annotations
+ 
+ from collections.abc import Callable, Iterable
++from dataclasses import replace
+ from typing import ClassVar, cast
+ 
+ import torch
+@@ -38,6 +39,7 @@ from vllm.model_executor.models.utils import (
+ from vllm.platforms import current_platform
+ from vllm.platforms.interface import DeviceCapability
+ from vllm.utils.torch_utils import (
++    get_dtype_size,
+     kv_cache_dtype_str_to_dtype,
+ )
+ from vllm.v1.attention.backend import (
+@@ -53,10 +55,16 @@ from vllm.v1.attention.backends.flash_attn import (
+     FlashAttentionMetadata,
+     FlashAttentionMetadataBuilder,
+ )
++from vllm.v1.attention.ops.triton_reshape_and_cache_flash import (
++    triton_reshape_and_cache_flash_per_token_head_quant,
++)
+ from vllm.v1.kv_cache_interface import (
++    AttentionSpec,
+     FullAttentionSpec,
+     KVCacheSpec,
++    KVQuantMode,
+     get_kv_quant_mode,
++    is_quantized_kv_cache,
+ )
+ 
+ from ..common.qsa_cache import QSAForwardMetadata
+@@ -137,6 +145,16 @@ def qsa_kv_cache_dtype(cache_config: CacheConfig, prefix: str) -> CacheDType | s
+     return cache_config.cache_dtype
+ 
+ 
++# Storage dtype each KV quantization mode the QSA path accepts is allocated with.
++# Both the owner and its impl check against this, so a mode and its bytes cannot
++# drift apart between the two.
++_QSA_KV_STORAGE_DTYPES: dict[KVQuantMode, tuple[torch.dtype, ...]] = {
++    KVQuantMode.NONE: (torch.bfloat16,),
++    KVQuantMode.FP8_PER_TENSOR: (torch.uint8,),
++    KVQuantMode.INT8_PER_TOKEN_HEAD: (torch.int8,),
++}
++
++
+ class Qwen4ExpQSAMetadataBuilder(FlashAttentionMetadataBuilder):
+     """Flash metadata supporting uniform decode and target-verify graphs."""
+ 
+@@ -151,13 +169,30 @@ class Qwen4ExpQSAFlashAttentionBackend(FlashAttentionBackend):
+     # with the layer's per-tensor scales and dequantized on load inside the QSA
+     # Triton kernel. flash-attn never runs over this cache, so its fp8 probe
+     # does not apply (see supports_kv_cache_dtype and the impl constructor).
++    # int8_per_token_head: int8 data plus one fp32 scale per (token, KV head)
++    # per side, packed inline by customize_spec.
+     supported_kv_cache_dtypes: ClassVar[list[CacheDType]] = [
+         "auto",
+         "bfloat16",
+         "fp8",
+         "fp8_e4m3",
++        "int8_per_token_head",
+     ]
+ 
++    @classmethod
++    def customize_spec(cls, spec: AttentionSpec) -> AttentionSpec:
++        """Per-token-head modes pack inline fp32 scales after each head's
++        data, so the content is (data + one scale) per K/V side."""
++        mode = spec.kv_quant_mode
++        if spec.state_content_bytes is not None or not mode.is_per_token_head:
++            return spec
++        hs_k, hs_v = spec.head_size, spec.head_size_v
++        if mode == KVQuantMode.INT4_PER_TOKEN_HEAD:
++            hs_k, hs_v = hs_k // 2, hs_v // 2
++        scale_bytes = get_dtype_size(torch.float32)
++        content = (hs_k + hs_v) * get_dtype_size(spec.dtype) + 2 * scale_bytes
++        return replace(spec, state_content_bytes=content)
++
+     @classmethod
+     def supports_kv_cache_dtype(cls, kv_cache_dtype: CacheDType | None) -> bool:
+         return kv_cache_dtype is None or kv_cache_dtype in cls.supported_kv_cache_dtypes
+@@ -211,6 +246,79 @@ class Qwen4ExpQSAFlashAttentionImpl(FlashAttentionImpl):
+ 
+     supports_dcp: bool = False
+     supports_pcp: bool = False
++    # Per-token-head quant: scale views carved from inline head padding.
++    _k_scale_cache: torch.Tensor | None = None
++    _v_scale_cache: torch.Tensor | None = None
++
++    def _ensure_scale_caches(self, kv_cache: torch.Tensor) -> None:
++        """Extract per-head scale views from the padded content dimension.
++
++        The KV cache is packed as logical shape
++        ``(num_blocks, nkv, block_size, 2 * (hs + pad))`` where
++        ``pad = sizeof(float32) / sizeof(cache_dtype)``.  The content dim holds
++        ``[K(hs) | K_scale(pad) | V(hs) | V_scale(pad)]`` per (head, slot); the
++        last ``pad`` elements of each half hold one float32 scale.  We create
++        strided float32 views over those bytes.  ``kv_cache`` must be the
++        packed logical tensor (call before any transpose), but may have HND or
++        NHD physical strides.
++
++        Scale shape: ``(num_blocks, block_size, num_kv_heads)``
++        """
++        if self._k_scale_cache is not None:
++            return
++
++        num_blocks, nkv, block_size, content = kv_cache.shape
++        dtype_sz = kv_cache.element_size()
++        scale_pad = get_dtype_size(torch.float32) // dtype_sz
++        padded_hs = content // 2
++        hs = padded_hs - scale_pad
++
++        raw = kv_cache.untyped_storage()
++        base_f32 = torch.tensor([], dtype=torch.float32, device=kv_cache.device).set_(
++            raw
++        )
++
++        def to_f32_units(elements: int) -> int:
++            nbytes = elements * dtype_sz
++            assert nbytes % 4 == 0
++            return nbytes // 4
++
++        # Actual strides (in float32 units) from the tensor. The logical cache
++        # may be physically NHD, so do not assume C-contiguous HND layout.
++        strides = kv_cache.stride()
++        block_f32 = to_f32_units(strides[0])
++        head_f32 = to_f32_units(strides[1])
++        slot_f32 = to_f32_units(strides[2])
++        # Scale sits at byte offset hs within each (K, then V) content half.
++        base_off_f32 = to_f32_units(kv_cache.storage_offset())
++        k_scale_off_f32 = base_off_f32 + to_f32_units(hs)
++        v_scale_off_f32 = base_off_f32 + to_f32_units(padded_hs + hs)
++
++        # K scales (first content half)
++        self._k_scale_cache = torch.as_strided(
++            base_f32,
++            size=(num_blocks, block_size, nkv),
++            stride=(block_f32, slot_f32, head_f32),
++            storage_offset=k_scale_off_f32,
++        )
++        self._k_scale_cache.fill_(1.0)
++
++        # V scales (second content half)
++        self._v_scale_cache = torch.as_strided(
++            base_f32,
++            size=(num_blocks, block_size, nkv),
++            stride=(block_f32, slot_f32, head_f32),
++            storage_offset=v_scale_off_f32,
++        )
++        self._v_scale_cache.fill_(1.0)
++
++    def _pth_key_value_caches(
++        self, kv_cache: torch.Tensor
++    ) -> tuple[torch.Tensor, torch.Tensor]:
++        """Per-token-head K/V cache views, split on the padded half width."""
++        self._ensure_scale_caches(kv_cache)
++        padded_hs = kv_cache.shape[-1] // 2
++        return kv_cache.transpose(1, 2).split(padded_hs, dim=-1)
+ 
+     def __init__(
+         self,
+@@ -227,13 +335,13 @@ class Qwen4ExpQSAFlashAttentionImpl(FlashAttentionImpl):
+         sinks: torch.Tensor | None = None,
+     ) -> None:
+         # The parent constructor probes flash-attn for quantized-KV support and
+-        # raises where it is unavailable (sm120), but QSA dequantizes fp8 inside
+-        # its own Triton kernel and never runs flash-attn over the cache. Hand
+-        # the parent "auto" for that probe and restore the real dtype afterwards:
+-        # the parent only uses it there, and do_kv_cache_update reads the
+-        # attribute at call time.
++        # raises where it is unavailable (sm120), but QSA dequantizes its KV
++        # inside its own Triton kernel and never runs flash-attn over the cache.
++        # Hand the parent "auto" for that probe and restore the real dtype
++        # afterwards: the parent only uses it there, and do_kv_cache_update
++        # reads the attribute at call time.
+         real_kv_cache_dtype = kv_cache_dtype
+-        if kv_cache_dtype in ("fp8", "fp8_e4m3"):
++        if is_quantized_kv_cache(kv_cache_dtype):
+             kv_cache_dtype = "auto"
+         super().__init__(
+             num_heads,
+@@ -249,15 +357,18 @@ class Qwen4ExpQSAFlashAttentionImpl(FlashAttentionImpl):
+             sinks,
+         )
+         self.kv_cache_dtype = real_kv_cache_dtype
++        self._kv_quant_mode = get_kv_quant_mode(real_kv_cache_dtype)
++        self._is_per_token_head_quant = self._kv_quant_mode.is_per_token_head
+         if not is_flash_attn_varlen_func_available():
+             raise NotImplementedError("Qwen4Exp QSA requires FlashAttention")
+         if self.dcp_world_size != 1:
+             raise NotImplementedError(
+                 "Qwen4Exp QSA does not support decode context parallelism"
+             )
+-        if self.kv_cache_dtype not in ("auto", "bfloat16", "fp8", "fp8_e4m3"):
++        if self._kv_quant_mode not in _QSA_KV_STORAGE_DTYPES:
+             raise NotImplementedError(
+-                "Qwen4Exp QSA requires a BF16 or FP8-e4m3 main KV cache"
++                "Qwen4Exp QSA requires a BF16, FP8-e4m3 or INT8 per-token-head "
++                f"main KV cache, got {real_kv_cache_dtype!r}"
+             )
+         self.supports_quant_query_input = False
+ 
+@@ -294,26 +405,32 @@ class Qwen4ExpQSAFlashAttentionImpl(FlashAttentionImpl):
+             raise RuntimeError("QSA owner did not provide its top-k buffer")
+         logical_indices = topk_buffer[:num_tokens]
+         token_to_req = token_to_req[:num_tokens]
+-        key_cache, value_cache = kv_cache.transpose(1, 2).split(self.head_size, dim=-1)
+-        k_scale = v_scale = None
+-        if self.kv_cache_dtype in ("fp8", "fp8_e4m3"):
+-            # The cache is allocated as uint8; on sm_89+ reinterpret the e4m3
+-            # bytes (same itemsize, so shape and strides are preserved). Below
+-            # sm_89 the kernel byte-decodes the raw uint8 storage instead.
+-            if current_platform.has_device_capability(89):
+-                key_cache = key_cache.view(torch.float8_e4m3fn)
+-                value_cache = value_cache.view(torch.float8_e4m3fn)
+-            # Host-side per-tensor dequant scales (Python floats), as used by
+-            # other host-scale backends; folded into the kernel's scales.
+-            k_scale = layer._k_scale_float
+-            v_scale = layer._v_scale_float
+-        if query.dtype != torch.bfloat16 or key_cache.dtype not in (
+-            torch.bfloat16,
+-            torch.float8_e4m3fn,
+-            torch.uint8,
+-        ):
++        if self._is_per_token_head_quant:
++            # Data views are the unpadded head width; the fp32 scales ride in the
++            # padding next to them and the kernel reads them off the cache.
++            key_cache, value_cache = self._pth_key_value_caches(kv_cache)
++            k_scale = v_scale = None
++        else:
++            key_cache, value_cache = kv_cache.transpose(1, 2).split(
++                self.head_size, dim=-1
++            )
++            k_scale = v_scale = None
++            if self._kv_quant_mode == KVQuantMode.FP8_PER_TENSOR:
++                # The cache is allocated as uint8; on sm_89+ reinterpret the e4m3
++                # bytes (same itemsize, so shape and strides are preserved). Below
++                # sm_89 the kernel byte-decodes the raw uint8 storage instead.
++                if current_platform.has_device_capability(89):
++                    key_cache = key_cache.view(torch.float8_e4m3fn)
++                    value_cache = value_cache.view(torch.float8_e4m3fn)
++                # Host-side per-tensor dequant scales (Python floats), as used by
++                # other host-scale backends; folded into the kernel's scales.
++                k_scale = layer._k_scale_float
++                v_scale = layer._v_scale_float
++        allowed_kv_storage = _QSA_KV_STORAGE_DTYPES[self._kv_quant_mode]
++        if query.dtype != torch.bfloat16 or key_cache.dtype not in allowed_kv_storage:
+             raise NotImplementedError(
+-                "Qwen4Exp QSA requires BF16 Q and BF16 or FP8-e4m3 K/V"
++                f"Qwen4Exp QSA requires BF16 Q and {self.kv_cache_dtype} K/V "
++                f"storage, got {query.dtype} Q and {key_cache.dtype} K/V"
+             )
+ 
+         from .ops.qsa import qsa_sparse_paged_attention
+@@ -330,9 +447,35 @@ class Qwen4ExpQSAFlashAttentionImpl(FlashAttentionImpl):
+             k_scale=k_scale,
+             v_scale=v_scale,
+             output_gate=output_gate[:num_tokens],
++            kv_quant_mode=self._kv_quant_mode,
+         )
+         return output
+ 
++    def do_kv_cache_update(
++        self,
++        layer: torch.nn.Module,
++        key: torch.Tensor,
++        value: torch.Tensor,
++        kv_cache: torch.Tensor,
++        slot_mapping: torch.Tensor,
++    ) -> None:
++        if self._is_per_token_head_quant:
++            # One fp32 scale per (token, KV head) lands in the inline padding
++            # next to the quantized data, so the store needs the scale views.
++            key_cache, value_cache = self._pth_key_value_caches(kv_cache)
++            triton_reshape_and_cache_flash_per_token_head_quant(
++                key,
++                value,
++                key_cache,
++                value_cache,
++                self._k_scale_cache,
++                self._v_scale_cache,
++                slot_mapping,
++                kv_quant_mode=self._kv_quant_mode,
++            )
++            return
++        super().do_kv_cache_update(layer, key, value, kv_cache, slot_mapping)
++
+ 
+ class Qwen4ExpQSAAttention(Qwen3NextAttention, AttentionLayerBase):
+     """Merged Qwen full-attention owner with a QSA index side branch."""
+@@ -361,9 +504,11 @@ class Qwen4ExpQSAAttention(Qwen3NextAttention, AttentionLayerBase):
+             "bfloat16",
+             "fp8",
+             "fp8_e4m3",
++            "int8_per_token_head",
+         ):
+             raise NotImplementedError(
+-                "Qwen4Exp QSA requires a BF16 or FP8-e4m3 main KV cache"
++                "Qwen4Exp QSA requires a BF16, FP8-e4m3 or INT8 per-token-head "
++                "main KV cache"
+             )
+         if getattr(quant_config, "kv_cache_scheme", None) is not None:
+             raise NotImplementedError("Qwen4Exp QSA does not support KV quantization")
+@@ -461,12 +606,15 @@ class Qwen4ExpQSAAttention(Qwen3NextAttention, AttentionLayerBase):
+         self.layer_name = f"{prefix}.attn"
+         self.attn_type = AttentionType.DECODER
+         self.kv_cache_dtype = qsa_kv_cache_dtype(cache_config, prefix)
++        self.kv_quant_mode = get_kv_quant_mode(self.kv_cache_dtype)
+         self.kv_cache_torch_dtype = kv_cache_dtype_str_to_dtype(
+             self.kv_cache_dtype, model_config
+         )
+-        if self.kv_cache_torch_dtype not in (torch.bfloat16, torch.uint8):
++        allowed_storage = _QSA_KV_STORAGE_DTYPES.get(self.kv_quant_mode)
++        if allowed_storage is None or self.kv_cache_torch_dtype not in allowed_storage:
+             raise NotImplementedError(
+-                "Qwen4Exp QSA requires BF16 or FP8-e4m3 (uint8) cache storage"
++                f"Qwen4Exp QSA does not support the KV cache dtype "
++                f"{self.kv_cache_dtype!r} ({self.kv_quant_mode.name})"
+             )
+         self.kv_sharing_target_layer_name = None
+         self.kv_cache = torch.tensor([])
+@@ -495,11 +643,14 @@ class Qwen4ExpQSAAttention(Qwen3NextAttention, AttentionLayerBase):
+         )
+         # One launch does the indexer prepare, the main QK-norm/RoPE/gate and
+         # the main K/V cache write (see QSAIndexer.forward); otherwise all of
+-        # them take the separate kernels. The fused writer receives an fp8
+-        # pointer, which Triton cannot lower below sm_89.
++        # them take the separate kernels. The fused writer receives a
++        # per-tensor-scaled data pointer, which Triton cannot lower below
++        # sm_89, and which cannot carry a per-(token, head) scale at all, so
++        # per-token-head quant writes go through do_kv_cache_update instead.
+         self.use_fused_qsa_prepare = (
+             self.use_fused_qk_norm_rope_gate
+             and self.indexer.use_fused_pre_indexer
++            and not self.kv_quant_mode.is_per_token_head
+             and (
+                 self.kv_cache_torch_dtype != torch.uint8
+                 or current_platform.has_device_capability(89)
+-- 
+2.55.0
+
