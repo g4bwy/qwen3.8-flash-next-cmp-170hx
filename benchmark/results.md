@@ -2864,3 +2864,114 @@ of the result.
    The lane's one claimed advantage, residency, is now measured and does not
    convert, so there is no configuration in this session that beats the shipped
    official tree with the dense arm at M=1.
+### Starvation mechanism: slow, not skipped (2026-10-24)
+
+Question left open by the capacity cells: when three or five 995k prompts arrive
+together, decoding streams fall to a few tokens per second. Is decode being held
+out of steps, or scheduled into steps that are simply too expensive?
+
+Probe `benchmark/itl_probe.py`, official SHIP tree with patch 13 at M=1, three
+streams at 995,000 prompt tokens, 2,048 requested each, salt 106000, wall 329 s.
+It timestamps every streamed event per stream and classifies each gap by whether
+another stream was still prefilling at that moment.
+
+| regime | events | mean | p50 | p95 | max | share below 0.5x p50 | share above 2x p50 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| another prefill running | 117 | 670.1 ms | 666.2 | 717.1 | 1007.7 | 0.0% | 0.0% |
+| all prefills finished | 1,222 | 314.0 ms | 36.8 | 759.4 | 1485.6 | 0.0% | 40.7% |
+
+1. Decode is slow, not deferred. While prefills arrive the gaps are tight and
+   unimodal, p50 666 ms against p95 717 ms with literally no sample below half or
+   above twice the median. A scheduler that held streams out of steps would show
+   long silences punctuated by bursts, which is what the all-prefills-done column
+   actually looks like (p50 37 ms with 41% of events over 2x that, because the last
+   streams are finishing).
+2. The arithmetic follows. Each stream advances once every four engine steps,
+   because the V2 async scheduler stamps `next_decode_eligible_step = step +
+   pp_size` (`vllm/v1/core/sched/async_scheduler.py:52-57`, gate at
+   `scheduler.py:792-796`) and the stagger is hard-coded to `pp_size` on CUDA. So a
+   666 ms observed cadence is a 166 ms mixed step, against the 37 ms pure-decode
+   step, a factor of 4.5. Prefill runs 1,616 tokens per step (2048 budget minus the
+   Mamba-align clip), which at 166 ms is about 9.7k tokens/s and matches the logged
+   ~10k tok/s.
+3. So the lever is mixed-step cost, and exactly one knob addresses it on this base:
+   `--long-prefill-token-threshold`, honoured at `scheduler.py:820` and `:1276`,
+   default 0 meaning off. It also bypasses the 1616 alignment when set below it
+   (`scheduler.py:597`). Predicted effect at 512: mixed step 166 to about 51 ms, so
+   per-stream cadence during arrivals 666 to about 205 ms, roughly 3x better ITL,
+   with prefill throughput held near its bandwidth-bound 10k tok/s. Not yet
+   measured, that is the next boot.
+4. Ruled out by code reading rather than by experiment. `max_num_partial_prefills`
+   and `max_long_partial_prefills` no longer exist in the tree. There is no
+   PrefillDelayer, no decode-first policy, and `--scheduling-policy priority` does
+   not reorder running requests. DBO and microbatching are refused by the V2 runner
+   with pipeline parallelism, speculative decoding or hybrid models. Turning async
+   off removes the four-step gate but is an unverified correctness path on V2, since
+   the runner has no consumer for the payload the scheduler then emits.
+5. Two things this probe did not settle. The Rust frontend batches streamed
+   deltas, so the unit measured is an event, not a token; the classification
+   survives because batch size is stable within a regime, but the absolute numbers
+   should be read as cadence, not ITL. And this cell appeared to show 3.73 M
+   prefilled tokens against 2.98 M of prompt content, which would have been a 25%
+   silent recompute. It was not: two clean cells in the A/B that follows count
+   exactly 2.98 M, so the excess was in-flight work from the 900 s cell that had run
+   immediately before, sampled inside my window. See the retraction in the A/B
+   section, and the rule that counters must only be read after the engine drains.
+### A/B of `--long-prefill-token-threshold 404` (2026-10-24, one boot)
+
+Boot carried `long_prefill_token_threshold': 404` in its config dump, 0 errors,
+int8 lane active at `M=1`. Threshold chosen as 404 because it divides the 1616
+block size, so chunk ends land on block boundaries every fourth chunk instead of
+randomly inside them. Profiler deliberately off, since CUPTI inflates the cadence
+this measures.
+
+Single-stream, the shape this deployment actually serves:
+
+| cell | LPT off (certified) | LPT 404 | verdict |
+|---|---:|---:|---|
+| cold 1M TTFT s | 85.2 to 85.6 | 85.6 | unchanged |
+| 50/1 TTFT s | 40.1 to 40.3 | 40.4 | unchanged |
+| 50/1 sustained tok/s | 209 to 216 | 212 | unchanged |
+| acceptance | 4.83 to 4.89 | 4.82 to 4.85 | unchanged |
+| prefix reuse at 64k | 99.8%+, ~20 recomputed | 100.0%, 16 recomputed | unchanged |
+
+This was predicted from code, and it held: the cap is forced to 0 whenever fewer
+than two requests are eligible (`scheduler.py:733-739`), and the sub-block chunk
+path is explicitly supported (`scheduler.py:588-600`), which the reuse probe
+confirms does not cost the align-mode grid anything.
+
+Three concurrent 995k prompts, 2,048 tokens each:
+
+| metric | LPT off (one cell) | LPT 404 (two cells) |
+|---|---:|---:|
+| wall s | 329.0 | 288.4, 302.1 |
+| first tokens s | 91.0, 169.1, 258.1 | 268.5, 270.5, 270.6 and 269.6, 271.0, 271.2 |
+| cadence while another prefills | p50 666.2 ms, n=117, unimodal | n=7 and n=4, no usable sample |
+| cadence once prefilling stops | p50 36.8 ms, 40.7% of events over 2x that | p50 32.6 and 26.9 ms, 3.3% over 2x |
+| engine prompt tokens counted | 3.73 M against 2.98 M expected | 2.98 M exactly, twice |
+
+1. The knob does not speed up the starved regime, it deletes it. With the cap at
+   404 the three prefills interleave and all finish at about 270 s, instead of one
+   at a time at 91, 169 and 258 s, so there is almost no window in which one stream
+   decodes while another prefills. My predicted 666 to 205 ms inside that regime
+   was never testable, and the honest result is a change of shape rather than a
+   rate improvement. Measuring the in-regime cadence needs a staggered-start probe,
+   which `itl_probe.py` does not do yet.
+2. The cost is the first arrival. Without the cap the session that arrived first
+   starts answering at 91 s. With it, nobody answers until 270 s. Aggregate cell
+   time improves about 10 percent, 288 to 302 against a single 329 s baseline, and
+   the trailing stream is no worse off, 258 to 271 s, so this is a fairness change
+   that spends the best latency to buy the worst a small improvement.
+3. Retraction: the 25 percent prompt over-count reported in the mechanism section
+   did not reproduce. Two clean cells here count exactly 2.98 M prefilled tokens and
+   exactly 6,144 generated. The earlier excess came from sampling the counters
+   immediately after a 900 s five-stream cell on the same boot, so in-flight work
+   landed inside my window. It was a measurement error, not silent recompute, and
+   the lesson is to sample counters only after the engine has drained.
+4. Also corrected: the mechanism section listed 1,170 starved samples. The probe
+   printed 117. The distribution shape it describes is unaffected.
+5. Disposition. Not adopted as a default. This rig serves one long session at a
+   time, where the knob provably does nothing, and under concurrency it trades a 3x
+   worse first-arrival time for roughly 10 percent of aggregate. The `LPT` variable
+   stays in `serve-4x-1m.sh` as a documented option for a workload that arrives in
+   bursts, where equalising may be worth more than the leading edge.

@@ -95,6 +95,19 @@ if [ "${PROF:-0}" = "1" ]; then
     PROF_ARGS=(--profiler-config "{\"profiler\":\"torch\",\"torch_profiler_dir\":\"$PROF_DIR\",\"torch_profiler_with_stack\":false,\"ignore_frontend\":true,\"max_iterations\":150}")
 fi
 
+# Experiment, not a series patch: cap one request's prefill rows per step so an
+# arriving long prefill shares the pipeline with decode. Inert when only one request
+# is eligible (scheduler.py:733-739), so single-stream TTFT is untouched by design.
+# Unset or 0 keeps the engine default. Rollback: drop LPT from the command line.
+LPT_ARGS=()
+if [ -n "${LPT:-}" ] && [ "${LPT:-0}" != "0" ]; then
+    case "$LPT" in
+        *[!0-9]*) echo "serve-4x-1m.sh: LPT must be a non-negative integer, got '$LPT'" >&2
+                  exit 1 ;;
+    esac
+    LPT_ARGS=(--long-prefill-token-threshold "$LPT")
+fi
+
 # The default prefix match granularity is the GCD of the cacheable KV group
 # block sizes, 1600 here, so a hit could not land finer than 1,600 tokens no
 # matter how often a prompt repeats. --prefix-match-unit 16 drops the floor
@@ -103,6 +116,7 @@ fi
 # controls how often states are stored; this controls where hits land.
 exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     ${PROF_ARGS[@]+"${PROF_ARGS[@]}"} \
+    ${LPT_ARGS[@]+"${LPT_ARGS[@]}"} \
     --served-model-name qwen3.8-flash-next-fp8 \
     --port 8000 \
     --pipeline-parallel-size 4 \
