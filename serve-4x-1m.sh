@@ -108,6 +108,14 @@ if [ -n "${LPT:-}" ] && [ "${LPT:-0}" != "0" ]; then
     LPT_ARGS=(--long-prefill-token-threshold "$LPT")
 fi
 
+# Diagnostic, not a series patch: `FANOUT=1` exports VLLM_MOE_FANOUT_PROBE so the
+# worker processes inherit it from this shell rather than depending on how the
+# frontend spawns the engine. Logs distinct experts per MoE forward, bucketed by row
+# count. Rollback: drop FANOUT. See experiments/0015-moe-fanout-probe.patch.
+if [ "${FANOUT:-0}" = "1" ]; then
+    export VLLM_MOE_FANOUT_PROBE=1
+fi
+
 # The default prefix match granularity is the GCD of the cacheable KV group
 # block sizes, 1600 here, so a hit could not land finer than 1,600 tokens no
 # matter how often a prompt repeats. --prefix-match-unit 16 drops the floor

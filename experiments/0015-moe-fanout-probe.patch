@@ -1,0 +1,329 @@
+From f53b854025da7cca8e116e27c7c38bea802228ff Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 21:33:59 +0200
+Subject: [PATCH] [Core][MoE] Make the grouped-expert fan-out measurable
+
+The step anatomy spends 148 us per layer-step on grouped expert kernels and each
+distinct expert costs 4.92 MB of fp8 weight traffic, so achieved bandwidth is the
+distinct count times 33.2 GB/s. Twenty reads as 665 GB/s against the 895 the dense
+path sustains in the same step, which leaves up to 1.4x on 27% of the step; 27 or
+more puts the kernels at the ceiling and closes the axis. The existing "~20" in
+results.md was inferred from the kernel time and then quoted back to excuse it, so
+it proves nothing either way and the question needs measuring.
+
+Upstream's own routing return cannot answer it: vllm/config/vllm.py:1201 refuses
+--enable-return-routed-experts at pipeline_parallel_size > 1. VLLM_MOE_FANOUT_PROBE=1
+hooks the shared router instead and works at PP=4 on the real lane. Three
+constraints were checked in code first. Humming experts derive from
+FusedMoEExpertsModular, so is_monolithic() is False and the production path goes
+through select_experts rather than the monolithic branch that bypasses it. The
+counting read synchronises, so only one forward in 32 is measured. And nothing is
+measured while a CUDA graph is captured.
+
+Decode forwards are themselves captured, so at replay no Python runs and they are
+invisible apart from dummy ids at capture time. Prefill forwards do run in Python
+and a forward of many rows contains many groups of STEP_ROWS adjacent tokens, which
+is the same quantity, the distinct experts one step of that many rows must read. So
+large forwards contribute the union over every sliding window of five adjacent rows
+in the first 128, small forwards are counted whole, and capture-time calls are
+skipped.
+
+The hook reports counts only: no model geometry and no kernel timing lives here,
+and benchmark/expert_fanout_probe.py does the arithmetic. It also writes a startup
+proof once per worker, because an absent patch and an unset variable otherwise look
+identical. 8 CPU tests, ruff and mypy clean.
+---
+ .../model_executor/layers/test_moe_fanout.py  |  99 ++++++++++++++
+ vllm/envs.py                                  |   9 ++
+ .../fused_moe/router/fused_moe_router.py      |   5 +
+ .../layers/fused_moe/router/moe_fanout.py     | 122 ++++++++++++++++++
+ 4 files changed, 235 insertions(+)
+ create mode 100644 tests/model_executor/layers/test_moe_fanout.py
+ create mode 100644 vllm/model_executor/layers/fused_moe/router/moe_fanout.py
+
+diff --git a/tests/model_executor/layers/test_moe_fanout.py b/tests/model_executor/layers/test_moe_fanout.py
+new file mode 100644
+index 0000000000..15edf4dc92
+--- /dev/null
++++ b/tests/model_executor/layers/test_moe_fanout.py
+@@ -0,0 +1,99 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""CPU tests for the MoE fan-out diagnostic.
++
++The probe exists to answer one question, how many distinct experts one decode step
++reads, so these hold the properties that make its numbers trustworthy: it counts the
++right thing, it derives the estimate for captured decode from adjacent prefill rows,
++it ignores forwards it cannot trust, it samples rather than watching every forward,
++and it says so at boot.
++"""
++
++import torch
++
++from vllm.model_executor.layers.fused_moe.router import moe_fanout
++
++
++def make(rows, topk, values):
++    return torch.tensor(values, dtype=torch.int32).reshape(rows, topk)
++
++
++def sample_calls(topk_ids, times=1):
++    """Advance the sampler the right number of calls to record `times` samples."""
++    for _ in range(moe_fanout.SAMPLE_EVERY * times):
++        moe_fanout.record(topk_ids)
++
++
++def setup_function() -> None:
++    moe_fanout.reset()
++
++
++def test_small_forward_is_counted_whole() -> None:
++    ids = make(3, 2, [0, 1, 1, 2, 2, 0])  # distinct ids are {0, 1, 2}
++    sample_calls(ids)
++    assert moe_fanout.counts()[("direct", 3)] == [3]
++
++
++def test_decode_sized_batch_is_counted_directly() -> None:
++    """Five rows of paired ids: values 0..24 appear twice each, so 25 distinct."""
++    ids = make(5, 10, [i // 2 for i in range(50)])
++    sample_calls(ids)
++    assert moe_fanout.counts()[("direct", 5)] == [25]
++
++
++def test_large_forward_is_windowed_not_counted_as_a_block() -> None:
++    rows, topk = 100, 10
++    ids = make(rows, topk, [r * topk + j for r in range(rows) for j in range(topk)])
++    sample_calls(ids)
++    assert list(moe_fanout.counts()) == [("window", 100)]
++    windows = moe_fanout.counts()[("window", 100)]
++    assert len(windows) == rows - moe_fanout.STEP_ROWS + 1
++    assert set(windows) == {moe_fanout.STEP_ROWS * topk}, "disjoint rows union to 50"
++
++
++def test_window_length_respects_the_cap() -> None:
++    rows = moe_fanout.WINDOW_ROWS + 64
++    ids = make(rows, 8, list(range(rows * 8)))
++    sample_calls(ids)
++    key = ("window", moe_fanout.WINDOW_ROWS)
++    assert list(moe_fanout.counts()) == [key]
++    assert len(moe_fanout.counts()[key]) == moe_fanout.WINDOW_ROWS - 4
++
++
++def test_capture_guard_blocks_measurement_entirely(monkeypatch) -> None:
++    monkeypatch.setattr(moe_fanout, "_capturing", lambda: True)
++    sample_calls(make(3, 2, [0, 1, 2, 3, 4, 5]), times=3)
++    assert moe_fanout.counts() == {}
++
++
++def test_sampling_is_one_forward_in_n() -> None:
++    ids = make(4, 2, [0, 1, 2, 3, 4, 5, 6, 7])  # 4 rows, 8 distinct ids
++    for _ in range(moe_fanout.SAMPLE_EVERY - 1):
++        moe_fanout.record(ids)
++    assert moe_fanout.counts() == {}
++    moe_fanout.record(ids)
++    assert moe_fanout.counts()[("direct", 4)] == [8]
++
++
++def test_report_fires_once_the_bucket_fills(monkeypatch) -> None:
++    logged = []
++    monkeypatch.setattr(
++        moe_fanout.logger, "info", lambda msg, *a, **k: logged.append(msg % a)
++    )
++    monkeypatch.setattr(moe_fanout, "SAMPLES_PER_BUCKET", 2)
++    ids = make(3, 2, [0, 1, 2, 3, 4, 5])  # 6 distinct ids per forward
++    sample_calls(ids, times=2)
++    assert len(logged) == 1
++    assert "direct rows=3" in logged[0] and "mean 6.0" in logged[0]
++
++
++def test_first_forward_proves_the_probe_is_live(monkeypatch) -> None:
++    """An absent patch and an unset variable must not look identical."""
++    logged = []
++    monkeypatch.setattr(
++        moe_fanout.logger, "info_once", lambda msg, *a, **k: logged.append(msg % a)
++    )
++    ids = make(3, 2, [0, 1, 2, 3, 4, 5])
++    moe_fanout.record(ids)
++    moe_fanout.record(ids)
++    assert len(logged) == 1 and "armed" in logged[0]
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 7d71047b50..3b52540fae 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -127,6 +127,7 @@ if TYPE_CHECKING:
+     VLLM_QWEN4EXP_DRAFT_W8A8: bool = False
+     VLLM_QWEN4EXP_DENSE_W8A8: bool = False
+     VLLM_QWEN4EXP_DENSE_W8A8_MIN_M: int = 512
++    VLLM_MOE_FANOUT_PROBE: bool = False
+     VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
+     VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
+     VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
+@@ -1170,6 +1171,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_QWEN4EXP_DENSE_W8A8_MIN_M": lambda: int(
+         os.environ.get("VLLM_QWEN4EXP_DENSE_W8A8_MIN_M", "512")
+     ),
++    # Diagnostic: log how many distinct experts one MoE forward loads, bucketed by
++    # row count, so the bandwidth of the grouped expert kernels can be compared with
++    # what the device is known to sustain. Off by default; when on it measures one
++    # forward in 32 and never during CUDA graph capture. See
++    # vllm/model_executor/layers/fused_moe/router/moe_fanout.py.
++    "VLLM_MOE_FANOUT_PROBE": lambda: (
++        os.getenv("VLLM_MOE_FANOUT_PROBE", "0").lower() in ("1", "true")
++    ),
+     # Timeout in seconds for keeping HTTP connections alive in API server
+     "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
+         os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
+diff --git a/vllm/model_executor/layers/fused_moe/router/fused_moe_router.py b/vllm/model_executor/layers/fused_moe/router/fused_moe_router.py
+index 4068ff1224..e4bfa6896a 100644
+--- a/vllm/model_executor/layers/fused_moe/router/fused_moe_router.py
++++ b/vllm/model_executor/layers/fused_moe/router/fused_moe_router.py
+@@ -5,8 +5,10 @@ from collections.abc import Callable
+ 
+ import torch
+ 
++from vllm import envs
+ from vllm.distributed.eplb.eplb_state import EplbLayerState
+ from vllm.model_executor.layers.fused_moe.config import RoutingMethodType
++from vllm.model_executor.layers.fused_moe.router import moe_fanout
+ 
+ 
+ class FusedMoERouter(ABC):
+@@ -97,4 +99,7 @@ class FusedMoERouter(ABC):
+                 topk_ids.to(torch.int16)
+             )
+ 
++        if envs.VLLM_MOE_FANOUT_PROBE:
++            moe_fanout.record(topk_ids)
++
+         return topk_weights, topk_ids
+diff --git a/vllm/model_executor/layers/fused_moe/router/moe_fanout.py b/vllm/model_executor/layers/fused_moe/router/moe_fanout.py
+new file mode 100644
+index 0000000000..9f796c9cc4
+--- /dev/null
++++ b/vllm/model_executor/layers/fused_moe/router/moe_fanout.py
+@@ -0,0 +1,122 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Optional diagnostic: how many distinct experts one MoE step loads.
++
++Grouped expert kernels are bandwidth bound, so the bandwidth they achieve depends on
++how many distinct experts a step reads. That count has only ever been bounded from the
++measured kernel time, which cannot say whether the kernels sit at the device ceiling
++or well below it. This module measures it.
++
++Enable with `VLLM_MOE_FANOUT_PROBE=1`. Decode forwards are captured into CUDA graphs,
++so at replay no Python runs and they are invisible here apart from dummy ids at capture
++time, which are skipped. Prefill forwards do run in Python and carry many adjacent
++groups of `STEP_ROWS` tokens, which is the same quantity, the distinct experts a step
++of that many rows must read, so the estimate comes from sliding windows over them and
++any directly observable small forward is recorded as well.
++
++The hook sits in the shared router, so it counts for every MoE model. It reports
++counts only: no model geometry and no kernel timing lives here.
++"""
++
++from __future__ import annotations
++
++import torch
++
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++SAMPLE_EVERY = 32  # forwards between measurements, so the read stays off the hot path
++MAX_ROWS = 64  # a forward this small is measured whole rather than windowed
++STEP_ROWS = 5  # 1 + num_speculative_tokens for MTP-4
++WINDOW_ROWS = 128  # prefill rows inspected per sampled forward
++SAMPLES_PER_BUCKET = 256
++
++_calls = 0
++_topk = 0
++_counts: dict[tuple[str, int], list[int]] = {}
++
++
++def reset() -> None:
++    """Forget everything recorded. Tests and repeated probes use this."""
++    global _calls, _topk
++    _calls = 0
++    _topk = 0
++    _counts.clear()
++
++
++def counts() -> dict[tuple[str, int], list[int]]:
++    """Distinct-expert counts keyed by ("direct", rows) or ("window", rows)."""
++    return _counts
++
++
++def _capturing() -> bool:
++    try:
++        return torch.cuda.is_current_stream_capturing()
++    except Exception:  # no CUDA context (CPU tests, dry runs)
++        return False
++
++
++def _report(kind: str, rows: int, samples: list[int]) -> None:
++    ordered = sorted(samples)
++    n = len(ordered)
++    logger.info(
++        "MoE fanout %s rows=%d over %d samples: distinct experts mean %.1f, p50 %d, "
++        "min %d, max %d (topk=%d, %d forwards seen)",
++        kind,
++        rows,
++        n,
++        sum(ordered) / n,
++        ordered[n // 2],
++        ordered[0],
++        ordered[-1],
++        _topk,
++        _calls,
++    )
++
++
++def _window_union(host_ids: list[list[int]], size: int) -> list[int]:
++    """Distinct ids over every sliding window of `size` consecutive rows."""
++    return [
++        len(set().union(*host_ids[start : start + size]))
++        for start in range(len(host_ids) - size + 1)
++    ]
++
++
++def record(topk_ids: torch.Tensor) -> None:
++    """Record the distinct expert count of one MoE forward.
++
++    Small forwards are counted whole. Larger ones contribute the union over every
++    window of `STEP_ROWS` adjacent rows inside the first `WINDOW_ROWS`.
++    """
++    global _calls, _topk
++    if not _calls:
++        # Startup proof: without this, an absent patch and an unset variable look
++        # identical, which is a silent no-op on both sides of a boot.
++        logger.info_once(
++            "MoE fanout probe armed: whole counts at rows<=%d, %d-row windows above, "
++            "sampling 1 forward in %d",
++            MAX_ROWS,
++            STEP_ROWS,
++            SAMPLE_EVERY,
++        )
++    _calls += 1
++    if _calls % SAMPLE_EVERY or _capturing():
++        return
++    rows, topk = int(topk_ids.shape[0]), int(topk_ids.shape[1])
++    _topk = topk
++    if rows > MAX_ROWS:
++        take = min(rows, WINDOW_ROWS)
++        host = topk_ids[:take].to("cpu", torch.int32).tolist()
++        samples = _window_union(host, STEP_ROWS)
++        kind, key_rows = "window", take
++    else:
++        samples = [int(torch.unique(topk_ids).numel())]
++        kind, key_rows = "direct", rows
++    if not samples:
++        return
++    bucket = _counts.setdefault((kind, key_rows), [])
++    bucket.extend(samples)
++    if len(bucket) >= SAMPLES_PER_BUCKET:
++        _report(kind, key_rows, bucket[:SAMPLES_PER_BUCKET])
++        del bucket[:SAMPLES_PER_BUCKET]
+-- 
+2.55.0
+

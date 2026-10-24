@@ -2975,3 +2975,48 @@ Three concurrent 995k prompts, 2,048 tokens each:
    worse first-arrival time for roughly 10 percent of aggregate. The `LPT` variable
    stays in `serve-4x-1m.sh` as a documented option for a workload that arrives in
    bursts, where equalising may be worth more than the leading edge.
+
+### MoE fan-out measured: the axis is closed (2026-10-24, FANOUT=1 boot)
+
+The number the last byte axis needed. Grouped expert kernels take 148 us per
+layer-step, 95 us gate_up plus 53 us down, and each distinct expert costs 4.92 MB of
+fp8 weight traffic, so achieved bandwidth is the distinct count times 33.2 GB/s.
+That made the count a threshold test: about 20 distinct means 665 GB/s against the
+895 GB/s the dense path sustains in the same step, up to 1.4x unclaimed on 27% of
+the step, while 27 or more means the kernels are already at the ceiling.
+
+Decode forwards are captured into CUDA graphs, so `select_experts` never runs at
+replay and the count cannot be read directly. Prefill forwards do run in Python, and
+a window of five adjacent tokens there is a good proxy for a decode step's five rows
+(one token plus four drafts), because acceptance length 4.85 of 5 means the drafts
+almost always are the next five real tokens. Cell: `bench.py --fills 50
+--concurrency 1 --decode 1024 --salt 116000`, 584 reports across four ranks.
+
+| rank | reports | mean distinct | range of report means |
+|---|---:|---:|---|
+| PP0 | 155 | 37.7 | 29.4 to 43.0 |
+| PP1 | 143 | 36.4 | 28.8 to 43.7 |
+| PP2 | 143 | 35.9 | 28.3 to 41.9 |
+| PP3 | 143 | 35.7 | 29.3 to 41.3 |
+| all | 584 | 36.4 | 28.3 to 43.7 |
+
+1. 36.4 distinct experts is 1,212 GB/s, above the 984 to 1,070 GB/s an isolated dense
+   GEMV reaches on this box and well above the 895 GB/s measured in the live step,
+   approaching the 1,593 GB/s copy ceiling. The grouped expert kernels are not
+   leaving bandwidth on the table. The MoE byte axis is closed by measurement.
+2. This corrects the 2026-10-13 record, which put grouped execution at "325-650 GB/s,
+   consistent with near-SOL" using a ~20 unique-expert estimate, and separately
+   bounded "cannot exceed ~20 unique experts per layer-step". The count is roughly
+   36, so that range understated achieved bandwidth by about 2x. Its conclusion,
+   near-SOL, was right; the number behind it was not, and it was circular, inferred
+   from the kernel time it later used to justify that time.
+3. Overlap between adjacent tokens' top-10 sets is only 1.4x of the 50 slots a step
+   offers, so routing is far from degenerate: five adjacent tokens touch 36 of 512
+   experts. That also bounds what any expert-locality scheduling idea could save,
+   since a step already has to read 36 distinct expert blocks, about 179 MB.
+4. Consequence for the box. Byte reduction is now exhausted on every large slice of
+   the decode step. Dense linears are int8 through patch 13, worth 3-5%. Experts are
+   fp8 at 1,212 GB/s, at the ceiling. KV is fp8. Hyper-connection hops are int8. NVFP4
+   compute does not exist on sm_80. What remains from the original list is batch
+   residency, which the five-stream test showed is limited by prefill starvation
+   rather than memory, and a different checkpoint.
