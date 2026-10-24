@@ -1,14 +1,30 @@
 # Benchmark results, full tables
 
-All numbers measured on the 3x unlocked CMP 170HX box (200 W power cap, PP=3,
-MTP-3, PLE host offload) running one server at a time, idle and warmed,
-greedy, unique prompt per row so every row pays a full prefill. The
-"4-card set" section is the same box with a fourth card, PP=4. The 4-card
-1M grid runs the current unlock revision, 74 SMs per card; every other table
-predates it, at 70. Tools:
-`bench.py` (fill sweeps and concurrency cells), `sustained_decode.py` (decode
-plateaus), `mtp_ab_probe.py` (acceptance A/B). Everything here was measured
-2026-09-15 unless noted. Headlines live in the top-level README.
+Append-only record from 2026-09-15 to 2026-10-25. The configuration changed
+several times over that window, so each section states its own setup, and a
+section preamble overrides this header wherever the two disagree.
+
+Current lane, which is what the October sections use. 4x CMP 170HX, GA100
+unlocked to 64 GB and 74 SM per card, one NUMA node, 200 W per-card cap, PP=4
+with partition 13,12,12,11, 1,000,000 context at static YaRN 4.0, MTP-4
+speculative depth, fp8 KV cache, one server at a time. The September sections
+were measured on three cards at PP=3 with MTP-3 and on shallower contexts, and
+tables that predate the SM unlock ran at 70 SMs per card, which matters when a
+bandwidth or kernel-occupancy figure is compared across sections. The "4-card
+set" section is that three-card box with a fourth card added. PLE host offload
+is on throughout.
+
+Cells are greedy at temperature 0 with a unique salted prompt per row, so each
+row pays a full prefill unless the section says otherwise. Headlines live in the
+top-level README.
+
+Tools. `bench.py` fill sweeps and concurrency cells, `sustained_decode.py`
+decode plateaus, `mtp_ab_probe.py` acceptance A/B, `accept_window.py` and
+`corpus_accept_probe.py` fixed-salt quality gates, `itl_probe.py` inter-token gap
+classification, `phase_probe.py` and `phase_report.py` step anatomy,
+`dense_weight_bytes.py` decode byte traffic, and `pth_attn_gate.py`,
+`qsa_byte_floor.py`, `qsa_decode_tune.py`, `qsa_decode_dtype.py`,
+`pth_vs_qsa_fp8.py` for the QSA kernel work of 2026-10-24.
 
 ## Fill sweeps (decode 128)
 
