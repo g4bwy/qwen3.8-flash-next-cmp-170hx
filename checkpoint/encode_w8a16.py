@@ -64,6 +64,9 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--files", default="")
     ap.add_argument("--assemble-only", action="store_true")
+    ap.add_argument("--merge-prior", action="store_true",
+                    help="with --assemble-only after a partial --files repair, keep "
+                         "the conversions recorded by the previous full build")
     a = ap.parse_args()
 
     sid = json.load(open(f"{a.src}/model.safetensors.index.json"))["weight_map"]
@@ -74,7 +77,7 @@ def main():
     os.makedirs(a.out, exist_ok=True)
 
     if a.assemble_only:
-        assemble(a, sid)
+        assemble(a, sid, merge_prior=a.merge_prior)
         return
 
     man = {"converted": {}, "passthrough": 0}
@@ -136,9 +139,25 @@ def bf16_bytes(x: np.ndarray) -> bytes:
     return f32_to_bf16_bytes(x.astype(np.float32)).tobytes()
 
 
-def assemble(a, sid):
+def assemble(a, sid, merge_prior=False):
+    """Write config.json, the shard index and w8_manifest.json from the run manifests.
+
+    Per-run manifests are consumed and deleted here, so a repair pass over a few
+    shards would otherwise forget every module a previous pass converted: the
+    index would re-declare 228 packed tensors as plain `.weight` and the ignore
+    list would grow back. `merge_prior` seeds from the last w8_manifest.json.
+    """
     conv = {}
     pt = 0
+    if merge_prior:
+        prior_path = f"{a.out}/w8_manifest.json"
+        if not os.path.exists(prior_path):
+            raise SystemExit("--merge-prior needs the existing w8_manifest.json")
+        with open(prior_path) as handle:
+            prior = json.load(handle)
+        conv.update(prior.get("converted", {}))
+        pt += prior.get("passthrough", 0)
+        print(f"seeded {len(conv)} converted modules from the prior manifest")
     for f in sorted(os.listdir(a.out)):
         if f.startswith("manifest."):
             d = json.load(open(f"{a.out}/{f}"))
@@ -154,6 +173,25 @@ def assemble(a, sid):
                 out_index[f"{mod}.{suf}"] = fname
         else:
             out_index[out_name(name)] = fname
+    # A model dir can hold artifacts that are not derived from the source tree,
+    # notably the patch 5 draft-vocab head. Index whatever the output shards carry
+    # that the source never named, otherwise the drafter allocates a head, loads no
+    # weights into it, prints "scores a 40000-token draft vocabulary", and every
+    # draft is rejected (acceptance exactly 1.000) on an otherwise clean boot.
+    known = set(out_index)
+    src_files = set(sid.values())
+    added = 0
+    for f in sorted(os.listdir(a.out)):
+        if not f.endswith(".safetensors") or f in src_files:
+            continue
+        hdr, _ = read_header(f"{a.out}/{f}")
+        for k in hdr:
+            if k != "__metadata__" and k not in known:
+                out_index[k] = f
+                known.add(k)
+                added += 1
+    if added:
+        print(f"carried {added} artifact tensor(s) into the index")
     official = json.load(open(f"{a.src}/config.json"))
     mods = official["quantization_config"]["modules_to_not_convert"]
     conv_mods = {k[: -len(".weight")] for k in conv}

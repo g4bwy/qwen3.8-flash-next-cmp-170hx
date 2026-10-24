@@ -18,11 +18,11 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
 - Depths: MTP-4 is the shipped depth. The fast lane builds an int8-dense
   variant with `checkpoint/` (+6 % on top of depth, +20 % over MTP-3).
 - Base commit: `4bceda5dbf265e5d20f171c9c339ffe6997b2fd0` (vllm-project/vllm main, 2026-10-23; newest main with a published cu130 wheel, `0.32.1rc1.dev390+g4bceda5db`).
-- 12 patches: nine ours, three adopted from upstream PRs (#56444 as
+- 13 patches: ten ours, three adopted from upstream PRs (#56444 as
   patch 2, #58094 as patch 4, #58815 as patch 9; all still open upstream,
   so they survive rebases as adopted commits). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `fff72613e0ec6997fd455d31b14d292d402618c7`. If it does not, you applied
+  `9007320d5d7b6e46cf9b2806f6cc0c478c1a9eba`. If it does not, you applied
   something else or onto something else.
 - The base's `humming-kernels[cu13]` pin moved to 0.1.17 (0.1.12 fails the
   new `vllm/utils/humming.py` imports). The editable precompiled install
@@ -38,7 +38,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout 4bceda5dbf265e5d20f171c9c339ffe6997b2fd0
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # fff72613e0ec6997fd455d31b14d292d402618c7
+git rev-parse 'HEAD^{tree}'   # 9007320d5d7b6e46cf9b2806f6cc0c478c1a9eba
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
@@ -115,6 +115,11 @@ The script sets:
   retries. vLLM forbids it only with KV connectors, and we run none.
 - `VLLM_SAFETENSORS_DROP_CACHE=1` (patch 6): consumed shards leave the page
   cache, so the 173 GiB boot read does not evict reusable cache.
+- The int8 lane on by default (patches 11-13): draft head and dense linears score
+  as W8A8, and `VLLM_QWEN4EXP_DENSE_W8A8_MIN_M=1` lets the dense arm serve the
+  captured decode buckets. Startup proof: `Dense bf16 linears scored as W8A8 int8
+  via CUTLASS from batch M=1: 39 of 151 layers` and `MTP draft head scores as W8A8
+  int8 via CUTLASS`.
 
 Startup checks for the YaRN lane:
 
@@ -319,6 +324,7 @@ about one position in 130 moves because of the quantization. Full tables:
 | 10 | opt-in `host_file_gather_mmap` gather backend for patch 9: one read-only mmap per checkpoint shard at bind, then per-step `index_select` instead of a per-row `preadv` loop, `FADV_WILLNEED` pre-queue kept. Cold 1M 92.6 -> 90.9 s (pinned parity), 100/4 362 -> 358-362 s, byte-identical rows (logprob A/B at the noise floor). Off by default so memory-tight hosts keep the reclaim-friendly preadv path |
 | 11 | opt-in `VLLM_QWEN4EXP_DRAFT_W8A8=1`: the 40k MTP draft head scores as per-channel int8 (dynamic per-token activation quant + `cutlass_scaled_mm`) instead of a bf16 GEMM. sm_80 int8 tensor cores run at twice the bf16 rate, and CUTLASS beat the bf16 head at every decode-M point benched (1.39-1.67x, quant cost free). The verifier never sees it: teacher-forced logprob captures differ below the boot's own noise floor, and the Boot-A battery was quality-neutral |
 | 12 | opt-in `VLLM_QWEN4EXP_DENSE_W8A8=1`: the shipped FP8 checkpoint keeps all dense linears (attention qkv/o, GDN projections, shared MLP) in BF16, only routed experts are FP8, so this claims those `UnquantizedLinearMethod` layers and scores prefill-sized batches (M>=512) as W8A8 int8 via CUTLASS. Decode stays bf16 and inside the captured graphs; the int8 copy lives next to the weight (pool -2.5%). Cold 1M TTFT 90.4 -> 85.4 s, 100/4 in_tps +6% at a quarter of the old spread, quality gates (needles, accept-window, corpus floors) clean in two battery sessions |
+| 13 | opt-in `VLLM_QWEN4EXP_DENSE_W8A8_MIN_M` (default 512, unset behaviour): lowers patch 12's batch floor so the int8 arm also serves the captured decode buckets, and stamps the floor at enable time so the branch a graph captures is fixed before capture. Measured under graph replay at the production layout, M=5 is 1.19-1.50x over the bf16 GEMM on the five large dense shapes; live it lands as 3-5% single-stream decode (step 23.94 -> 22.79 ms, win avg 192.6 -> 200.6 over three salts), because the arm claims 36 of 138 linears, not the whole `gemm-bf16` category, and each claimed GEMM pays its own activation quant. Quality at the floor: cross-arm values 9.46-9.72% flips against 8.98-9.24% floors, acceptance unchanged, needles clean; pool -0.12% |
 
 ## Gotchas
 

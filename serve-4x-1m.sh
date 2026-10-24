@@ -66,6 +66,14 @@ export VLLM_SAFETENSORS_DROP_CACHE=1
 # process tree. Without the env the engine is byte-identical to pre-patch.
 export VLLM_QWEN4EXP_PP_INT8_HOP=${VLLM_QWEN4EXP_PP_INT8_HOP:-1}
 
+# Series patches 11-13: int8 for the draft head, the dense linears, and patch 13's
+# floor that lets the dense arm serve the captured decode buckets. +3-5% single-
+# stream decode and -5% cold TTFT, quality at the within-boot floor (results.md,
+# 2026-10-24). Rollback: set these three to 0/512 or drop the exports.
+export VLLM_QWEN4EXP_DRAFT_W8A8=${VLLM_QWEN4EXP_DRAFT_W8A8:-1}
+export VLLM_QWEN4EXP_DENSE_W8A8=${VLLM_QWEN4EXP_DENSE_W8A8:-1}
+export VLLM_QWEN4EXP_DENSE_W8A8_MIN_M=${VLLM_QWEN4EXP_DENSE_W8A8_MIN_M:-1}
+
 # RUST=1: experimental Rust frontend (vllm-rs) in place of the Python API
 # server. Rollback: boot without it. Parity audit: results.md, 2026-10-20.
 if [ "${RUST:-0}" = "1" ]; then

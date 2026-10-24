@@ -2382,3 +2382,485 @@ TTFT 85.6 s (prefill gain intact), match 1.0, preempts 0, and sustained
 decode side reads faster than the pre-rebase envelope by more than content
 explains; single data point, watch it opportunistically on the next
 fixed-content accept-window run, no dedicated bench.
+
+### Device ceilings per weight format (2026-10-23, cards idle, 1470 MHz, 200 W cap)
+
+Tooling: `crit eval probe` from crit-labs/crit 0.5.0, patched for Ampere
+(`experiments/crit-probe-int8.patch`: int8 format, copy buffer sized from free
+memory, `--shapes`, null bandwidth reported instead of crashing). Medians of 3
+runs per card, utilization 0% before each, server resident but idle. Raw:
+`/tmp/ceil-gpu[0-3].json`.
+
+| card | copy, GB/s | bf16, TFLOPS | int8, TOPS | int8/bf16 | fp8 | nvfp4 |
+|---|---:|---:|---:|---:|---|---|
+| 0 | 1592 | 180.6 | 238.2 | 1.32 | none | none |
+| 1 | 1594 | 181.0 | 233.8 | 1.29 | none | none |
+| 2 | 1594 | 182.4 | 232.9 | 1.28 | none | none |
+| 3 | 1593 | 185.4 | 232.5 | 1.25 | none | none |
+| mean | 1593 | 182.3 | 234.3 | 1.29 | | |
+
+1. The bus sustains 1593 GB/s of copy traffic (read plus written counted). Cards
+   0 and 3 could only fit a 0.9 GiB buffer and read the same as the 2 GiB pair,
+   so the figure does not depend on the buffer size.
+2. The die offers 223 TFLOPS bf16 and 446 TOPS int8 at 74 SMs and 1470 MHz
+   (GA100 per-SM rate). cuBLASLt captured 82% of the bf16 rate but 53% of the
+   int8 rate, which is why the table shows 1.29x. That int8 row is an algorithm
+   selection artifact and not a device ceiling: the same probe run under
+   `cmp/int8-gate/shim/ltautotune.so`, which autotunes INT8 TN algorithms, reads
+   int8 333.8 TOPS (75% of peak) and a 1.85x ratio, with bf16 unchanged at 0.99x.
+   The library's own heuristic never offers the winning algorithm. Reproduced on
+   this box at 4096^3: 249.5 TOPS for the library pick and 353.3 through the shim,
+   against the 249.8 and 354.4 the shim README published. Quote 1.85x as the int8
+   ceiling and 1.29x as what a caller gets by asking the heuristic.
+3. FP8 has no tensor-core path on this hardware, and NVFP4 neither. This is the
+   cuBLASLt-side confirmation of the 2026-10-16 trace erratum: the checkpoint's
+   fp8 weights are widened to bf16 at load and every dense GEMM is a bf16 GEMM.
+   Low-bit storage buys bytes here, never FLOPs.
+4. The prefill-sized curve is flat: bf16 170-183 and int8 217-232 across
+   512x12288x2560, 2048x640x2560, 2048x2560x640, 2048x2560x2560,
+   2048x4608x4608, 2048x12288x2560, 2048x2560x12288 and 8192x12288x2560, all
+   within 8%. Skinny-K (640) costs bf16 6% and int8 1%.
+5. The 1.1 TB/s cost model is dead, and so is the 580-790 GB/s band built on it.
+   That band was a solo microbench run on a co-resident card (2026-10-12), not a
+   production rate. Dividing exact checkpoint bytes by the trace's own GEMM time
+   puts production decode at 895 GB/s, against 1593 GB/s of bus and 984-1070 GB/s
+   for an isolated GEMM at the same shape and M. See "Production decode byte rate,
+   reconciled" below.
+
+Reproduce:
+
+```bash
+SHAPES="2048x12288x2560;2048x2560x12288;2048x2560x2560;2048x4608x4608;2048x640x2560;2048x2560x640;8192x12288x2560"
+for gpu in 0 1 2 3; do
+  CUDA_VISIBLE_DEVICES=$gpu crit eval probe --out ceil-gpu$gpu.json --shapes "$SHAPES"
+done
+```
+
+### Decode-M streaming at the production layout (2026-10-23, GPU2 idle)
+
+Instrument: `~/test/cmp/int8-gate/bench/decode_gemv.cu`. It builds exactly
+`D[M,N] = X[M,K] W[N,K]^T` with every buffer row-major, which is what `F.linear`
+hands cuBLASLt: W as (K,N) ld K with opT, X as (K,M) ld K, D as (N,M) ld N. Each
+cell is the minimum over 6 rounds of 20 back-to-back launches on a private
+stream, best of the algorithms the library offers, per the rule in
+`int8-gate/shim/README.md`.
+
+Two layout traps, recorded because both produced wrong numbers on the way here.
+`int8-gate/bench/ltbench2` stores D as column-major M x N with ld = M, which is
+`W X^T` rather than `X W^T`. It read 340 GB/s at m=5 against 1104 at m=1, a
+convincing 3.3x cliff for M that is not a multiple of 8, and the cliff is the
+output layout. The crit probe cannot go below M=512 either: it returned 163.8
+TFLOPS at M=1, which is 0.38 us for a 63 MB read.
+
+shape qkv / gate_up, 12288 x 2560 (62.9 MB as bf16, 31.5 MB as int8). The GB/s
+columns are the streaming rate and are the right measure while the GEMM is
+bandwidth-bound. Past M=80 it is compute-bound and only the us columns mean
+anything. The crit probe and this bench disagree by 16% at M=2048 on the same
+layout (0.746 ms against 0.866 ms), so read ratios within one instrument rather
+than absolutes across the two. Every decode row below comes from this bench.
+
+| M | bf16, us | bf16 weight, GB/s | int8, us | int8 weight, GB/s | int8 gain |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 53.9 | 1167 | 30.2 | 1041 | 1.79x |
+| 5 | 62.2 | 1011 | 28.9 | 1087 | 2.15x |
+| 8 | 56.8 | 1108 | 29.3 | 1074 | 1.94x |
+| 20 | 55.7 | 1129 | 30.8 | 1021 | 1.81x |
+| 40 | 53.6 | 1174 | 31.6 | 996 | 1.69x |
+| 80 | 73.5 | 856 | 47.4 | 663 | 1.55x |
+| 512 | 234.0 | 269 | 160.1 | 197 | 1.46x |
+| 2048 | 865.9 | 73 | 619.6 | 51 | 1.40x |
+
+1. bf16 streams a dense weight at 1011-1178 GB/s for every M from 1 to 40, which
+   is 63-74% of the 1593 GB/s bus. Single-stream MTP-4 decode runs M=5 (one row
+   per request plus four drafts, scheduler `padded_num_tokens = 1 +
+   num_spec_tokens`), and the captured decode buckets are 5, 10, 20, 25, 35, 40,
+   so M=5 replays unpadded. It is not a bad point on this curve.
+2. The byte halving pays most at decode M: 2.15x at M=5 against 1.40x at M=2048.
+   int8 holds 1000-1090 GB/s on a half-size weight, while prefill-sized int8 is
+   compute-bound and lands at 1.4x.
+3. Patch 12's `M >= 512` gate therefore excludes the regime with the largest
+   gain. That gate is a CUTLASS kernel constraint, not a device one: cuBLASLt
+   offers 2-3 INT8 TN algorithms at every M up to 80 and they run at about
+   1.05 TB/s. Patch 11 already scores the draft head as int8 at M=1..80 inside
+   the captured graphs, so small-M int8 is not foreign to the decode path.
+4. What this table does not price: int8 here stores int32 D, and production needs
+   a per-token per-channel dequant to bf16 (61k elements at M=5) plus the
+   per-token activation quant (12.8k elements). Both are two orders of magnitude
+   below the 28.9 us GEMM, and patch 11 measured the quant as free on the head.
+   It also does not price the verifier shift from scoring dense linears as int8
+   during decode, which is the gate that decides this.
+5. Consequence for the roofline: see the next section. The comparison this section
+   invites, isolated 1011-1178 GB/s against the step anatomy's 580-790 GB/s, is
+   not a real gap. The 580-790 band was a co-resident solo microbench, and the
+   production rate measured against exact checkpoint bytes is 895 GB/s, which is
+   84-91% of the isolated rate. The prize here is the byte halving, not better
+   bf16 kernels. `ltautotune.so` remains the instrument that shows the library
+   leaves 1.43x unclaimed on int8 algorithm choice (GPL-2.0, LD_PRELOAD), not a
+   shipping plan.
+
+### Production decode byte rate, reconciled (2026-10-23)
+
+The claim "the step is 66% byte-side at the solo band" compared a trace time
+against a microbench number measured under co-resident load. Nobody had divided
+the actual bytes by the actual trace time. That division is the whole point of
+this section, and it is arithmetic over files already on disk.
+
+Method. `benchmark/dense_weight_bytes.py` reads every shard header of the served
+checkpoint, so the dense bf16 matrices a decode step reads are exact: 2-D BF16
+weights minus routed experts, minus the PLE n-gram table, minus the token
+embedding and minus the vision tower. Assigning layers to ranks under
+`13,12,12,11` and dividing by the `gemm-bf16` row of `logs/phase-report-7770.txt`
+gives the achieved rate. Isolated rates come from
+`int8-gate/bench/decode_gemv.cu` at the same shapes and at M=5, the MTP-4
+single-stream decode batch. Captured decode traces carry no tensor shapes, which
+is why the byte side has to come from the checkpoint.
+
+| rank | dense MiB per step | gemm-bf16 ms/step | achieved |
+|---|---:|---:|---:|
+| 0 | 1955.5 | 2.26 | 907 GB/s |
+| 1 | 1733.0 | 2.03 | 895 GB/s |
+| 2 | 1733.0 | 2.03 | 895 GB/s |
+| 3 | 2970.7 | 3.84 | 811 GB/s |
+| sum | 8392.3 | 10.16 | 866 GB/s |
+
+1. Ranks 0, 1 and 2 are the trustworthy rows: each matrix is read exactly once per
+   step, no output head and no drafter sits on ranks 1 and 2. They land at 895 to
+   907 GB/s. Rank 3 also holds `lm_head` (1212 MiB) and the drafter, whose 172.7
+   MiB of dense weights and 192 MiB draft head are replayed several times per step
+   and are not separated by the trace categories, so its row and the sum carry more
+   modelling error than the per-rank rows.
+2. An isolated GEMM of the same matrix at M=5 runs at 984 to 1070 GB/s
+   (`in_proj_qkv` 984, `q_proj` 1011, `in_proj_z` 1057, `out_proj` 1070).
+   Production therefore sits at 84 to 92% of the isolated rate, and at 56% of the
+   1593 GB/s bus.
+3. There is no large kernel-quality prize hiding in the bf16 path. The 1.13 to
+   1.19x distance to an isolated GEMM, applied to 66% of the step, is at most
+   about 10%, the same size as the glue-fusion ceiling. The 2026-10-13 verdict
+   stands, and the "580-790 GB/s" band it quoted was a solo microbench result from
+   a co-resident card rather than a production rate.
+4. The bytes are the lever, and they are worth about 2x. At M=5 the same dense
+   matrices as int8 take: `q_proj` 62.2 to 28.3 us (2.20x), `in_proj_qkv` 53.3 to
+   22.9 (2.33x), `in_proj_z` 29.7 to 13.5 (2.20x), `out_proj` 29.4 to 23.0 (1.28x,
+   the K-wide case). Summed over one GDN layer's four large projections that is
+   165.7 to 82.3 us, a 2.01x rate gain on 160 MiB.
+5. Scaled onto the step, cutting the 10.16 ms bf16 slice to about 5.2 ms moves the
+   clean 22.9 ms compute sum toward 18 ms, so up to 1.25x on single-stream decode,
+   212 toward roughly 265 tok/s. Two costs are not in that number: cuBLASLt stores
+   int32 D and production needs a per-token per-channel dequant to bf16, which at
+   M=5 is 61k elements and one more kernel inside every captured bucket, and the
+   verifier shift from scoring dense linears as int8 during decode, which is the
+   gate that decides it.
+6. Kernel library matters here. The numbers above are cuBLASLt int8 TN, which
+   offers only 2 to 3 algorithms at decode M and runs them at about 1.1 TB/s.
+   Patches 11 and 12 call `cutlass_scaled_mm` instead, and the next section
+   measures that arm at the same shapes under graph replay: 1.19 to 1.50x at
+   M=5, which is what a patch can actually ship today.
+
+### The dense int8 arm at decode M under graph replay (2026-10-23)
+
+This prices the patch 13 candidate. The bf16 arm is `F.linear`, the deployed
+sm_80 dense path. The int8 arm is what patches 11 to 13 call:
+`scaled_int8_quant` on the activations plus `cutlass_scaled_mm` with
+per-channel weights and a bf16 output. Each arm was captured into one CUDA
+graph and the replay timed, minimum of 6 rounds of 20 replays. GPU2, server
+resident and idle. Shapes are the checkpoint's own BF16 dense tensors.
+Instrument `/tmp/graph_arms.py`.
+
+| shape | M=1 | M=5 | M=20 | M=40 | M=80 |
+|---|---:|---:|---:|---:|---:|
+| gdn in_proj_qkv 10240x2560 | 1.45x | 1.47x | 1.38x | 1.21x | 1.41x |
+| gdn in_proj_z 6144x2560 | 1.51x | 1.47x | 1.20x | 1.16x | 1.18x |
+| gdn out_proj 2560x6144 | 1.46x | 1.50x | 1.31x | 0.92x | 1.07x |
+| o_proj 2560x2560 | 1.18x | 1.19x | 1.01x | 0.82x | 1.03x |
+| qsa q_proj 12288x2560 | 1.52x | 1.42x | 1.29x | 1.20x | 1.37x |
+
+Absolute times at M=5, microseconds: in_proj_qkv 52.7 against 35.8, in_proj_z
+29.7 against 20.2, out_proj 32.8 against 21.9, o_proj 17.2 against 14.4,
+q_proj 52.5 against 36.9.
+
+1. Measure a decode-path kernel under capture or not at all. The same two arms
+   timed eagerly say the int8 arm loses on most shapes, 0.28 to 0.37x on o_proj.
+   The reason is `scaled_int8_quant`, which costs about 20 us of launch overhead
+   on a 12,800-element input against a bf16 GEMM of 16 to 54 us. Graph replay
+   removes that overhead and the ranking flips. Any eager decode-size microbench
+   on this box gives the inverted answer.
+2. Single-stream MTP-4 decode is M=5, the best column: 1.19 to 1.50x on all five
+   shapes. Patch 12's `M >= 512` floor withholds about a 1.4x factor from the
+   slice that already moves 895 GB/s.
+3. Scaled onto the step. `lm_head` (1212 MiB per step on rank 3) is not claimed by
+   the arm, so of the trace's 10.16 ms bf16 slice roughly 9 ms is eligible. At
+   1.4x that becomes 6.4 ms, the clean 22.9 ms compute sum moves toward 20.3 ms,
+   and single-stream decode predicts about +13%, 212 toward roughly 239 tok/s.
+   The prediction is arithmetic on measured rates, not a measured step.
+4. The arm is not the ceiling. cuBLASLt int8 measured 2.20 to 2.33x on these
+   shapes earlier the same day, about 1.5x again better, but vLLM exposes no
+   small-M cuBLASLt int8 binding (`torch._int_mm` refuses M<=16 and stores int32
+   behind a separate scale pass), so the shippable column is 1.4x.
+5. Two shapes fall under parity at the M=40 bucket, out_proj 0.92x and o_proj
+   0.82x. The boot A/B decides whether that costs anything against the M=5 win.
+   Cost otherwise: no new memory, because patch 12 already builds the int8 cache
+   beside the bf16 weight, and one extra kernel per eligible layer per bucket.
+6. Not measured here, and it is the gate: logprob drift from scoring dense
+   linears as int8 at decode sizes. Patch 12 certified only at prefill M, where
+   the verifier averages over thousands of rows, while decode scores five.
+
+Built as `experiments/0015-dense-w8a8-decode-m.patch` on branch
+`lab/dense-w8a8-decode-m`, exported 13-patch series tree `9007320d5d`. The knob
+is `VLLM_QWEN4EXP_DENSE_W8A8_MIN_M`, default 512, so nothing changes until a
+boot sets it.
+
+### Patch 13 in vivo: decode-M int8, two boots, one variable (2026-10-24)
+
+Same base `4bceda5dbf`, same 13-patch tree, same serve script. Boot A
+`VLLM_QWEN4EXP_DENSE_W8A8_MIN_M=1` (23:47), boot B control `=512` (00:02). Each
+printed its floor in the claim line on all four ranks at unchanged counts
+(39/36/36/33 + MTP 3), zero errors. Pool 4,955,223 against the control's
+4,961,194, so the decode arm costs 5,971 tokens, 0.12%.
+
+Cells: `bench.py --ctx 1000000 --fills 50 --concurrency 1 --decode 1024`, one
+salt per row, `win avg` is the per-stream decode-window rate. Raw
+`logs/{p13,ctrl}-50n1-s*.json`.
+
+| arm | salt | win avg tok/s | sust agg | acc len | TTFT s | wall s |
+|---|---:|---:|---:|---:|---:|---:|
+| control M>=512 | 104000 | 191.9 | 202 | 4.83 | 40.2 | 45.5 |
+| control M>=512 | 104100 | 192.7 | 202 | 4.84 | 40.3 | 45.6 |
+| control M>=512 | 104200 | 193.2 | 202 | 4.85 | 40.3 | 45.6 |
+| patch 13 M>=1 | 104000 | 202.9 | 209 | 4.89 | 40.3 | 45.3 |
+
+1. The control is reproducible: 191.9 to 193.2 across three salts, 0.7% spread,
+   sustained pinned at 202 and acceptance at 4.83 to 4.85. So a single patch 13
+   cell is weak evidence, but the direction is not noise.
+2. Acceptance is not the explanation for the whole gap, yet it is part of it.
+   Patch 13 read 4.89 against a control band of 4.83 to 4.85, about +1%, and
+   decode rate tracks acceptance length. Normalising it out, step time is
+   acceptance over rate: 4.84/202 = 23.96 ms control against 4.89/209 = 23.40 ms
+   patch 13, so the kernel effect is about -2.3% of the step.
+3. That fails the prediction. The graph-replay microbench predicted 9 ms of
+   eligible dense GEMM falling from 10.16 to about 6.4 ms, which is -12.7% of the
+   22.9 ms clean step. Measured is -2.3%, roughly a fifth of the model. The
+   isolated arms were right about their own kernels, so what is wrong is the
+   transfer: how much of the live decode step those claimed layers actually
+   occupy. Two candidates, both checkable only with a paired `PROF=1` boot: the
+   layers the arm claims may be a smaller share of a graphed decode step than the
+   trace's `gemm-bf16` category suggests, since that category also carries
+   `lm_head` and the drafter, and the fused decode path may already serve some of
+   those GEMMs from the low-latency kernels, which the exact-type check leaves
+   alone by design.
+4. Quality is unaffected within resolution. Fixed-seed acceptance at 204,882
+   prompt tokens: control 4.319 and 4.336, patch 13 4.282 and 4.392, per-position
+   0.937 to 0.949 at position 0 on both arms, so the two distributions overlap.
+   Teacher-forced fingerprints: within-boot floors 8.975% (control) and 9.235%
+   (patch 13) top-1 flips, cross-arm 9.460% and 9.720%. The excess over the floors
+   is +0.2 to +0.7 points, the size boot B's dense W8A8 certification accepted as
+   a legitimate shift, and `quality_diff` returns ok on both pairs. Greedy tail
+   exactness 40.9% cross against 39.4% at the floor. `prefix_state_check.py`
+   passed on the patch 13 boot, four sessions resuming from 82,942 recomputed
+   tokens cold to 78 warm with no leakage.
+5. Where this leaves patch 13. It is safe, it is quality-neutral, it costs 0.12%
+   of pool and about 2.3% of step time in the right direction. Two percent is not
+   worth a promotion argument on its own, and the 13% story that justified it is
+   dead unless a profiled pair shows where the other 10 points went. Open items,
+   cheapest first: three more patch 13 cells to confirm 2.3% rather than one cell,
+   then a `PROF=1` paired boot if the 2% is to be defended or rebuilt into
+   something larger.
+
+### Patch 13 step anatomy: where the missing points went (2026-10-24, PROF=1 boot)
+
+Same tree as the triple above, profiler armed, `phase_probe.py --salt 7770
+--decode 4096` on a 100% fill single-stream cell. Window self-closed at 150
+iterations, four rank traces in `logs/prof`, report at
+`logs/phase-report-p13.txt`. Cadence read 41.1 ms against a 21.6 ms clean step,
+so this window is inflated more than the 2026-10-13 one. Read shares and
+cross-category deltas, not absolutes.
+
+The arm is definitely live in the captured graph. Rank 1 and 2 each spend 975 us
+per step in 36 launches of `cutlass::Kernel2<enable_sm80_to_sm89<...` at 27 us
+each, and rank 0 spends 1061 us in 39 launches. 36 is 12 layers times three
+claimed GEMMs, which matches the boot's claim line. `marlin-int8` stays 0.
+
+Per real step, ms summed over the four ranks, this boot against the 2026-10-13
+anatomy on the seven-patch tree:
+
+| category | 2026-10-13 | patch 13 | delta |
+|---|---:|---:|---:|
+| gemm-bf16 (also matches cutlass int8 by name) | 10.16 | 8.64 | -1.52 |
+| humming | 7.59 | 7.38 | -0.21 |
+| qsa-attn | 2.29 | 2.20 | -0.09 |
+| gdn/state | 1.75 | 1.74 | -0.01 |
+| moe | 1.48 | 1.50 | +0.02 |
+| copy/memset | 1.00 | 1.36 | +0.36 |
+| elementwise | 0.67 | 1.00 | +0.33 |
+| other | 0.75 | 1.16 | +0.41 |
+| reduce/norm | 1.18 | 1.11 | -0.07 |
+| compute sum | 26.89 | 26.13 | -0.76 |
+
+1. The byte saving is real and it is almost entirely re-spent. The GEMM category
+   drops 1.52 ms, about a 1.4x cut on what the arm claims, which agrees with the
+   1.47x measured under graph replay. Over the same step `copy/memset`,
+   `elementwise` and `other` grow by 1.10 ms combined, and the compute sum falls
+   only 0.76 ms, 2.8%. Kernel launches per step rose from 2540 to about 2780,
+   which is the per-token activation quant and its staging copies.
+2. The 1.47x was never going to be 13%. Two independent reasons, both visible
+   here. First, `gemm-bf16` in a phase report is a name-regex bucket that also
+   holds `lm_head`, the drafter and every other cutlass kernel, so it is not the
+   arm's reachable slice: the arm claims 36 of 138 linear layers on the middle
+   ranks, three GEMMs per layer, and the trace shows exactly that, 0.98 ms per
+   rank rather than the 2.5 ms per rank the category total implies. Second, the
+   arm carries a per-call overhead that the isolated bench folded into one number
+   and the step then pays again as extra kernels.
+3. The A/B triple agrees. Patch 13 at salts 104000, 104100 and 104200 reads win
+   avg 202.3, 205.7 and 194.4 against the control's 191.9, 192.7 and 193.2.
+   Acceptance differs cell by cell (4.87, 4.88, 4.70 against 4.83, 4.84, 4.85), so
+   normalize it out: step time is acceptance over rate, 23.30, 22.59 and 22.49 ms
+   against 23.91, 23.96 and 23.96 ms. That is -4.8% mean, all three cells in the
+   same direction. The anatomy says -2.8%. Take the honest range as 3 to 5%, so
+   212 toward roughly 220 tok/s single-stream.
+4. Third cell caveat: patch 13's 104200 cell accepted 4.70 where the control
+   accepted 4.85 on the identical prompt, which is the int8 logits steering the
+   greedy path elsewhere rather than a machine change. Same-prompt acceptance
+   differences of that size are what the values floor already covers.
+5. If the 1.4x on the GEMM is to survive into the step, the overhead has to go.
+   The cheapest follow-up is one activation quant per layer input instead of one
+   per claimed GEMM: three quant passes plus their staging copies currently buy
+   what one could, and 1.10 ms of re-spent time is larger than the 0.76 ms saved.
+   That is a fused-quant idea, not a gate change, and it is the only version of
+   this axis worth a new patch.
+6. Not established, and it would need one more profiled boot at MIN_M=512 on this
+   same base: the 2026-10-13 column is a different tree, so the category deltas
+   above carry base drift. The A/B triple does not have that problem, and it is
+   the number to quote.
+
+### W8A16 dense lane against both patch 13 arms (2026-10-24)
+
+Purpose: test whether the per-call activation quant, not the GEMM itself, was what
+capped the int8 dense win at decode. The lane halves the same dense bytes with no
+activation quant at all, because the weights are int8 in storage and a bf16 GEMM
+consumes them after dequant.
+
+Boots, all PP=4, MTP-4, fp8 KV, PP int8 handoff on, PLE mmap gather on:
+`ctrl-minm512` official FP8 tree with the dense arm floored at 512, `p13` official
+tree floored at 1, and this lane, the repaired `Qwen3.8-Flash-Next-W8A16` tree.
+The lane is not a one-variable change: its dense linears go through
+compressed-tensors so patches 12 and 13 claim nothing, patch 11's int8 draft head is
+off in this boot, and its draft-vocab artifact is the older 40,000-id list against
+the official tree's 39,532. Read it as lane versus lane.
+
+| arm | win avg tok/s over salts 104000/104100/104200 | sustained | acc len | TTFT s | in tok/s | pool |
+|---|---|---:|---:|---:|---:|---:|
+| official, dense arm floored at 512 | 191.9 / 192.7 / 193.2 | 202 flat | 4.83 / 4.84 / 4.85 | 40.2 / 40.3 / 40.3 | 10,851 / 10,837 / 10,832 | 4,961,194 |
+| official, patch 13 floored at 1 | 202.3 / 205.7 / 194.4 | 209 / 216 / 209 | 4.87 / 4.88 / 4.70 | 40.1 x3 | 10,944 / 10,962 / 10,892 | 4,955,223 |
+| W8A16 dense lane | 200.8 / 198.9 / 198.8 | 209 flat | 4.91 / 4.88 / 4.88 | 44.1 / 44.2 / 44.2 | 10,055 / 10,019 / 10,014 | 5,176,119 |
+
+Step time from acceptance over sustained rate, which removes the acceptance
+difference: control 23.94 ms, patch 13 22.79 ms, W8A16 lane 23.40 ms.
+
+1. The hypothesis is refuted. Removing the activation quant entirely gives -2.3%
+   against the control, which is worse than patch 13's -4.8%. The per-call quant was
+   therefore not the binding cost, and the weight-only dequant path is the slower of
+   the two at decode M. This closes the "avoid the quant" idea for a different reason
+   than the "dedupe the quant" idea, which was already dead because the three claimed
+   GEMMs per layer consume three different tensors.
+2. The lane pays for it at prefill: TTFT 44.2 against 40.2 is +10%, and in tok/s
+   10,019 against 10,851 is -7.7%. That is the same Marlin weight-only behaviour
+   measured on 2026-10-16 at 0.40-0.81x of bf16 for prefill batches.
+3. What the lane does buy is capacity. Pool 5,176,119 against 4,961,194 is +214,925
+   tokens, +4.3%, and maximum concurrency crosses from 4.96x to 5.18x, so five full
+   1M requests become resident instead of four. Since batch residency is what the
+   step anatomy names as the remaining lever, the lane is a multi-stream argument,
+   not a single-stream one, and pricing it needs a five-resident cell that no lane
+   has ever run.
+4. Values move further than patch 13 did. Against the control the lane reads 10.199%
+   top-1 flips and 0.0978 mean union KL; against patch 13, 10.549% and 0.1027. The
+   within-boot floors are 8.975% and 9.235%, so the excess is +1.2 to +1.6 points,
+   against patch 13's +0.2 to +0.7. `quality_diff` returns ok on both, and greedy
+   tail exactness is 34.8% against a 39.4% floor. Consistent with the lane's own
+   2026-10-12 gate, which read 8.1% against a 7.3% floor.
+5. Acceptance is unchanged by the dense format: 4.364 and 4.328 at 204,882 prompt
+   tokens on the lane, inside the control's 4.319 to 4.336 and patch 13's 4.282 to
+   4.392.
+6. Net for the patch set. Best measured dense-byte lever at decode stays patch 13's
+   W8A8 at about 5% single-stream. The W8A16 lane is not a decode win and costs
+   prefill, but it is the only configuration here that crosses the five-resident
+   threshold, so it belongs in the queue behind a multi-stream capacity cell rather
+   than in the single-stream comparison.
+### Five resident at 1M on the W8A16 lane (2026-10-24, 576 s cell)
+
+Question from the lane comparison: the W8A16 tree crosses maximum concurrency
+from 4.96x to 5.18x, so can five near-full 1M requests actually decode together
+where the official tree can only hold four.
+
+Cell: `sustained_decode.py --concurrencies 5 --depth 995000 --decode 4096`, so
+five requests reserve 5 x 999,096 = 4,995,480 tokens, which sits between the
+official pool 4,961,194 and the lane pool 5,176,119. That is the only shape that
+separates them. Raw `logs/w8a16-plateau5.json`, 1,147 samples.
+
+| streams | wall s | first tokens s | plateau agg | per stream |
+|---:|---:|---|---:|---:|
+| 5 | 576.4 | 100.1, 186.6, 277.1, 376.8, 475.5 | 640.6 tok/s | 128.1 tok/s |
+
+1. All five were resident at once. The proof is in the timeseries, not the
+   headline: aggregate rate is only 10 to 30 tok/s between 100 s and 505 s, then
+   reaches 651.7 tok/s at 562.9 s, about five streams' worth. The long flat part is
+   the documented starvation effect, each arriving 995k prefill hogs the pipeline
+   and holds the already-decoded streams near 2 to 8 tok/s each, which is what kept
+   streams one to four alive until stream five finished its prefill at 475 s.
+2. Read the 640.6 as a ceiling, not a sustained rate. Only 32 of 1,147 samples sit
+   at 80 percent of peak, roughly 16 s of the 576 s cell, because every stream gets
+   just 4,096 decode tokens and the prefills consume 82 percent of wall. This is the
+   wind-down trap from the protocol note, at five-stream scale.
+3. Per-stream cost of the fifth stream is close to nothing: 128.1 tok/s with five
+   resident, against the deep-plateau reference of 127 tok/s per stream at four
+   resident 988k contexts. Aggregate therefore scales roughly linearly, 507 to 641
+   tok/s, +26 percent, on 4 percent more pool. That is the capacity argument, and it
+   is real on this lane.
+4. What is NOT established: whether the official tree would have failed this cell.
+   The arithmetic says it must, 4,995,480 of demand against a 4,961,194 pool, so the
+   fifth prefill cannot be admitted until one of the first four finishes, which would
+   show as a plateau near four streams, roughly 512 tok/s, and a fifth first-token
+   time pinned to some other stream's completion rather than to the prefill queue.
+   Confirming needs the same 576 s cell on the official tree.
+5. Cost of running this shape at all: 576 s of wall for 20,480 generated tokens, and
+   four of the five streams spend most of that time starved. A service that actually
+   runs five concurrent 1M sessions on this box gets a short all-five window and very
+   poor latency for early arrivals, so the lane's extra residency is worth having only
+   with a scheduling change that decouples prefill admission from decode rate.
+### Five resident on both trees: the control (2026-10-24)
+
+Identical cell on the official SHIP tree, patch 13 arm at M=1, pool 4,955,223,
+against the lane's 5,176,119. Demand is 5 x 999,096 = 4,995,480 tokens, which the
+official pool misses by 40,257 and the lane clears by 180,639. Same
+`sustained_decode.py` command, `--timeout 1500` because the default 600 is only
+24 s above the lane's own wall and the control needs longer, which is itself part
+of the result.
+
+| cell | wall s | first tokens s | plateau agg | per stream | requests per s | out tok/s over wall |
+|---|---:|---|---:|---:|---:|---:|
+| official, 4 streams | 396.3 | 92.5, 170.7, 261.1, 351.2 | 513 | 128 | 0.01009 | 41.4 |
+| official, 5 streams | 899.8 | 92.5, 170.7, 261.1, 351.2, **818.1** | 472 | 94 | 0.00556 | 22.8 |
+| W8A16 lane, 5 streams | 576.4 | 100.1, 186.6, 277.1, 376.8, 475.5 | 640.6 | 128.1 | 0.00867 | 35.5 |
+
+1. The pool is the constraint, proven directly. On the official tree the fifth
+   stream's first token lands at 818.1 s, 467 s after the fourth, instead of on the
+   even 85 to 100 s prefill ramp the other four follow. It could not be admitted
+   until one of the first four released blocks. On the lane the fifth arrives at
+   475.5 s on the normal ramp, so five really are resident.
+2. Five resident on the lane beats five on the official tree by 56 percent in wall
+   and 36 percent in aggregate plateau, 640.6 against 472. That is the capacity
+   result, and it is real and measured.
+3. Five resident on either tree is worse than four on the official tree. Requests
+   completed per second: 0.01009 at four, 0.00867 at five on the lane, 0.00556 at
+   five on the official tree. End-to-end generated tokens per second tell the same
+   story, 41.4, 35.5 and 22.8. Extra residency does not pay for itself here because
+   each arriving 995k prefill starves the streams already decoding, which the
+   server log shows plainly at 15 tok/s aggregate generation while a prefill runs.
+4. So the lane's 4.3 percent more pool is not a usable win at this shape, and the
+   binding constraint is scheduling rather than memory. A fifth resident stream is
+   only worth admitting if arriving prefills stop grinding decode to a halt, which
+   is a scheduler question and not something either checkpoint changes.
+5. Consequences for the two open decisions. Patch 13 stays the best measured dense
+   byte lever, at about 5 percent single-stream decode, and the lane does not
+   displace it, since the lane's step time was worse (23.40 ms against 22.79 ms).
+   The lane's one claimed advantage, residency, is now measured and does not
+   convert, so there is no configuration in this session that beats the shipped
+   official tree with the dense arm at M=1.

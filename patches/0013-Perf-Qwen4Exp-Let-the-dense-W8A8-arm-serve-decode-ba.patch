@@ -1,0 +1,274 @@
+From dcc9c271d844faa0bbfeb45edf4fb16dcd5e6557 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Fri, 23 Oct 2026 23:44:56 +0200
+Subject: [PATCH] [Perf][Qwen4Exp] Let the dense W8A8 arm serve decode batches
+
+Patch 12 floors the dense int8 arm at M=512, which leaves every captured
+decode bucket on the bf16 GEMM. That floor came from the 2026-10-22 prefill
+bench, and decode was never measured, so it was a guess about a regime the
+shooter never entered.
+
+Measured on 2026-10-23 the way decode actually runs, with each arm captured in
+a CUDA graph and the replay timed, the arm beats the deployed bf16 GEMM at the
+single-stream MTP-4 batch of 5 rows on all five large dense shapes: 1.47x on
+in_proj_qkv, 1.47x in_proj_z, 1.50x out_proj, 1.42x q_proj, 1.19x o_proj.
+Weighted over the 895 GB/s dense slice of the step that predicts roughly +13%
+single-stream decode, before quality.
+
+Eager timing inverts this result and says the arm loses on 4 of 6 shapes. The
+extra per-token activation quant costs about 20 us of launch overhead that
+graph replay removes, against a bf16 GEMM of 16 to 54 us, so the floor has to
+be measured under capture. cuBLASLt int8 reaches 2.20-2.33x on the same shapes,
+but vLLM exposes no small-M cuBLASLt int8 binding (torch._int_mm refuses
+M<=16), so the CUTLASS arm is what ships.
+
+VLLM_QWEN4EXP_DENSE_W8A8_MIN_M sets the floor and defaults to 512, so the
+shipped behaviour is unchanged until it is set. Two shapes slip below parity
+at the M=40 bucket (0.92x out_proj, 0.82x o_proj); the boot A/B decides whether
+that matters against the M=5 and M=80 wins.
+---
+ tests/models/qwen4_exp/test_dense_w8a8.py  | 106 +++++++++++++++++++++
+ vllm/envs.py                               |   9 ++
+ vllm/models/qwen4_exp/nvidia/dense_w8a8.py |  38 ++++++--
+ 3 files changed, 146 insertions(+), 7 deletions(-)
+
+diff --git a/tests/models/qwen4_exp/test_dense_w8a8.py b/tests/models/qwen4_exp/test_dense_w8a8.py
+index 42ee27b2e5..a58c294dce 100644
+--- a/tests/models/qwen4_exp/test_dense_w8a8.py
++++ b/tests/models/qwen4_exp/test_dense_w8a8.py
+@@ -6,6 +6,7 @@ No GPU is needed: CUTLASS and the int8 activation quant are patched, and
+ the bf16 GEMM dispatch of the parent method is stood in for by a sentinel.
+ """
+ 
++from contextlib import ExitStack
+ from types import SimpleNamespace
+ from unittest.mock import patch
+ 
+@@ -290,3 +291,108 @@ def test_apply_uses_int8_only_for_prefill_sized_batches() -> None:
+         calls.clear()
+         method.apply(_linear(n=n, k=k), x)
+         assert calls == [("bf16", 2, 1024)]
++
++
++def _arm_recorder():
++    """(calls, patches) recording which GEMM a layer dispatches to."""
++    calls: list[str] = []
++
++    def fake_scaled_int8_quant(x, scale=None, azp=None, symmetric=True):
++        calls.append("int8")
++        return (
++            torch.zeros(x.shape, dtype=torch.int8),
++            torch.ones(x.shape[0], 1, dtype=torch.float32),
++            None,
++        )
++
++    def fake_cutlass_scaled_mm(a, b, scale_a, scale_b, out_dtype, bias=None):
++        return torch.zeros(a.shape[0], b.shape[1], dtype=out_dtype)
++
++    def bf16_apply(self, target, x, bias=None):
++        calls.append("bf16")
++        return torch.zeros(x.shape[0], target.weight.shape[0], dtype=x.dtype)
++
++    return calls, [
++        patch("vllm._custom_ops.scaled_int8_quant", fake_scaled_int8_quant),
++        patch("vllm._custom_ops.cutlass_scaled_mm", fake_cutlass_scaled_mm),
++        patch.object(UnquantizedLinearMethod, "apply", bf16_apply),
++    ]
++
++
++def _method_with_cache(min_m=None, n=2048, k=1536):
++    method = Qwen4ExpDenseW8A8LinearMethod.__new__(Qwen4ExpDenseW8A8LinearMethod)
++    if min_m is not None:
++        method._qwen4exp_dense_w8a8_min_m = min_m
++    layer = _linear(n=n, k=k)
++    layer._qwen4exp_dense_w8a8 = (
++        torch.zeros(k, n, dtype=torch.int8),
++        torch.ones(1, n, dtype=torch.float32),
++    )
++    return method, layer
++
++
++def test_default_floor_is_the_prefill_bench_floor() -> None:
++    """An unstamped method must not start serving decode on its own."""
++    assert Qwen4ExpDenseW8A8LinearMethod._qwen4exp_dense_w8a8_min_m == 512
++
++
++def test_lowered_floor_serves_the_captured_decode_buckets_with_int8() -> None:
++    calls, patches = _arm_recorder()
++    n, k = 2048, 1536
++    method, layer = _method_with_cache(min_m=1, n=n, k=k)
++    with ExitStack() as stack:
++        for p in patches:
++            stack.enter_context(p)
++        # cudagraph_capture_sizes for uniform decode with MTP-4 start at 5 rows.
++        for rows in (1, 5, 10, 20, 25, 40, 80):
++            out = method.apply(layer, torch.randn(rows, k, dtype=torch.bfloat16))
++            assert out.shape == (rows, n) and out.dtype == torch.bfloat16
++        assert calls == ["int8"] * 7
++
++        # The other guards outrank a lowered floor: no 3D input, no bias.
++        calls.clear()
++        method.apply(layer, torch.randn(2, 5, k, dtype=torch.bfloat16))
++        method.apply(
++            layer, torch.randn(5, k, dtype=torch.bfloat16), bias=torch.zeros(n)
++        )
++        assert calls == ["bf16", "bf16"]
++
++
++def test_raised_floor_declines_prefill_sized_batches_too() -> None:
++    calls, patches = _arm_recorder()
++    k = 1536
++    method, layer = _method_with_cache(min_m=4096, n=2048, k=k)
++    with ExitStack() as stack:
++        for p in patches:
++            stack.enter_context(p)
++        method.apply(layer, torch.randn(2048, k, dtype=torch.bfloat16))
++        assert calls == ["bf16"]
++
++
++def test_enable_stamps_the_floor_from_the_env(int8_env, monkeypatch) -> None:
++    monkeypatch.setattr(envs, "VLLM_QWEN4EXP_DENSE_W8A8_MIN_M", 5, raising=False)
++    layer = _linear()
++    enable_qwen4exp_dense_w8a8(_holder(layer))
++    assert layer.quant_method._qwen4exp_dense_w8a8_min_m == 5
++
++
++def test_enable_defaults_to_the_bench_floor(int8_env) -> None:
++    layer = _linear()
++    enable_qwen4exp_dense_w8a8(_holder(layer))
++    assert layer.quant_method._qwen4exp_dense_w8a8_min_m == 512
++
++
++def test_enable_clamps_a_floor_below_one(int8_env, monkeypatch) -> None:
++    monkeypatch.setattr(envs, "VLLM_QWEN4EXP_DENSE_W8A8_MIN_M", 0, raising=False)
++    layer = _linear()
++    enable_qwen4exp_dense_w8a8(_holder(layer))
++    assert layer.quant_method._qwen4exp_dense_w8a8_min_m == 1
++
++
++def test_env_off_stamps_nothing_and_keeps_bf16(monkeypatch) -> None:
++    monkeypatch.setattr(envs, "VLLM_QWEN4EXP_DENSE_W8A8", False, raising=False)
++    monkeypatch.setattr(envs, "VLLM_QWEN4EXP_DENSE_W8A8_MIN_M", 1, raising=False)
++    layer = _linear()
++    enable_qwen4exp_dense_w8a8(_holder(layer))
++    assert type(layer.quant_method) is UnquantizedLinearMethod
++    assert not hasattr(layer.quant_method, "_qwen4exp_dense_w8a8_min_m")
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 62917e8a53..7d71047b50 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -126,6 +126,7 @@ if TYPE_CHECKING:
+     VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
+     VLLM_QWEN4EXP_DRAFT_W8A8: bool = False
+     VLLM_QWEN4EXP_DENSE_W8A8: bool = False
++    VLLM_QWEN4EXP_DENSE_W8A8_MIN_M: int = 512
+     VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
+     VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
+     VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
+@@ -1161,6 +1162,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_QWEN4EXP_DENSE_W8A8": lambda: (
+         os.getenv("VLLM_QWEN4EXP_DENSE_W8A8", "0").lower() in ("1", "true")
+     ),
++    # Smallest batch the dense W8A8 arm above serves. 512 is the floor of the
++    # 2026-10-22 prefill bench, and it leaves decode and every captured CUDA
++    # graph on bf16. Decode was benched on 2026-10-23 the way it runs, under
++    # graph replay, and the arm wins 1.19-1.50x there at M=5, so 1 extends it
++    # to the captured decode buckets. Values below 1 are treated as 1.
++    "VLLM_QWEN4EXP_DENSE_W8A8_MIN_M": lambda: int(
++        os.environ.get("VLLM_QWEN4EXP_DENSE_W8A8_MIN_M", "512")
++    ),
+     # Timeout in seconds for keeping HTTP connections alive in API server
+     "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
+         os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
+diff --git a/vllm/models/qwen4_exp/nvidia/dense_w8a8.py b/vllm/models/qwen4_exp/nvidia/dense_w8a8.py
+index 0f06eefe07..6d60308483 100644
+--- a/vllm/models/qwen4_exp/nvidia/dense_w8a8.py
++++ b/vllm/models/qwen4_exp/nvidia/dense_w8a8.py
+@@ -15,11 +15,20 @@ Enable with VLLM_QWEN4EXP_DENSE_W8A8=1. `enable_qwen4exp_dense_w8a8` swaps
+ the quant method of the eligible layers in place; the method round-quantizes
+ the loaded bf16 weight to per-output-channel int8 once after loading, then
+ scores with dynamic per-token activation quant plus `cutlass_scaled_mm`.
+-Batches below the benched size (decode, and everything CUDA graphs captured)
+-keep calling the bf16 GEMM with the untouched weight.
++
++`VLLM_QWEN4EXP_DENSE_W8A8_MIN_M` sets the smallest batch the int8 arm serves
++and defaults to 512, the floor of the 2026-10-22 bench. Batches below it keep
++calling the bf16 GEMM with the untouched weight, so the default leaves decode,
++and every CUDA graph captured here, exactly as it was before this file existed.
++Setting it to 1 extends the arm to the captured decode buckets: measured under
++graph replay on 2026-10-23 (results.md, "The dense int8 arm at decode M under
++graph replay"), the arm runs 1.19-1.50x over the bf16 GEMM at M=5 on the five
++large dense shapes, and 0.82-0.92x on two of them at M=40. Read once at enable
++time, so the choice is fixed before capture.
+ """
+ 
+ import re
++from typing import cast
+ 
+ import torch
+ 
+@@ -34,9 +43,11 @@ from vllm.platforms import current_platform
+ 
+ logger = init_logger(__name__)
+ 
+-# int8 pays off only at prefill sizes; below this the deployed path stays
+-# in the CUDA-graph capture range, where it must not change.
+-_MIN_M = 512
++# int8 pays off at prefill sizes on every dense shape benched on 2026-10-22;
++# that is the default floor, and the smallest batch the arm will serve. Decode
++# was benched on 2026-10-23 under graph replay and wins there too
++# (1.19-1.50x at M=5), so the floor is a knob rather than a constant.
++_DEFAULT_MIN_M = 512
+ _MIN_ELEMS = 2_000_000
+ _MIN_K = 1024
+ # One row block per RTN pass: the fp32 intermediates are 4x the bf16 slice.
+@@ -83,6 +94,11 @@ class Qwen4ExpDenseW8A8LinearMethod(UnquantizedLinearMethod):
+     captured CUDA graph) this deployment uses today.
+     """
+ 
++    # Stamped per instance by enable_qwen4exp_dense_w8a8 from the environment,
++    # so the branch a CUDA graph captures is decided before capture. The class
++    # default keeps a method built outside that walk on the prefill floor.
++    _qwen4exp_dense_w8a8_min_m = _DEFAULT_MIN_M
++
+     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+         super().process_weights_after_loading(layer)
+         weight = getattr(layer, "weight", None)
+@@ -100,7 +116,7 @@ class Qwen4ExpDenseW8A8LinearMethod(UnquantizedLinearMethod):
+             cache is not None
+             and bias is None
+             and x.dim() == 2
+-            and x.shape[0] >= _MIN_M
++            and x.shape[0] >= self._qwen4exp_dense_w8a8_min_m
+             and x.dtype in (torch.bfloat16, torch.float16)
+         ):
+             x_q, scale_a, _ = ops.scaled_int8_quant(
+@@ -141,6 +157,10 @@ def enable_qwen4exp_dense_w8a8(module: torch.nn.Module) -> None:
+         )
+         return
+ 
++    # Read once, here: a CUDA graph bakes whichever branch it captures, so the
++    # floor must not move after this walk.
++    min_m = max(1, envs.VLLM_QWEN4EXP_DENSE_W8A8_MIN_M)
++
+     swapped = 0
+     for child in module.modules():
+         if not isinstance(child, LinearBase):
+@@ -154,9 +174,13 @@ def enable_qwen4exp_dense_w8a8(module: torch.nn.Module) -> None:
+         # In-place class swap keeps the dispatched bf16 GEMM the fallback
+         # below and the CUDA-graph capture still need.
+         method.__class__ = Qwen4ExpDenseW8A8LinearMethod
++        arm = cast(Qwen4ExpDenseW8A8LinearMethod, method)
++        arm._qwen4exp_dense_w8a8_min_m = min_m
+         swapped += 1
+     logger.info(
+-        "Dense bf16 linears scored as W8A8 int8 via CUTLASS: %d of %d layers",
++        "Dense bf16 linears scored as W8A8 int8 via CUTLASS from batch M=%d: "
++        "%d of %d layers",
++        min_m,
+         swapped,
+         sum(isinstance(c, LinearBase) for c in module.modules()),
+     )
+-- 
+2.55.0
+
