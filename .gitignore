@@ -7,5 +7,8 @@ benchmark/picked.json
 benchmark/sampler.py
 prof-1m/
 benchmark/mtp-4x1m-*.json
-logs/prof/
+# Local scratch for benchmark runs. Only aggregate numbers go in the repo, in
+# benchmark/results.md, each with its salt and tool so the row can be reproduced.
+# Never stage anything from here, not even with an explicit filename.
+logs/
 TODO.md
