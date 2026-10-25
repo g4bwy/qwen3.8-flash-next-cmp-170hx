@@ -3963,3 +3963,39 @@ config table, not alignment: fp8 takes the sm_80 wide-tile override (BLOCK_N=128
 ops/qsa.py:668) that int8 does not (is_fp8=False -> BLOCK_N=32). The read microbench used 32
 for both, so fp8's real advantage was never in it. Cheap follow-up: try the same wide-tile
 override for int8 prefill on sm_80.
+
+## Why bf16 prefills faster than fp8/int8: the dtype doubles the block, the block splits the chunks (2026-10-25)
+
+Three like-for-like offline traces (same build a7909d5fa+tracetool, same 131k prompt, same
+env, `t-bf16/t-fp8/t-int8`), and the answer is not in any compute kernel:
+
+| | bf16 | fp8 | int8 |
+|---|---|---|---|
+| kv group block sizes | 1616 | 3232 | 3232 |
+| dominant prefill chunk (grid rows) | 8080 = 5×1616 | 6464 = 2×3232 | 6464 |
+| prefill steps per prompt | ~16 | ~20 (+25%) | ~20 |
+| nccl SendRecv total | 14.37 s | 15.53 s | 14.16 s |
+| grand GPU total | 36.64 s | 37.47 s | 37.40 s |
+| read kernel per row | 2.35 us | 1.82 us | 2.77 us |
+
+Mechanism. One-byte KV halves bytes-per-token, so the hybrid page-size planner doubles the
+attention groups' block size to 3232 tokens to stay commensurate with the GDN group. The
+mamba align-mode chunk splitter floors every prefill chunk to that block size, so the same
+8192-token budget yields 6464-row chunks instead of 8080: 25% more scheduler steps for the
+identical prompt. On this pipeline a step costs an nccl round and host work (traces show
+nccl at 38-42% of everything), and the fp8 arm's nccl total growing 14.37 -> 15.53 s
+extrapolates to its measured 9.1 s at 1M. fp8 pays this even though its read kernel is 22%
+FASTER per row than bf16's (the sm_80 BLOCK_N=128 override earning its keep at the lane's
+chunk size, where the same override measured slower at my fixed synthetic grid).
+
+int8 = the same chunk penalty plus a 1.52x read per row against fp8, 2.77 vs 1.82 us,
+which is the fp32-promoted V tile (fp16 codes times fp32 per-token scale) pushing the PV
+dot to tf32 while fp8 keeps its dot fp16 by folding its scale into host floats. The earlier
+"promotion costs zero" probe was wrong; the lane prices it at ~5 s per 1M.
+
+Fix candidates, priced by the same traces:
+1. Scheduler-level, no code: raise `--max-num-batched-tokens` to 9728 so chunks floor to
+   3×3232 = 9696 rows, 16% below bf16's current step count. Test on the lane.
+2. Kernel-level: keep the V-tile fp16 through the dot (scale-multiply in fp32, cast the
+   tile back to fp16 before tl.dot, same shape fp8 achieves), expected -15..-20% int8
+   read time, worth ~4-5 s at 1M on its own.
