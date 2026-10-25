@@ -9,20 +9,25 @@ it boots the engine in-process (no HTTP lane, nothing to crash) and profiles
 ONE real prefill forward under torch.profiler, dumping the CUDA kernel table
 sorted by device time for a chosen --kv-cache-dtype.
 
-Run it once per dtype on the diff:
+Run it ON THE HOST, with the python that runs `vllm serve` (the install there
+is dev407, which already contains the int8 port, so do NOT set PYTHONPATH to
+the source tree - it has no compiled flash-attn). Stop the serving lane
+first; this grabs all four cards.
 
-  CUDA_VISIBLE_DEVICES=0,1,2,3 PYTHONPATH=/home/gab/test/wt-int8kv \
-    /home/gab/test/vllm/.venv/bin/python \
-    benchmark/qsa_prefill_trace.py --kv-cache-dtype int8_per_token_head --out /tmp/tr-int8
-  # ... --kv-cache-dtype auto --out /tmp/tr-bf16
+  python benchmark/qsa_prefill_trace.py \
+      --kv-cache-dtype int8_per_token_head --out /tmp/tr-int8
+  python benchmark/qsa_prefill_trace.py \
+      --kv-cache-dtype auto               --out /tmp/tr-bf16
 
-Compare the top kernels between the two traces. Whatever kernel grew is the
-59 s; if nothing in QSA grew, the gap is not the port.
+Activate the lane's venv, or use the interpreter behind `which vllm`. Compare
+the top kernels between the two tables; whatever kernel grew on int8 is the
+missing 59 s. If no QSA kernel grew, the gap is not the port.
 
 The env block mirrors serve-4x-1m.sh so the shape matches the lane. Weight
 load is ~173 GiB via engram cpu_offload; expect several minutes before the
 first token. It does NOT run the serving API, so it cannot swap the box the
-way a live-lane profiler did.
+way a live-lane profiler did. Set MODEL=/path/to/Qwen3.8-Flash-Next-FP8 if the
+host path differs from the default.
 """
 import argparse
 import os
