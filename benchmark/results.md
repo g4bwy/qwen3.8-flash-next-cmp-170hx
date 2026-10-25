@@ -4071,3 +4071,40 @@ Readings.
    preempted step now replays 6x1616 of state), concurrency cells at 9728, the greedy
    fused-vs-unfused gate, and whether the README tables and serve-script header should
    now recommend 9728 as the default once (3) clears.
+
+## fp8@9728: the last cell, and the fp8 tax case is closed with the sign flipped (2026-10-25)
+
+Three pinned cells, all clean (bg 0, match 100, zero preempts), pool 4,901,492 / 4.90x:
+
+| salt | prompt tok | TTFT s | in tok/s | win avg | sust | acc len |
+|---|---|---|---|---|---|---|
+| 130100 | 988,214 | 62.9 | 14,531 | 199.1 | 209 | 4.87 |
+| 130200 | 988,845 | 62.7 | 14,584 | 201.3 | 212 | 4.82 |
+| 130300 | 989,439 | 62.6 | 14,605 | 199.1 | 209 | 4.82 |
+
+The complete matrix, cold 1M TTFT, same build and box throughout:
+
+| TTFT s / pool | @2048 shipped | @9728 | dtype cost at @9728 |
+|---|---|---|---|
+| bf16 | 76.4 / 2.55M | 64.0 | baseline |
+| fp8 | 85.5 / 4.96M | **62.7** / 4.90M | **-1.3 s, faster** |
+| int8 | 88.9 / 4.96M | 65.6 / 4.71M | +2.9 s, pool -4% |
+
+The verdict the original question deserves: fp8 KV costs nothing. At the shipped 2048 budget
+it looked like a 9.1 s tax; at a budget where its doubled group block chunks cleanly it is
+1.3 s FASTER than bf16 with 1.92x the pool, and the fastest prefill this box has ever done.
+The tax decomposition ended up: ~100% scheduling, 0% dtype, plus one genuine int8-only bug
+(the 520-byte stride) that ran around unnoticed precisely because every arm shared the
+scheduling penalty and it muddied the water.
+
+int8's honest position after all this: native dtype, fused writer, IMMA headroom - but at
+parity-or-worse speed and pool on this silicon today. It stays a lab branch. Its durable
+outputs are the stride lesson (recorded in bench-protocol-traps memory), the trace tooling,
+the 9728 finding, and the int8-dip lead: dips appeared on int8 boots only (4 cells across
+two boots) and on zero of six bf16 cells and zero of three fp8 cells at 9728.
+
+Shipping consequence (pending the usual battery): `serve-4x-1m.sh` should move to
+`--max-num-batched-tokens 9728`, worth -27% cold 1M TTFT on the current default dtype at no
+quality cost in these cells. Before that: concurrency cells, preemption replay at fatter
+chunks, accept-window probes, and the README tables rewrite (the 11.6k row and the
+"price is about 10% of prefill" header comment both describe the mis-scheduled regime).
