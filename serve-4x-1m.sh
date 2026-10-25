@@ -6,14 +6,22 @@
 # Apply the patch series first: git am --keep-non-patch patches/00*.patch
 # Details and measured numbers: README.md.
 #
-# PP=4 with fp8 KV (2026-10-16): the QSA layers store e4m3 bytes in uint8 and
-# decode them in-kernel on sm_80 (upstream #60602 + #60992), so the pool roughly
-# doubles, 2.65M tokens (2.6x) -> 5.10M, four 1M streams resident where a third
-# used to evict the first. Price is about 10% of a cold 1M prefill, measured on
-# the shipped tree 2026-10-25 as 76.4 -> 85.5 s TTFT with decode unchanged. Do
-# not read that against the int8 activation hop below, patch 8, which moves about
-# 12 s at either KV dtype. The two are orthogonal levers whose sizes happen to be
-# similar, the 2x2 is in results.md, and the hop's gain is already banked here.
+# PP=4 with fp8 KV: the QSA layers store e4m3 bytes in uint8 and decode them
+# in-kernel on sm_80 (upstream #60602 + #60992), so the pool roughly doubles,
+# 2.55M tokens -> 4.90M at matched settings, four 1M streams resident where a
+# third used to evict the first. There is no prefill price for it. The
+# 76.4 -> 85.5 s "10% tax" measured 2026-10-25 was a chunking artifact: a
+# one-byte cache halves bytes per token, the hybrid page planner doubles the
+# attention group block (1616 -> 3232 tokens, see `kv cache group sizes` in
+# the boot log), and at the default 2048-token chunk budget the chunk ends
+# stop landing on that block. Pass --max-num-batched-tokens 9728 (appended
+# args win over the defaults here) and every dtype chunks at 9696 aligned
+# rows: fp8 lands at 62.7 s against bf16's 64.0, the fastest prefill measured
+# on this box (results.md, 2026-10-26). The scripts keep the shipped default
+# until the cert battery clears: concurrency cells and preemption replay at
+# fatter chunks are unmeasured. Unrelated to all of this, patch 8's int8
+# activation hop moves about 12 s at either KV dtype, the two levers are
+# orthogonal, the hop's gain is already banked here.
 # A Mamba align-mode preemption still replays its whole prompt (~2 min), watch the
 # preempt column and not only capacity.
 #

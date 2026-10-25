@@ -4,8 +4,11 @@ Patches over vLLM mainline, running with uv venv.
 No bullshit slop-wall-of-text (almost...), no docker, no opaque scripts, no nonsense.
 The thing's basically debugging and optimizing itself, so expect some slop, but trying to avoid it as much as possible.
 
-Shipped-lane numbers are in [Throughput](#throughput), 11.6k tok/s cold 1M prefill and
-209-212 tok/s sustained single-stream decode at MTP-4 on fp8 KV, patch 13, 2026-10-25.
+Shipped-lane numbers are in [Throughput](#throughput). At the shipped chunk
+budget: cold 1M prefill 85.5 s TTFT, 11.6k tok/s, and 209-212 tok/s
+sustained single-stream decode at MTP-4 on fp8 KV, patch 13, 2026-10-25.
+The same boot with `--max-num-batched-tokens 9728` runs 62.7 s, the fastest
+prefill measured on this box; that setting awaits its cert battery.
 
 - Box: 4x NVIDIA CMP 170HX (GA100, unlocked to 64 GB and 74 SM), one NUMA node,
   PLE n-gram table served by mmap file gather (patches 9-10), no pinned table.
@@ -102,7 +105,7 @@ One service script, the shipped state:
 ```
 
 4x cards, PP=4, partition `13,12,12,11`, 1,000,000 context at static YaRN 4.0,
-MTP-4 draft depth, KV pool 2.57x one full request. Prefix it with `PROF=1` to
+MTP-4 draft depth, KV pool 4.96x one full request on fp8 KV. Prefix it with `PROF=1` to
 arm the capped torch profiler for step-anatomy runs (benchmark/phase_probe.py).
 Retired configs are in [archive/](archive/README.md): the 3-card set, the
 262k and 512k lanes, and the rejected TP=4+EP trial, each with its tables.
@@ -205,8 +208,13 @@ lengths, after the flag:
   The worst case is far below the 8,001-token cost of the retention-only fix.
 - The fork also pairs the flag with dense per-block retention for its LMCache
   tier. That pairing is unmeasured here, and the flag works without it.
-- Chunk size is still not the lever. `--max-num-batched-tokens 9600` moved no reuse
-  number and cost 10% of the pool, so the scripts do not set it.
+- Chunk size is still not the reuse lever. `--max-num-batched-tokens 9600` moved no reuse
+  number and costs about 5% of the pool. That verdict stands, and for prefill the same
+  knob is the largest lever found on this box, see [Throughput](#throughput): one-byte
+  KV doubles the attention group block from 1616 to 3232 tokens, at the default 2048
+  budget the chunk ends stop landing on that block, and 9728 (9696-row chunks, aligned
+  for every dtype) takes 27% off cold 1M TTFT on fp8. The cert battery (concurrency,
+  preemption replay at fatter chunks) is outstanding, so the scripts do not set it yet.
 - `enable_mamba_shared_prefix_checkpoint` stays off and unmeasured. The flag now
   satisfies its stated prefix-unit precondition.
 
@@ -240,11 +248,13 @@ results.md, and the two tasks are not interchangeable.
 | lane | context | KV pool | headroom |
 |---|---|---:|---:|
 | 4 cards, official FP8, MTP-4 | 1M YaRN 4.0 | 4,961,194 | 4.96x |
+| 4 cards, official FP8, MTP-4, chunk budget 9728 | 1M YaRN 4.0 | 4,901,492 | 4.90x |
 | 4 cards, W8A16 dense, MTP-4, bf16 KV, 2026-10-12 | 1M YaRN 4.0 | 2,594,720 | 2.59x |
 
 The two rows differ in cache dtype as well as checkpoint, the official row is the
 fp8-KV boot and the lane row predates that default, the same lane on fp8 KV pools
-5,176,119 (2026-10-24).
+5,176,119 (2026-10-24). The fatter chunk budget trims about 5% of the pool
+through scheduler reservation, not KV bytes.
 
 Per-rank weight and KV columns, and the retired 3-card / 262k / 524k rows:
 [archive/README.md](archive/README.md). The YaRN cos/sin cache
@@ -273,18 +283,34 @@ reading any two rows as a comparison.
 | + int8 heads & dense (patches 11+12) | 85.2-85.6 s | 11.6k | 186-189, no source in results.md | wall 333.7-338.8 s at 100/4, 4/4 resident, pool 4.96M |
 | = SHIP, patch 13, fp8 KV, 2026-10-25, salts 130100-130300 | 85.4-85.5 s | 11.6k | 209-212, win avg 198-199 | 333.7-338.8 s not re-run on this boot |
 | same tree, `--kv-cache-dtype auto`, same salts, reference only | 76.3-76.4 s | 12.9k | 212-215, win avg 198-205 | not run, pool 2.58M caps it at 2-3 of 4 |
+| fp8 KV, `--max-num-batched-tokens 9728`, same build, same salts, 2026-10-26 | 62.6-62.9 s | 15.8k | 209-212, win avg 199-201 | not run |
+| same budget, `--kv-cache-dtype auto`, same salts | 63.9-64.1 s | 15.4k | 212-219, win avg 204-207 | not run |
+| same budget, lab int8 per-token-head KV, same salts | 65.5-65.8 s | 15.1k | 212 sust in clean cells, see dips note | not run |
 
 - The sustained figure is a 1.5 s peak that typically lands in the wind-down
   of the run. Compare grids on wall or out tok/s. Full grids, repeat runs and
   the salt law: [benchmark/results.md](benchmark/results.md).
-- The fp8 pair at the foot of the table is the only single-variable read on the
-  shipped kernels, measured 2026-10-25 with identical salts so the prompts match
-  across boots. It prices the lane's central trade, about 10% of cold prefill and
-  11.9% of TTFT paid for 1.92x KV pool, 2,580,745 to 4,961,194 tokens, which is
-  what holds four 1M contexts resident instead of two or three. Decode does not
-  move, 213 against 211 sustained, inside the spread of the three salts, and
-  acceptance is marginally better on fp8, 4.783 against 4.837. Raw per-cell
-  dumps from both boots are local only, the numbers above are the record.
+- The fp8 pair that read as the lane's central trade (about 10% of cold prefill
+  for 1.92x pool) was mostly self-inflicted scheduling. A one-byte KV cache
+  halves bytes per token, so the hybrid page planner doubles the attention
+  group block, 1616 to 3232 tokens, printed in every boot log as
+  `kv cache group sizes`. Mamba align mode floors prefill chunks to that block,
+  and at the default 2048-token budget the one-byte arms end up chunking
+  against their own alignment. Give all dtypes a budget where chunk ends are
+  common multiples of both blocks (9728 yields 9696 rows) and the ranking
+  inverts: fp8 62.7 s, bf16 64.0 s, so fp8 is 1.3 s faster than the wide dtype
+  with a 1.92x pool. Decode and acceptance do not move across any of it,
+  sustained 209-219, acceptance 4.82-4.89 everywhere. Raw per-cell dumps stay
+  local, the numbers above are the record.
+- int8 per-token-head KV (lab branch `lab/qsa-int8-kv`, exported as
+  experiments/0016, not a shipped patch) exists mainly for what it taught: its
+  first boot ran prefill at 135 s because the cell layout, K256 + 4-byte scale +
+  V256 + 4-byte scale = 520 bytes, left a head stride indivisible by 16, Triton
+  dropped the stride specialization, and the sparse read lost vectorized loads,
+  4.9x at the lane's grid. A 16-byte scale slot (cell 544) fixed it. The lane
+  then measured 65.6 s at 9728, 2.9 s behind fp8, and stays in the lab. Open
+  lead: acceptance dips hit 2 of 3 deep-fill cells on both int8 boots and zero
+  of nine bf16/fp8 cells at the same budget.
 - The 12.4k row is not a target that was lost. It was a one-variable bf16 trial
   booted on 2026-10-16 and superseded the same day, and bf16 on today's tree
   measures 12.9k, higher still, because patches 11 to 13 moved prefill-bound
