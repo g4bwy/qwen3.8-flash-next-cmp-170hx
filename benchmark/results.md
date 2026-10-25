@@ -3759,3 +3759,49 @@ workers. The pre-flight also passed while the boot log was already reporting
 `expandable_segments: memory mapping failed with OOM ... free: 16056320`, because it checked
 request count and config and not device headroom. Do not arm a profiler window on this box
 during a prefill, and check free device memory before touching the lane at all.
+
+## The int8 lane booted, and it killed the dtype-hack theory (2026-10-25)
+
+Boot `823f9cfe4` (dev407), the shipped 13-patch tip plus the `experiments/0016` replay
+(tree-identical to `lab/qsa-int8-kv` at `b57a32fd3b`), `--kv-cache-dtype
+int8_per_token_head`, block 1616, everything else shipped defaults. Clean log: no errors,
+capture normal, pool 4,952,238 tokens / 4.95x, `kv cache group sizes (3232, 3232, 3232,
+3232, 8, 3232)`.
+
+Cells at the A/B shape `bench.py --ctx 1000000 --fills 100 --concurrency 1 --decode 1024
+--cooldown 60`. Salt 130100 discarded (`bg 83`, competing requests landed mid-cell). The
+sweep was stopped by the owner after the third cell; three clean cells are enough.
+
+| salt | prompt tok | TTFT s | in tok/s | win avg | sust | acc len |
+|---|---|---|---|---|---|---|
+| 130200 | 988,845 | 135.5 | 7,032 | 201.3 | 212 | 4.86 |
+| 130300 | 989,439 | 136.2 | 7,004 | 199.8 | 209 | 4.88 |
+| 140100 | 988,600 | 134.4 | 7,076 | 192.9 | 209 | 4.65 |
+
+Against the same-day fp8 and bf16 means: 85.47 s and 76.37 s TTFT, 10,915 and 12,137 tok/s
+prefill, 211 and 213 sustained, acceptance 4.837 and 4.783, pool 4,961,194 and 2,580,745.
+
+Four readings.
+
+1. int8 prefill is not recovering the tax, it roughly doubles it: 135.4 s against 85.5 s on
+   fp8 at the same one-byte footprint. The prior put 30% on int8 landing near 76 s. Wrong
+   in the informative direction: the fp8 tax is not the `fp8e4nv` bit-trick decode and not
+   the refused fused writer, because int8 has neither handicap and is 49 s slower.
+2. Decode is unchanged and the numbers are healthy: sustained 209-212 against 211 fp8,
+   acceptance 4.65-4.88 against 4.837 fp8, prefix match 100, zero preemptions. A short
+   greedy code-generation smoke is coherent. The read path works at lane scale.
+3. The pool prediction failed and explains itself: 520-byte cells against 512 were to cost
+   1.5%, the boot lost 0.18%. The QSA group was never binding at fp8 widths, the pool sits
+   on a dtype-independent group, so the fp8 boot already paid for its "1.92x" only against
+   bf16. int8 versus fp8 is an equal-pool comparison, which makes the prefill gap a pure
+   compute question.
+4. That leaves two int8-only mechanisms for +49 s on ~988k prefill tokens: the fused writer
+   computing an absmax and quantizing per (token, KV head) where fp8 did one cast with a
+   host scale, and the read kernels loading scale views per token at prefill shapes
+   (decode-shape reads measured within 1.23% of bf16, prefill shapes unmeasured). The
+   discriminator is standalone kernel timing at the 2048-token chunk, writer first, read
+   second, no lane involvement.
+
+The fp8 9.1 s tax itself stays open, and its candidate list is now shorter: not the read
+kernel, not the override, not the write cost, not GDN, not fp8-specific decode arithmetic,
+not fused-prepare refusal, not extra pool.
