@@ -393,42 +393,8 @@ about one position in 130 moves because of the quantization. Full tables:
 
 ## Gotchas
 
-- The PLE table defaults to pinned host RAM as fp8 (`float8_e4m3fn`,
-  `pinned=True`), several GB, measured before sizing other host workloads. The
-  serve scripts run the file-gather path (patches 9-10) instead, so the table
-  is page cache the kernel can reclaim, not pinned RSS.
-- The `--hf-overrides` lines are base-sensitive. Since #56446 the YaRN limit is
-  `max_position_embeddings` itself. On an earlier base drop that key, because
-  the old rule computed `original x factor`.
-- RoPE overrides must nest under `text_config`. The flat form on the model card
-  writes an attribute nothing reads on this checkpoint, and the server then runs
-  unscaled RoPE at length. Nesting merges per key, so `mrope_section` survives
-  and vLLM builds `MRotaryEmbedding` with yarn scaling.
-- On 1M, transformers warns that factor 4.0 does not match the implicit ratio
-  3.81. Nothing is wrong: 1,000,000 is not 4 x 262,144, and the explicit
-  factor wins.
-- The first MTP decode step compiles `_fill_num_accepted_kernel` and stalls;
-  warm up before the first measured cell. `bench.py --warmup` now runs that
-  throwaway cell for you. Scatter after that is content, not the machine:
-  pinned-salt repeats land within ~2%, rotating salts draw the prompt lottery
-  at depth 4+ (see the salt law in results.md).
-- The 1M pool holds 2.57 full requests. A third queues behind them. If
-  residency is exceeded mid-decode, the preempted request replays its whole
-  prompt under Mamba align mode, roughly 2 min per 1M.
-- A long prefill that lands during decode starves every stream to under
-  20 tok/s until it finishes. Schedule long prefills early, not between decodes.
-- A bench fill of 100% means (ctx - decode) x 0.99. Anything larger is a plain
-  HTTP 400 from the server.
-- `RUST=1 ./serve-4x-1m.sh` boots the experimental Rust frontend (vllm-rs):
-  warm 1M TTFT 4.7 -> 1.4 s, no /v1/messages route; audit in results.md.
-- On bases between #59260 (2026-10-14) and #62129 (2026-10-18), engine init
-  hangs with PP>1 plus spec decode: the last rank stops after its
-  kernel-warmup lines, py-spy shows `warmup_kernels -> execute_model ->
-  recv`, while the other ranks log "Graph capturing finished". The upstream
-  fix gates the greedy warmup round on `speculative_config` so every stage
-  mirrors it; backport that one line or boot with `--kernel-config
-  '{"enable_jit_warmup": false}'` if you must stay on a windowed base. The
-  current series base is past the fix.
+Moved to its own file: [GOTCHAS.md](GOTCHAS.md). Read it before your first
+boot, your first benchmark run, or any change to cache cell layouts.
 
 ## Layout
 
@@ -440,5 +406,6 @@ patchset-qwen38-pp/
   benchmark/                             measurement tools, raw results, and the full record, see its README
   checkpoint/                            artifact builders: W8A16 dense tree + draft-vocab, see its README
   experiments/                           shelved work: candidate patches, probes, and their runbooks
+  GOTCHAS.md                             everything that bit this lane, read before your first boot
   README.md                              this file
 ```
