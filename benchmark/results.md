@@ -3805,3 +3805,31 @@ Four readings.
 The fp8 9.1 s tax itself stays open, and its candidate list is now shorter: not the read
 kernel, not the override, not the write cost, not GDN, not fp8-specific decode arithmetic,
 not fused-prepare refusal, not extra pool.
+
+## The int8 prefill gap, isolated by measurement (2026-10-25)
+
+The int8 lane runs 1.77x on prefill (135 s against bf16 76 s) and not at all on decode. The
+base is provably identical (`wt-int8kv HEAD~3` = wt-p13 = `dcc9c271d8`, tree `9007320d5d`), so
+the gap is exactly the three port commits, not a confound. Two new tools price the two QSA
+kernels the port touches, standalone on one idle card, no engine:
+
+- `benchmark/qsa_read_prefill_ab.py`, real launcher, prefill shape rows 2048 depth 500k, both
+  dtypes take the `is_fp8=False` config (BLOCK_N=32 warps=1 splits=1): **int8 read is 1.07x
+  bf16 read**. A kernel 7% slow cannot spend 59 s.
+- `benchmark/qsa_store_cost.py`, per-token-head int8 writer against the bf16 cast writer on the
+  same (2048, 2, 256) grid: **int8 store is 0.88x** the bf16 store, it is faster because it
+  writes half the bytes.
+
+A trap worth recording: "decode is unchanged, so the store is fine" is false reasoning. Decode
+writes one token a step, so any per-token store cost is invisible there; the store had to be
+measured, and only then is it clear.
+
+That leaves one untested suspect, which is the newest code: the **fused int8 writer** (the
+`IS_INT8_PTH` branch in `qsa_prepare`, commit `b57a32fd3b`), a different kernel from the 0.88x
+standalone writer, running absmax and quantize at `num_warps=1` inside the one fused launch.
+The discriminator is prepared: branch `lab/qsa-int8-kv-nofuse` (`6409f37dfb`) re-adds the gate
+clause `not kv_quant_mode.is_per_token_head` so int8 uses the 0.88x unfused writer instead, one
+line, everything else identical. A prefill-only cell on that boot against the fused 135 s:
+about 85 s means the fused int8 store is the gap and the fix is in its shape or reduction;
+about 135 s means it is not the writer either, and the gap is not in any QSA kernel, which
+would force a whole-step trace that the live lane cannot give safely.
