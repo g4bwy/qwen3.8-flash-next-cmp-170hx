@@ -18,8 +18,13 @@ Shipped-lane numbers are in [Throughput](#throughput), 11.6k tok/s cold 1M prefi
 - Checkpoint: [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8)
   (official FP8). The serve script pulls this tag by default. Override with
   `MODEL=/local/path`.
-- Depths: MTP-4 is the shipped depth. The fast lane builds an int8-dense
-  variant with `checkpoint/` (+6 % on top of depth, +20 % over MTP-3).
+- Depths: MTP-4 is the shipped depth. `checkpoint/` builds an int8 weight-only
+  (W8A16) variant, a separate checkpoint selected with `MODEL=`. It is not the
+  quick option any more, priced against the shipped runtime int8 dense arm on
+  2026-10-24 it is 2.7 % slower per step, 23.40 ms against 22.79 ms, pays 10 % of
+  TTFT and 7.7 % of prefill rate, and buys 4.3 % more KV pool that the
+  five-resident cell showed does not convert. The old +6 % and +20 % pair mixed
+  depth with quantization, at the same depth the 2026-10-12 edge was +2 to +6 %.
 - Base commit: `4bceda5dbf265e5d20f171c9c339ffe6997b2fd0` (vllm-project/vllm main, 2026-10-23; newest main with a published cu130 wheel, `0.32.1rc1.dev390+g4bceda5db`).
 - 13 patches: ten ours, three adopted from upstream PRs (#56444 as
   patch 2, #58094 as patch 4, #58815 as patch 9; all still open upstream,
@@ -235,7 +240,11 @@ results.md, and the two tasks are not interchangeable.
 | lane | context | KV pool | headroom |
 |---|---|---:|---:|
 | 4 cards, official FP8, MTP-4 | 1M YaRN 4.0 | 4,961,194 | 4.96x |
-| 4 cards, W8A16 dense, MTP-4 | 1M YaRN 4.0 | 2,594,720 | 2.59x |
+| 4 cards, W8A16 dense, MTP-4, bf16 KV, 2026-10-12 | 1M YaRN 4.0 | 2,594,720 | 2.59x |
+
+The two rows differ in cache dtype as well as checkpoint, the official row is the
+fp8-KV boot and the lane row predates that default, the same lane on fp8 KV pools
+5,176,119 (2026-10-24).
 
 Per-rank weight and KV columns, and the retired 3-card / 262k / 524k rows:
 [archive/README.md](archive/README.md). The YaRN cos/sin cache
@@ -258,7 +267,7 @@ reading any two rows as a comparison.
 |---|---|---:|---:|---|
 | 4 cards, 1M, MTP-3 | 91.9 s | 10.4k † | 181-184 | 325, 2-3 of 4 |
 | 4 cards, 1M, official, MTP-4 | 90.6 s | 10.4k † | 205-215 (median 212) | wall 386 s at 100/4, 2-3 of 4 resident |
-| 4 cards, 1M, W8A16 lane, MTP-4 | 93.5 s | 10.1k † | 217-226 | 400 s wall at 100/4, batch-neutral |
+| 4 cards, 1M, W8A16 lane, MTP-4, bf16 KV, 2026-10-12 | no source for 93.5 s | 10.1k † | 216-226, two different fills, not a salt band | 400 s wall at 100/4, the official tree beat it at 386 s |
 | + int8 handoff (patch 8), bf16 KV, trial boot 2026-10-16, never shipped | 79.9 s | 12.4k | no decode measured on this boot | wall 346 s at 100/4, pool 2.65M holds 2-3 of 4 |
 | + int8 handoff + fp8 KV | 92.9-93.9 s | 10.1k, divisor unrecorded | no rate recorded | wall 356.5-356.8 s at 100/4, 4/4 resident, pool 5.08M |
 | + int8 heads & dense (patches 11+12) | 85.2-85.6 s | 11.6k | 186-189, no source in results.md | wall 333.7-338.8 s at 100/4, 4/4 resident, pool 4.96M |
@@ -320,13 +329,19 @@ is set to 2048` comes from the MTP drafter's window.
 
 ## Optional lane: W8A16 dense checkpoint
 
-`checkpoint/` builds a variant of the official FP8 tree that stores the 228
-main-body dense matrices as int8 (group-32, weight-only) instead of bf16.
+`checkpoint/` builds a variant of the official FP8 tree that stores the 240
+main-body dense matrices as int8 (group-32, weight-only) instead of bf16, the 228
+projections plus the 12 QSA indexer projections that a fused qkv_proj forces along.
 Serving it needs patch 7 and no other change. Point `MODEL=` at the built
-directory. Two boots per side on 4x-1m: single-stream decode 216-226 tok/s
-at MTP-4 (+15 % over this lane's 190-192 at depth 3, and +20 % over the
-official FP8 tree's 181-184), prefill -1.7 to -2.5 %, KV pool +17k net at
-depth 4, acceptance unchanged. The quality gate (166k scored positions,
+directory. Patches 12 and 13 claim nothing on this tree, its dense linears are no
+longer unquantized, so it competes with them rather than inheriting them, the
+shipped boot logs five W8A8 dense claims and this one logs none.
+The 2026-10-12 pair, bf16 KV, read 216-226 tok/s single stream at MTP-4 against
+190-192 at depth 3 on the same tree, so +15 % of that is depth, and against
+205-215 for the official tree at depth 4 in the same session, an edge of +2 to +6 %
+at identical depth. Re-measured 2026-10-24 against the shipped int8 dense arm the
+lane is 2.7 % slower per step, pays 10 % of TTFT and 7.7 % of prefill rate, and
+gains 4.3 % of pool that does not convert. Acceptance unchanged. The quality gate (166k scored positions,
 two captures per boot, four boots): top-1 flip 8.1 % against a 7.3 %
 machine non-reproducibility floor measured within and across boots, so
 about one position in 130 moves because of the quantization. Full tables:

@@ -51,13 +51,17 @@ and their index entry. Patch 9's page-cache drop logs its own line,
 
 ## W8A16 dense checkpoint
 
-Build a W8A16 dense variant of the official FP8 checkpoint: the 228
-main-body dense matrices (QSA q/k/v/o, GDN out_proj, shared experts) move
-from bf16 to int8 symmetric group-32. Experts, the PLE n-gram table, and
-every sensitive matrix (routers, indexer, GDN in-projections,
-hyper-connections, draft layer, lm_head, embeddings, vision) pass through
-byte-identical. On Ampere, decode is bandwidth-bound, so the halved dense
-bytes buy decode speed; nothing here changes what the model can represent.
+Build a W8A16 dense variant of the official FP8 checkpoint: the 240 main-body
+dense matrices (QSA q/k/v/o, the indexer projection, GDN out_proj, shared experts)
+move from bf16 to int8 symmetric group-32. The indexer joined on 2026-10-24, when
+upstream folded it into the fused qkv_proj, and a fused module must carry one
+scheme across all its shards. Experts, the PLE n-gram table, and the remaining
+sensitive matrices (routers, GDN in-projections, hyper-connections, draft layer,
+lm_head, embeddings, vision) pass through byte-identical. On Ampere decode is
+bandwidth-bound, which is what this aims at, but the runtime W8A8 dense arm of
+series patches 12 and 13 gets there better on this box, 22.79 ms per step against
+this lane's 23.40 ms, and needs no separate checkpoint. Nothing here changes what
+the model can represent.
 
 Requirements: Python 3.12+, numpy, ~350 GiB free at the working disk plus
 read access to `Qwen/Qwen3.8-Flash-Next-FP8`. No GPU, no torch.
@@ -73,7 +77,7 @@ python encode_w8a16.py SRC OUT --assemble-only # config.json + index + aux files
 `SRC` is the official FP8 directory. The build is resumable: a written
 shard that matches its own header is re-derived and skipped.
 `ct_config.py` holds the compressed-tensors config template: int8
-`pack-quantized` group for the 228, fp8 `float-quantized` block group for
+`pack-quantized` group for the 240, fp8 `float-quantized` block group for
 `RoutedExperts` + the n-gram prefix, everything else ignored.
 `encode_fp8_dense.py` is the shared helper module (bf16/e4m3 conversions)
 and, run directly, the v1 rehearsal encoder that emits fp8-dense instead
@@ -96,13 +100,17 @@ batches.
 
 ### Results from the reference build
 
-Dense rel-RMS: mean 0.64 %, max 0.74 % across the 228. Verification: zero
-failures on 152,089 tensors, twice (v1 and v2 layouts). Measured on the
-4x-1m lane, two boots per side, against the official FP8 tree: single-stream
-decode +15 % at MTP-4 with the fixed v3 gate (216-226 tok/s vs 190-192 at
-depth 3), prefill (prompt/TTFT) -1.7 to -2.5 %, KV pool +23,220 tokens at
-depth 3 (+17k net at depth 4 after block rounding), acceptance unchanged
-at depth 3. Quality gate
+Dense rel-RMS: mean 0.64 %, max 0.74 % across the 228, measured on the reference
+build before the indexer fold, the 240-module set has not been re-scored.
+Verification: zero failures on 152,089 tensors, twice (v1 and v2 layouts). Measured
+on the 4x-1m lane, two boots per side, against the official FP8 tree at bf16 KV:
+single-stream decode 216-226 tok/s at MTP-4, where the paired +15 % is this lane at
+depth 4 over itself at depth 3 and the edge against the official tree at identical
+depth was +2 to +6 %. Prefill (prompt/TTFT) -1.7 to -2.5 % at that base, KV pool
++23,220 tokens at depth 3 (+17k net at depth 4 after block rounding), acceptance
+unchanged at depth 3. Re-measured 2026-10-24 on the current series against patch 13
+the lane is slower per step, pays 10 % of TTFT and 7.7 % of prefill rate, and gains
+4.3 % of pool that does not convert to throughput (`benchmark/results.md`). Quality gate
 (`benchmark/logprob_capture.py` + `benchmark/quality_diff.py`, captures in
 `benchmark/quality/`): top-1 flip rate 8.1 % against a machine
 non-reproducibility floor of 7.3 % measured both within and across boots.
