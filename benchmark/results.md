@@ -3833,3 +3833,26 @@ line, everything else identical. A prefill-only cell on that boot against the fu
 about 85 s means the fused int8 store is the gap and the fix is in its shape or reduction;
 about 135 s means it is not the writer either, and the gap is not in any QSA kernel, which
 would force a whole-step trace that the live lane cannot give safely.
+
+## The fused writer is innocent too, so the gap is not in QSA compute (2026-10-25)
+
+The last suspect was the fused int8 store (`qsa_prepare` `IS_INT8_PTH` branch, `num_warps=1`,
+absmax+quantize per token,head). `benchmark/qsa_fused_store_cost.py` times that exact launch,
+bf16 vs int8, same indexer work and same main geometry (24 Q / 2 KV heads, head_dim 256,
+2048-token chunk): **int8 fused store 1.06x** the bf16 fused store, +0.0 s amortised over a
+1M prefill.
+
+So all three kernels the port can touch are measured at parity: fused store 1.06x, unfused
+store 0.88x, sparse read 1.07x. Both dtypes make the identical number of kernel launches (one
+fused prepare, one read; splits=1 for the prefill config in both). The base is byte-identical
+and the comparison is single-variable on pinned salts. Yet the lane reads 76 s bf16 vs 135 s
+int8, prefill only, decode identical.
+
+A port that only touches QSA, whose QSA kernels are all at parity, whose launch structure is
+identical, cannot by itself double prefill. The gap is therefore either contention that hit the
+int8 boot's measurement window on the compute side (prefill is compute-bound, decode is
+bandwidth-bound, so a co-resident process can slow one and not the other), or a whole-step
+effect no single-kernel microbenchmark sees. The next instrument is not another kernel timer:
+it is the fused-off boot discriminator already staged (`lab/qsa-int8-kv-nofuse`), which if it
+still reads ~135 s would prove the writer is not it, and a whole-step nsys trace of one prefill
+step on the lane. Recording this so the 2x is not chased in the kernels again.
