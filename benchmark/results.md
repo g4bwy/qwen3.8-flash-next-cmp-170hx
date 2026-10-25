@@ -4002,3 +4002,32 @@ Fix candidates, priced by the same traces:
    3×3232 = 9696 rows, 16% below bf16's current step count. Test on the lane.
 2. Kernel-level: none found. No tile beats (32,1) for int8, and the V-promotion theory is
    dead; the per-token scale traffic is the price of dynamic per-token-head quantization.
+
+## The budget fix lands: int8 cold 1M in 65.6 s, the fastest prefill this box has done (2026-10-25)
+
+Same lane build (`a7909d5fa`, int8 544-cells), one flag: `--max-num-batched-tokens 9728`,
+which makes chunks dtype-neutral (9696 rows either way: 6x1616 or 3x3232) instead of
+2048-forced 1616/2043 splits. Pool 4,713,432 / 4.71x (the larger chunk budget trims ~5%,
+cost is scheduler reservation, not KV bytes).
+
+| salt | prompt tok | TTFT s | in tok/s | win avg | sust | acc len |
+|---|---|---|---|---|---|---|
+| 130100 | 988,214 | 65.8 | 13,951 | 203.3 | 212 | 4.86 |
+| 130200 | 988,845 | 65.6 | 13,760 | 164.1 | 189 | 3.90 |
+| 130300 | 989,439 | 65.5 | 12,389 | 71.1 | 133 | 1.68 |
+| fresh 25% | 247,173 | 15.9 | 11,792 | 201.7 | 212 | 4.83 |
+
+TTFT moved in lockstep with the prediction: 88.8 -> 65.6 s, and below bf16's recorded
+76.4 with a 1.83x larger pool behind it. A fresh-salt probe right after shows decode at
+parity (212 sust, 4.83 acc, match 100): cells 2-3 sagged in the decode window only, the
+known within-boot deep-fill dip, and the prefill numbers were untouched by it.
+
+Read this as the closing of the fp8 tax case in its strongest form: the tax was never in
+fp8 or int8 kernels at all. At the shipped 2048-token budget the one-byte dtypes chunk
+pathologically against their doubled group blocks and pay it in pipeline rounds; give them
+a budget where alignment is dtype-neutral and they beat the wide dtype on top of holding
+twice the context. What remains open: (a) bf16 at 9728 is unmeasured, so "14% faster than
+bf16" properly reads "faster than bf16-at-2048" until the 2x2 is complete; (b) the 9728
+default deserves scrutiny beyond TTFT (per-step latency variance, preemption replay cost
+at fatter chunks, MTP draft budget interaction, the accepted-dip frequency in cells 2-3);
+(c) the fused-vs-unfused greedy gate still stands before promotion talk.
