@@ -3676,3 +3676,49 @@ The QSA path is now fully accounted for and every item in it is small. The large
 number on this box is not a kernel at all, it is the 14 ms per step the pipeline loses to
 the host on the rank-0 handoff, which is consistent with the older finding that four
 concurrent streams raise aggregate throughput far more than any kernel change has.
+
+## fp8 KV priced on the shipped tree, 10% prefill for 1.92x pool, decode untouched (2026-10-25)
+
+The README throughput table lists 12.4k prefill on a bf16-KV row and 11.6k on the shipped
+fp8 row, which reads as though the lane lost prefill and never got it back. The last
+bf16-versus-fp8 A/B ran on the 2026-10-15 and 2026-10-16 bases, before patches 11, 12 and
+13, so the tax had only ever been priced against kernels that no longer exist. Measured
+again today as a single variable.
+
+Both arms ran the 13-patch series with no diagnostic build in either boot log. Boot A
+`./serve-4x-1m.sh --kv-cache-dtype auto`, pool 2,580,745 tokens. Boot B `./serve-4x-1m.sh`,
+fp8, pool 4,961,194. Same pinned salts on both, 130100, 130200 and 130300, so the prompt
+bytes are identical, and the same cell shape, `bench.py --ctx 1000000 --fills 100
+--concurrency 1 --decode 1024 --cooldown 60`, first cell of each boot preceded by
+`--warmup`. Per-cell dumps stay local.
+
+| salt | prompt tok | TTFT s, bf16 | TTFT s, fp8 | prefill tok/s, bf16 | prefill tok/s, fp8 | win avg, bf16 | win avg, fp8 | sustained, bf16 | sustained, fp8 |
+|---|---|---|---|---|---|---|---|---|---|
+| 130100 | 988,214 | 76.4 | 85.5 | 12,138 | 10,902 | 204.9 | 198.4 | 212 | 212 |
+| 130200 | 988,845 | 76.4 | 85.5 | 12,131 | 10,913 | 201.4 | 199.2 | 212 | 212 |
+| 130300 | 989,439 | 76.3 | 85.4 | 12,141 | 10,931 | 197.9 | 198.7 | 215 | 209 |
+| mean | | 76.37 | 85.47 | 12,137 | 10,915 | 201.4 | 198.8 | 213.0 | 211.0 |
+
+Means move 11.9% on TTFT, 11.2% on wall and 10.1% on prefill rate. Decode does not move,
+1.3% on window average and 0.9% on the sustained peak, inside the spread of the three salts
+themselves. Acceptance is if anything better on fp8, 4.783 against 4.837, so the quantized
+cache is not costing output quality on this task. The README note that fp8 KV does not touch
+decode is therefore confirmed on current kernels rather than inherited.
+
+Two things fall out that the README could not show.
+
+The remembered 12.4k was never the ceiling of bf16 on this tree. Recomputing the README's own
+formula, prompt tokens divided by cold TTFT, boot A gives 12,935 to 12,968, so bf16 today is
+about 12.9k and the October trial boot reached only 12.4k because patches 11 and 12 had not
+landed. Boot B computes to 11,558 to 11,586, which reproduces the shipped 11.6k to within
+0.1% and cross-validates both the method and the table.
+
+The prefill column is not one metric. `in tok/s` from `bench.py` is prompt tokens divided by
+wall, which is 12,137 on boot A, while the table column is prompt divided by TTFT, which is
+12,943 on the same cell. A 6.7% difference between two rows can therefore be a formula change
+rather than a measurement, and the table needs to say which divisor each row uses.
+
+So the answer to why 12.4k and 205-215 were never reached again is that 205-215 is reached
+again in every one of these cells, and 12.4k was replaced by a deliberate purchase, about
+10% of cold prefill paid for 1.92x KV pool, 2,580,745 to 4,961,194 tokens, which is what
+holds four concurrent 1M contexts resident instead of two or three.
