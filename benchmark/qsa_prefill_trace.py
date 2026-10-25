@@ -47,7 +47,6 @@ os.environ.setdefault("VLLM_QWEN4EXP_DENSE_W8A8_MIN_M", "1")
 import torch  # noqa: E402
 from torch.profiler import ProfilerActivity, profile  # noqa: E402
 from vllm import LLM, SamplingParams  # noqa: E402
-from vllm.sampling_params import RequestOutputKind  # noqa: E402
 
 MODEL = os.environ.get("MODEL", "/ssd/ai/models/Qwen/Qwen3.8-Flash-Next-FP8")
 
@@ -91,18 +90,17 @@ def main():
     # Realistic random token block, deterministic, no tokenizer dependency.
     ids = (torch.arange(a.prompt_tokens, dtype=torch.long)
            .remainder(150_000) + 1000).tolist()
-    sp = SamplingParams(max_tokens=1, temperature=0.0,
-                        output_kind=RequestOutputKind.FINAL_ONLY)
+    sp = SamplingParams(max_tokens=1, temperature=0.0)
 
     # Compile the exact kernels once (constexpr shapes do not depend on context
-    # length), then profile the real long prefill.
-    llm.generate(prompt_token_ids=[ids[:4096]], sampling_params=sp)
+    # length), then profile the real long prefill. dev407 takes raw token
+    # prompts as TokensPrompt dicts, not a prompt_token_ids kwarg.
+    llm.generate([{"prompt_token_ids": ids[:4096]}], sp)
     torch.cuda.synchronize()
 
     os.makedirs(a.out, exist_ok=True)
-    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-                 record_shapes=True) as prof:
-        llm.generate(prompt_token_ids=[ids[:a.prompt_tokens]], sampling_params=sp)
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
+        llm.generate([{"prompt_token_ids": ids[:a.prompt_tokens]}], sp)
         torch.cuda.synchronize()
 
     table = prof.key_averages().table(
