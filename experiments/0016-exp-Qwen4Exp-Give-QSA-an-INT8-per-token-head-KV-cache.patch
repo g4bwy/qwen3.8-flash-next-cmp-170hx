@@ -1,7 +1,7 @@
 From 553faa42cb73fcf574610d4081430e2fc957cc33 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Sat, 24 Oct 2026 23:35:32 +0200
-Subject: [PATCH] [WIP][Qwen4Exp] Give QSA an INT8 per-token-head KV cache
+Subject: [PATCH 1/3] [WIP][Qwen4Exp] Give QSA an INT8 per-token-head KV cache
 
 Serves the main attention cache as int8 with one fp32 scale per (token, KV head)
 per side, reusing the mode that already exists in the tree rather than inventing
@@ -505,6 +505,691 @@ index f82cca1c2a..8f5de90b59 100644
              self.use_fused_qk_norm_rope_gate
              and self.indexer.use_fused_pre_indexer
 +            and not self.kv_quant_mode.is_per_token_head
+             and (
+                 self.kv_cache_torch_dtype != torch.uint8
+                 or current_platform.has_device_capability(89)
+-- 
+2.55.0
+
+
+From 4788e55f1483cabdd3734a459c2058256b2979d0 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 14:43:29 +0100
+Subject: [PATCH 2/3] [WIP][Qwen4Exp] Read the QSA sparse attention from an
+ int8 per-token-head cache
+
+Completes the parked int8 KV lane, which could write the cache but refused to read
+it. The kernel gains a PER_TOKEN_SCALE constexpr plus two fp32 scale pointers, and the
+descales go where each is cheapest: K's rides on the score after the QK dot, one
+multiply per token, and V's is applied to the value tile, which costs per element
+because probabilities are already about 1/TOPK and scaling them pushes the fp16 dot
+operand toward zero.
+
+int8 needs a dynamic scale where e4m3 does not, e4m3 has an exponent and int8 does not,
+and this checkpoint ships no KV scale tensors at all, its per-tensor host scales are the
+default 1.0. So the scale is computed per (token, head) at write time and read back as a
+tensor, which the padded cell that the previous commit introduced already carries.
+
+Also fixes a latent bug in the write side of that commit, the data views it handed to the
+reader were the padded half cell, 260 elements for a 256-wide head, so the launcher's
+shape check would have rejected the very first forward. The views are narrowed to the head
+width now. The warmup is made int8-aware with the same padded-cell arithmetic, otherwise
+the specialization is first compiled at capture time.
+
+Verified numerically against a float64 reference built straight from the padded cell, both
+dispatch paths, 0.0017 and 0.0062 maximum absolute error against a 2.54 reference, and
+regression-clean on the shipped arms, fp8 and bf16 still measure the same 0.994 time ratio
+on this tree as on the shipped one after a signature that touched every call site.
+
+Not for promotion. Both arms here still run the unfused prepare, so this isolates the read
+and write arithmetic from the fusion loss, which is the next variable.
+---
+ vllm/models/qwen4_exp/nvidia/ops/qsa.py | 131 ++++++++++++++++++++----
+ vllm/models/qwen4_exp/nvidia/qsa.py     |   9 +-
+ 2 files changed, 118 insertions(+), 22 deletions(-)
+
+diff --git a/vllm/models/qwen4_exp/nvidia/ops/qsa.py b/vllm/models/qwen4_exp/nvidia/ops/qsa.py
+index cc32c2f8b6..2cfbeae33a 100644
+--- a/vllm/models/qwen4_exp/nvidia/ops/qsa.py
++++ b/vllm/models/qwen4_exp/nvidia/ops/qsa.py
+@@ -76,6 +76,8 @@ def _qsa_sparse_paged_gqa_splitk_kernel(
+     q_ptr,
+     k_cache_ptr,
+     v_cache_ptr,
++    k_scale_ptr,
++    v_scale_ptr,
+     indices_ptr,
+     block_table_ptr,
+     token_to_req_ptr,
+@@ -93,6 +95,12 @@ def _qsa_sparse_paged_gqa_splitk_kernel(
+     stride_v_block,
+     stride_v_token,
+     stride_v_head,
++    stride_ks_block,
++    stride_ks_token,
++    stride_ks_head,
++    stride_vs_block,
++    stride_vs_token,
++    stride_vs_head,
+     stride_indices_row,
+     stride_table_req,
+     stride_output_row,
+@@ -112,6 +120,7 @@ def _qsa_sparse_paged_gqa_splitk_kernel(
+     NUM_TILES: tl.constexpr,
+     BLOCK_M: tl.constexpr,
+     BLOCK_N: tl.constexpr,
++    PER_TOKEN_SCALE: tl.constexpr,
+ ) -> None:
+     row = tl.program_id(0)
+     kv_head = tl.program_id(1)
+@@ -174,6 +183,23 @@ def _qsa_sparse_paged_gqa_splitk_kernel(
+         valid &= (physical_page >= 0) & (physical_page < num_cache_blocks)
+         # physical_page * block stride can overflow int32 for large caches.
+         safe_page = tl.maximum(physical_page, 0).to(tl.int64)
++        if PER_TOKEN_SCALE:
++            k_token_scale = tl.load(
++                k_scale_ptr
++                + safe_page * stride_ks_block
++                + page_offset * stride_ks_token
++                + kv_head * stride_ks_head,
++                mask=valid,
++                other=0.0,
++            )
++            v_token_scale = tl.load(
++                v_scale_ptr
++                + safe_page * stride_vs_block
++                + page_offset * stride_vs_token
++                + kv_head * stride_vs_head,
++                mask=valid,
++                other=0.0,
++            )
+         keys = tl.load(
+             k_cache_ptr
+             + safe_page[None, :] * stride_k_block
+@@ -185,7 +211,12 @@ def _qsa_sparse_paged_gqa_splitk_kernel(
+         )
+         # e4m3 -> Q dtype is exact; keep the QK dot in Q's dtype (fp8 QK
+         # measured slower here and less accurate).
+-        keys = _maybe_dequant(keys).to(query.dtype)
++        if PER_TOKEN_SCALE:
++            # Raw codes, exact up to 127 in both dtypes. The K descale rides on
++            # the score after the dot, one multiply per token.
++            keys = keys.to(query.dtype)
++        else:
++            keys = _maybe_dequant(keys).to(query.dtype)
+         values = tl.load(
+             v_cache_ptr
+             + safe_page[:, None] * stride_v_block
+@@ -198,12 +229,21 @@ def _qsa_sparse_paged_gqa_splitk_kernel(
+         # Dequant V to fp16 (not bf16) for the PV dot: P <= 1 (online
+         # softmax) so fp16 has the range, its wider mantissa is more
+         # accurate, and the fp8->fp16 upcast with an fp16 PV dot is faster.
+-        values = _maybe_dequant(values)
++        if PER_TOKEN_SCALE:
++            # V is descaled here, per element, while K's descale rides on the
++            # score after the dot because there it costs one multiply per token
++            # instead of one per element.
++            values = values.to(tl.float16) * v_token_scale[:, None]
++        else:
++            values = _maybe_dequant(values)
+         scores = tl.dot(query, keys)
+         # Scaling scores avoids re-quantizing a scaled query to BF16; for fp8
+         # caches the K dequant scale is already folded into softmax_scale on the
+         # host.
+-        scores *= score_scale
++        if PER_TOKEN_SCALE:
++            scores *= score_scale * k_token_scale[None, :]
++        else:
++            scores *= score_scale
+         scores = tl.where(valid[None, :], scores, -1.0e20)
+         next_max = tl.maximum(max_value, tl.max(scores, axis=1))
+         alpha = tl.math.exp2(max_value - next_max)
+@@ -646,6 +686,8 @@ def qsa_sparse_paged_attention(
+     out: torch.Tensor | None = None,
+     k_scale: float | None = None,
+     v_scale: float | None = None,
++    k_scale_cache: torch.Tensor | None = None,
++    v_scale_cache: torch.Tensor | None = None,
+     *,
+     output_gate: torch.Tensor,
+     kv_quant_mode: KVQuantMode = KVQuantMode.NONE,
+@@ -677,14 +719,6 @@ def qsa_sparse_paged_attention(
+         raise ValueError(
+             "QSA packed indices need selection columns plus the count column"
+         )
+-    if kv_quant_mode.is_per_token_head:
+-        raise NotImplementedError(
+-            f"QSA sparse attention cannot read a {kv_quant_mode.name} KV cache "
+-            "yet: the kernel must load the fp32 scale stored in each head's "
+-            "inline padding and descale K per (token, head) before the QK dot "
+-            "and V before the PV dot, and for int8 route both dots through "
+-            "int8 tensor cores. K/V cache writes already work."
+-        )
+     if q.shape[2] != k_cache.shape[3] or q.shape[1] % k_cache.shape[2]:
+         raise ValueError("QSA sparse attention requires valid grouped-query heads")
+     head_dim = q.shape[2]
+@@ -692,6 +726,7 @@ def qsa_sparse_paged_attention(
+     assert q.dtype == torch.bfloat16
+     assert k_cache.dtype == v_cache.dtype
+     is_fp8 = kv_quant_mode == KVQuantMode.FP8_PER_TENSOR
++    per_token_scale = kv_quant_mode.is_per_token_head
+     if is_fp8:
+         assert k_scale is not None and v_scale is not None
+         # Host pre-multiply: fold the K dequant scale into the attention scale
+@@ -705,6 +740,14 @@ def qsa_sparse_paged_attention(
+             output_scale *= 256.0
+         else:
+             assert k_cache.dtype == torch.float8_e4m3fn
++    elif per_token_scale:
++        if k_cache.dtype != torch.int8 or k_scale_cache is None:
++            raise NotImplementedError(
++                f"{kv_quant_mode.name} QSA reads need int8 K/V and fp32 scale "
++                f"views, got {k_cache.dtype}"
++            )
++        softmax_scale = head_dim**-0.5
++        output_scale = 1.0
+     elif k_cache.dtype != torch.bfloat16:
+         raise NotImplementedError(
+             f"QSA sparse attention got {k_cache.dtype} K/V with "
+@@ -761,6 +804,8 @@ def qsa_sparse_paged_attention(
+         q,
+         k_cache,
+         v_cache,
++        k_scale_cache if k_scale_cache is not None else out,
++        v_scale_cache if v_scale_cache is not None else out,
+         logical_indices,
+         block_table,
+         token_to_req,
+@@ -778,6 +823,25 @@ def qsa_sparse_paged_attention(
+         v_cache.stride(0),
+         v_cache.stride(1),
+         v_cache.stride(2),
++        *(
++            (
++                k_scale_cache.stride(0),
++                k_scale_cache.stride(1),
++                k_scale_cache.stride(2),
++                v_scale_cache.stride(0),
++                v_scale_cache.stride(1),
++                v_scale_cache.stride(2),
++            )
++            if per_token_scale
++            else (
++                k_cache.stride(0),
++                k_cache.stride(1),
++                k_cache.stride(2),
++                v_cache.stride(0),
++                v_cache.stride(1),
++                v_cache.stride(2),
++            )
++        ),
+         logical_indices.stride(0),
+         block_table.stride(0),
+         out.stride(0),
+@@ -797,6 +861,7 @@ def qsa_sparse_paged_attention(
+         NUM_TILES=num_tiles,
+         BLOCK_M=block_m,
+         BLOCK_N=block_n,
++        PER_TOKEN_SCALE=per_token_scale,
+         num_warps=partial_warps,
+         num_stages=2,
+     )
+@@ -832,14 +897,12 @@ def warmup_qsa_sparse_paged_attention(
+     kv_quant_mode: KVQuantMode = KVQuantMode.NONE,
+ ) -> tuple[tuple[int, int, int], ...]:
+     """Compile every production-reachable split-K/merge specialization."""
+-    if kv_quant_mode.is_per_token_head:
+-        raise NotImplementedError(
+-            f"QSA sparse attention cannot read a {kv_quant_mode.name} KV cache "
+-            "yet, so its specializations cannot be warmed up; see "
+-            "qsa_sparse_paged_attention."
+-        )
+-    head_dim = kv_cache.shape[-1] // 2
+-    key_cache, value_cache = kv_cache.transpose(1, 2).split(head_dim, dim=-1)
++    per_token_scale = kv_quant_mode.is_per_token_head
++    padded_half = kv_cache.shape[-1] // 2
++    # A per-token-head cell is the head plus one fp32 scale, so the head width is
++    # the half cell minus the padding, and the reader gets a narrowed view.
++    head_dim = padded_half - 4 if per_token_scale else padded_half
++    key_cache, value_cache = kv_cache.transpose(1, 2).split(padded_half, dim=-1)
+     # An fp8 cache is allocated as uint8 storage; warm the dtype the impl hands
+     # over: an e4m3 view on sm_89+, the raw bytes below.
+     is_fp8 = kv_quant_mode == KVQuantMode.FP8_PER_TENSOR
+@@ -848,7 +911,10 @@ def warmup_qsa_sparse_paged_attention(
+         if current_platform.has_device_capability(89)
+         else torch.uint8
+     )
+-    cache_dtype = fp8_dtype if is_fp8 else key_cache.dtype
++    if per_token_scale:
++        cache_dtype = torch.int8
++    else:
++        cache_dtype = fp8_dtype if is_fp8 else key_cache.dtype
+     num_kv_heads = key_cache.shape[2]
+     group_size = num_query_heads // num_kv_heads
+     block_m = triton.next_power_of_2(group_size)
+@@ -856,7 +922,11 @@ def warmup_qsa_sparse_paged_attention(
+     # Every config the dispatch can pick for this group size.
+     profiles = {
+         _select_config(
+-            num_rows, num_kv_heads, use_prefill_config, selection_width, is_fp8
++            num_rows,
++            num_kv_heads,
++            use_prefill_config,
++            selection_width,
++            is_fp8,
+         )
+         for num_rows in range(1, 8193)
+         for use_prefill_config in (False, True)
+@@ -875,6 +945,16 @@ def warmup_qsa_sparse_paged_attention(
+         shape=tuple(key_cache.shape),
+         strides=tuple(key_cache.stride()),
+     )
++    k_scale_ptr = TritonWarmupTensor(
++        torch.float32,
++        shape=key_cache.shape[:3],
++        strides=key_cache.stride()[:3],
++    )
++    v_scale_ptr = TritonWarmupTensor(
++        torch.float32,
++        shape=key_cache.shape[:3],
++        strides=key_cache.stride()[:3],
++    )
+     v_cache_ptr = TritonWarmupTensor(
+         cache_dtype,
+         shape=tuple(value_cache.shape),
+@@ -916,6 +996,8 @@ def warmup_qsa_sparse_paged_attention(
+             q_ptr,
+             k_cache_ptr,
+             v_cache_ptr,
++            k_scale_ptr,
++            v_scale_ptr,
+             indices_ptr,
+             block_table_ptr,
+             token_to_req_ptr,
+@@ -933,6 +1015,12 @@ def warmup_qsa_sparse_paged_attention(
+             value_cache.stride(0),
+             value_cache.stride(1),
+             value_cache.stride(2),
++            key_cache.stride(0),
++            key_cache.stride(1),
++            key_cache.stride(2),
++            value_cache.stride(0),
++            value_cache.stride(1),
++            value_cache.stride(2),
+             selection_width + 1,
+             block_table.stride(0),
+             row_stride,
+@@ -952,6 +1040,7 @@ def warmup_qsa_sparse_paged_attention(
+             NUM_TILES=num_tiles,
+             BLOCK_M=block_m,
+             BLOCK_N=block_n,
++            PER_TOKEN_SCALE=per_token_scale,
+             num_warps=warps,
+             num_stages=2,
+             grid=(num_rows, num_kv_heads, num_splits),
+diff --git a/vllm/models/qwen4_exp/nvidia/qsa.py b/vllm/models/qwen4_exp/nvidia/qsa.py
+index 8f5de90b59..06ca4865af 100644
+--- a/vllm/models/qwen4_exp/nvidia/qsa.py
++++ b/vllm/models/qwen4_exp/nvidia/qsa.py
+@@ -318,7 +318,9 @@ class Qwen4ExpQSAFlashAttentionImpl(FlashAttentionImpl):
+         """Per-token-head K/V cache views, split on the padded half width."""
+         self._ensure_scale_caches(kv_cache)
+         padded_hs = kv_cache.shape[-1] // 2
+-        return kv_cache.transpose(1, 2).split(padded_hs, dim=-1)
++        k_half, v_half = kv_cache.transpose(1, 2).split(padded_hs, dim=-1)
++        # Each half is the head plus its fp32 scale, the reader wants the head.
++        return k_half[..., : self.head_size], v_half[..., : self.head_size]
+ 
+     def __init__(
+         self,
+@@ -410,11 +412,14 @@ class Qwen4ExpQSAFlashAttentionImpl(FlashAttentionImpl):
+             # padding next to them and the kernel reads them off the cache.
+             key_cache, value_cache = self._pth_key_value_caches(kv_cache)
+             k_scale = v_scale = None
++            k_scale_cache = self._k_scale_cache
++            v_scale_cache = self._v_scale_cache
+         else:
+             key_cache, value_cache = kv_cache.transpose(1, 2).split(
+                 self.head_size, dim=-1
+             )
+             k_scale = v_scale = None
++            k_scale_cache = v_scale_cache = None
+             if self._kv_quant_mode == KVQuantMode.FP8_PER_TENSOR:
+                 # The cache is allocated as uint8; on sm_89+ reinterpret the e4m3
+                 # bytes (same itemsize, so shape and strides are preserved). Below
+@@ -446,6 +451,8 @@ class Qwen4ExpQSAFlashAttentionImpl(FlashAttentionImpl):
+             output[:num_tokens],
+             k_scale=k_scale,
+             v_scale=v_scale,
++            k_scale_cache=k_scale_cache,
++            v_scale_cache=v_scale_cache,
+             output_gate=output_gate[:num_tokens],
+             kv_quant_mode=self._kv_quant_mode,
+         )
+-- 
+2.55.0
+
+
+From b57a32fd3beefed31f0163b93aeeb8a0f85320e8 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 15:07:09 +0100
+Subject: [PATCH 3/3] [WIP][Qwen4Exp] Fill the INT8 per-token-head cache from
+ the fused QSA prepare
+
+The fused prepare kernel was refused for a per-token-head cache because it
+could only write one host scale per side. It now quantizes each (token, KV
+head, side) itself and lands the fp32 scale in the cell's inline padding, so
+one launch covers the indexer prepare, the main QK-norm/RoPE/gate, and the
+int8 K/V write. The math mirrors the existing triton writer exactly: scale
+absmax/127 with a 1e-6 floor, round halves away from zero before the int8
+store truncates, clamp to [-128, 127]. The K absmax sees only the bytes the
+row stores, so the values dropped by the rotation cannot set the scale.
+
+The write side needs the scale views before the read side asks for them, so
+the reader's _ensure_scale_caches is exposed as impl.pth_scale_caches; one
+allocation serves both. Off the int8 lane the new pointer operands are
+compiled out by the IS_INT8_PTH constexpr and a rank-matched stand-in rides
+along.
+
+Verified: cells and scales are byte-identical to the unfused writer across
+11 shapes, and the bf16 and fp8 outputs are byte-identical to the pre-change
+kernel, with mutation controls confirming the checks can fail. Kernel parity
+is not model parity: the fused path quantizes its own fp32 norm/RoPE result
+rounded through bf16, the unfused path reads flashinfer and triton rope
+output, and the two can differ by about one bf16 ulp. Compare greedy tokens
+fused against unfused before trusting int8 accuracy.
+---
+ vllm/models/qwen4_exp/nvidia/indexer_qsa.py   |  16 +-
+ .../qwen4_exp/nvidia/ops/qsa_prepare.py       | 137 +++++++++++++++++-
+ vllm/models/qwen4_exp/nvidia/qsa.py           |  24 ++-
+ 3 files changed, 162 insertions(+), 15 deletions(-)
+
+diff --git a/vllm/models/qwen4_exp/nvidia/indexer_qsa.py b/vllm/models/qwen4_exp/nvidia/indexer_qsa.py
+index 4fbd0f6fe3..8a200801f2 100644
+--- a/vllm/models/qwen4_exp/nvidia/indexer_qsa.py
++++ b/vllm/models/qwen4_exp/nvidia/indexer_qsa.py
+@@ -25,7 +25,7 @@ from ..common.qsa_cache import (
+ from .ops.qsa_prepare import qsa_prepare
+ 
+ if TYPE_CHECKING:
+-    from .qsa import Qwen4ExpQSAAttention
++    from .qsa import Qwen4ExpQSAAttention, Qwen4ExpQSAFlashAttentionImpl
+ 
+ 
+ def apply_qsa_rope(
+@@ -305,10 +305,16 @@ class QSAIndexer(nn.Module):
+                 self.index_head_dim,
+                 dtype=self.indexer_dtype,
+             )
++            main_k_scale_cache: torch.Tensor | None = None
++            main_v_scale_cache: torch.Tensor | None = None
+             if attn.kv_quant_mode.is_per_token_head:
+-                raise NotImplementedError(
+-                    "the fused QSA prepare writes one host scale for K and V, so "
+-                    "it cannot fill a per-token-head quantized cache"
++                # The fused kernel quantizes each (token, head) itself, so it
++                # writes the data into the cache and the scale into the inline
++                # padding next to it. Those views are normally created by the
++                # read side, later in the same forward.
++                impl = cast("Qwen4ExpQSAFlashAttentionImpl", attn.impl)
++                main_k_scale_cache, main_v_scale_cache = impl.pth_scale_caches(
++                    attn.kv_cache
+                 )
+             main_kv_cache = attn.kv_cache.transpose(1, 2)
+             if attn.kv_quant_mode == KVQuantMode.FP8_PER_TENSOR:
+@@ -345,6 +351,8 @@ class QSAIndexer(nn.Module):
+                 main_slot_mapping=slot_mapping[:num_tokens],
+                 main_k_scale=attn._k_scale_float,
+                 main_v_scale=attn._v_scale_float,
++                main_k_scale_cache=main_k_scale_cache,
++                main_v_scale_cache=main_v_scale_cache,
+             )
+         else:
+             # Unfused reference path
+diff --git a/vllm/models/qwen4_exp/nvidia/ops/qsa_prepare.py b/vllm/models/qwen4_exp/nvidia/ops/qsa_prepare.py
+index a26b699657..61cc944b04 100644
+--- a/vllm/models/qwen4_exp/nvidia/ops/qsa_prepare.py
++++ b/vllm/models/qwen4_exp/nvidia/ops/qsa_prepare.py
+@@ -101,6 +101,64 @@ def _store_rotated(dst, y, o1, o2, scale):
+     tl.store(dst + HALF + rot, _to_dst_dtype(o2, dst, scale))
+ 
+ 
++@triton.jit
++def _pth_scale(abs_max):
++    """Scale for one INT8 row, matching the unfused writer's ``absmax / 127``."""
++    return tl.maximum(abs_max / 127.0, 1e-6)
++
++
++@triton.jit
++def _pth_quantize(x, inv_scale):
++    """Quantize an FP32 row for an INT8 destination.
++
++    ``x`` is already on the BF16 grid, matching the values the unfused writer
++    reads out of the model's BF16 K/V. Round halves away from zero and clamp;
++    the INT8 store truncates, so the pair is round-half-away-from-zero.
++    """
++    q = x * inv_scale
++    return tl.clamp(tl.where(q >= 0.0, q + 0.5, q - 0.5), -128.0, 127.0)
++
++
++@triton.jit
++def _store_rotated_pth(dst, k_scale_dst, y, o1, o2):
++    """INT8 per-token-head twin of ``_store_rotated``; writes one scale.
++
++    The row is ``o1 | o2 | y[2 * HALF:]``. ``y`` spans every destination dim but
++    only its tail is stored, so its share of the absmax is masked: leaving the
++    rotated dims in would let values that are never stored set the scale and
++    change which rows clip.
++    """
++    HALF: tl.constexpr = o1.shape[0]
++    dims = tl.arange(0, y.shape[0])
++    rot = tl.arange(0, HALF)
++    tail = dims >= 2 * HALF
++    # Both sides round through BF16 first, so the scale and the codes match the
++    # unfused path's view of the same head bit for bit.
++    k1 = o1.to(tl.bfloat16).to(tl.float32)
++    k2 = o2.to(tl.bfloat16).to(tl.float32)
++    kt = y.to(tl.bfloat16).to(tl.float32)
++    abs_max = tl.maximum(
++        tl.maximum(tl.max(tl.abs(k1)), tl.max(tl.abs(k2))),
++        tl.max(tl.where(tail, tl.abs(kt), 0.0)),
++    )
++    scale = _pth_scale(abs_max)
++    inv_scale = 1.0 / scale
++    tl.store(k_scale_dst, scale)
++    tl.store(dst + rot, _pth_quantize(k1, inv_scale))
++    tl.store(dst + HALF + rot, _pth_quantize(k2, inv_scale))
++    tl.store(dst + dims, _pth_quantize(kt, inv_scale), mask=tail)
++
++
++@triton.jit
++def _store_v_pth(dst, v_scale_dst, v):
++    """INT8 per-token-head store of a plain (unrotated) V head."""
++    dims = tl.arange(0, v.shape[0])
++    values = v.to(tl.float32)
++    scale = _pth_scale(tl.max(tl.abs(values)))
++    tl.store(v_scale_dst, scale)
++    tl.store(dst + dims, _pth_quantize(values, 1.0 / scale))
++
++
+ @triton.jit(
+     do_not_specialize=[
+         "num_tokens",
+@@ -167,10 +225,19 @@ def _qsa_prepare_kernel(
+     main_slots_ptr,
+     main_k_scale,
+     main_v_scale,
++    main_k_scale_ptr,
++    main_k_scale_stride_block,
++    main_k_scale_stride_token,
++    main_k_scale_stride_head,
++    main_v_scale_ptr,
++    main_v_scale_stride_block,
++    main_v_scale_stride_token,
++    main_v_scale_stride_head,
+     MAIN_HQ: tl.constexpr,
+     MAIN_HK: tl.constexpr,
+     MAIN_D: tl.constexpr,
+     MAIN_PAGE_SIZE: tl.constexpr,
++    IS_INT8_PTH: tl.constexpr,
+ ):
+     pid = tl.program_id(0)
+     num_index_work = num_k_work + tl.cdiv(num_tokens, TILE_T_Q) * tl.cdiv(HQ, TILE_H_Q)
+@@ -219,15 +286,37 @@ def _qsa_prepare_kernel(
+         if is_k:
+             slot = tl.load(main_slots_ptr + token).to(tl.int64)
+             if slot >= 0:
++                page = slot // MAIN_PAGE_SIZE
++                row_in_page = slot % MAIN_PAGE_SIZE
+                 dst = (
+                     main_cache_ptr
+-                    + (slot // MAIN_PAGE_SIZE) * main_cache_stride_block
+-                    + (slot % MAIN_PAGE_SIZE) * main_cache_stride_token
++                    + page * main_cache_stride_block
++                    + row_in_page * main_cache_stride_token
+                     + kv_head * main_cache_stride_head
+                 )
+-                _store_rotated(dst, y, o1, o2, main_k_scale)
+-                v = tl.load(src + MAIN_HK * MAIN_D + dims)
+-                tl.store(dst + MAIN_D + dims, _to_dst_dtype(v, dst, main_v_scale))
++                if IS_INT8_PTH:
++                    # The per-token-head cell is [K | K scale | V | V scale]:
++                    # four INT8 bytes hold the K scale, so V starts MAIN_D + 4
++                    # bytes in and each scale rides at the end of its own half.
++                    k_scale_dst = (
++                        main_k_scale_ptr
++                        + page * main_k_scale_stride_block
++                        + row_in_page * main_k_scale_stride_token
++                        + kv_head * main_k_scale_stride_head
++                    )
++                    v_scale_dst = (
++                        main_v_scale_ptr
++                        + page * main_v_scale_stride_block
++                        + row_in_page * main_v_scale_stride_token
++                        + kv_head * main_v_scale_stride_head
++                    )
++                    _store_rotated_pth(dst, k_scale_dst, y, o1, o2)
++                    v = tl.load(src + MAIN_HK * MAIN_D + dims)
++                    _store_v_pth(dst + MAIN_D + 4, v_scale_dst, v)
++                else:
++                    _store_rotated(dst, y, o1, o2, main_k_scale)
++                    v = tl.load(src + MAIN_HK * MAIN_D + dims)
++                    tl.store(dst + MAIN_D + dims, _to_dst_dtype(v, dst, main_v_scale))
+         else:
+             out = (token * MAIN_HQ + head) * MAIN_D
+             _store_rotated(main_q_out_ptr + out, y, o1, o2, None)
+@@ -530,14 +619,37 @@ def qsa_prepare(
+     main_slot_mapping: torch.Tensor,
+     main_k_scale: float,
+     main_v_scale: float,
++    main_k_scale_cache: torch.Tensor | None = None,
++    main_v_scale_cache: torch.Tensor | None = None,
+ ) -> tuple[torch.Tensor, torch.Tensor]:
+     """Normalize Q, compress K, then update the circular raw state.
+ 
+     Also prepares the main attention (QK-norm/RoPE, gate copy, K/V cache write)
+     and returns its Q and gate.
++
++    An INT8 per-token-head cache needs the two FP32 scale views carved out of
++    the inline cell padding (see ``_ensure_scale_caches``): the kernel computes
++    one dynamic scale per (token, KV head, side) and writes it there. Without
++    them the cache is written whole, with one host scale per side.
+     """
+     num_tokens = q.shape[0]
+-    main_head_dim = main_kv_cache.shape[-1] // 2
++    is_int8_pth = main_k_scale_cache is not None
++    cell = main_kv_cache.shape[-1]
++    if is_int8_pth:
++        # An INT8 per-token-head cell is [K | K scale | V | V scale] in bytes,
++        # and the FP32 scale that trails each half pads it by four bytes, so the
++        # head width is the cell minus that padding, halved.
++        assert main_kv_cache.dtype == torch.int8
++        assert main_kv_cache.stride(-1) == 1
++        main_head_dim = (cell - 2 * 4) // 2
++        assert main_v_scale_cache is not None
++        # One FP32 scale per (block, slot, KV head), viewed the same way the
++        # read kernel views it: dims are (block, token, head).
++        assert main_k_scale_cache.shape == main_v_scale_cache.shape
++        assert main_k_scale_cache.shape == main_kv_cache.shape[:3]
++        assert main_k_scale_cache.dtype == main_v_scale_cache.dtype == torch.float32
++    else:
++        main_head_dim = cell // 2
+     num_main_kv_heads = main_kv_cache.shape[2]
+     num_main_q_heads = main_qkv.shape[1] // (2 * main_head_dim) - num_main_kv_heads
+     main_q_out = main_qkv.new_empty(num_tokens, num_main_q_heads, main_head_dim)
+@@ -577,6 +689,10 @@ def qsa_prepare(
+         TILE_T_Q, TILE_H_Q = 2, 2
+     else:
+         TILE_T_Q, TILE_H_Q = 2, 4
++    # IS_INT8_PTH compiles out both scale operands off the INT8 lane, so the
++    # non-quantized launch hands over a 3D stand-in of the same rank.
++    k_scale_ref = main_k_scale_cache if is_int8_pth else main_q_out
++    v_scale_ref = main_v_scale_cache if is_int8_pth else main_q_out
+     num_k_work = k_work_metadata.shape[0]
+     num_q_work = triton.cdiv(num_tokens, TILE_T_Q) * triton.cdiv(num_q_heads, TILE_H_Q)
+     num_main_work = num_tokens * (num_main_q_heads + num_main_kv_heads)
+@@ -638,10 +754,19 @@ def qsa_prepare(
+         main_slots_ptr=main_slot_mapping,
+         main_k_scale=main_k_scale,
+         main_v_scale=main_v_scale,
++        main_k_scale_ptr=k_scale_ref,
++        main_k_scale_stride_block=k_scale_ref.stride(0),
++        main_k_scale_stride_token=k_scale_ref.stride(1),
++        main_k_scale_stride_head=k_scale_ref.stride(2),
++        main_v_scale_ptr=v_scale_ref,
++        main_v_scale_stride_block=v_scale_ref.stride(0),
++        main_v_scale_stride_token=v_scale_ref.stride(1),
++        main_v_scale_stride_head=v_scale_ref.stride(2),
+         MAIN_HQ=num_main_q_heads,
+         MAIN_HK=num_main_kv_heads,
+         MAIN_D=main_head_dim,
+         MAIN_PAGE_SIZE=main_kv_cache.shape[1],
++        IS_INT8_PTH=is_int8_pth,
+         num_warps=1,
+     )
+     return main_q_out, main_gate_out
+diff --git a/vllm/models/qwen4_exp/nvidia/qsa.py b/vllm/models/qwen4_exp/nvidia/qsa.py
+index 06ca4865af..f926d4d2e4 100644
+--- a/vllm/models/qwen4_exp/nvidia/qsa.py
++++ b/vllm/models/qwen4_exp/nvidia/qsa.py
+@@ -322,6 +322,20 @@ class Qwen4ExpQSAFlashAttentionImpl(FlashAttentionImpl):
+         # Each half is the head plus its fp32 scale, the reader wants the head.
+         return k_half[..., : self.head_size], v_half[..., : self.head_size]
+ 
++    def pth_scale_caches(
++        self, kv_cache: torch.Tensor
++    ) -> tuple[torch.Tensor, torch.Tensor]:
++        """Per-token-head fp32 scale views, created on first use.
++
++        The fused prepare kernel writes the dynamic scales itself, so it needs
++        the views before ``forward_qsa`` builds them for the read.
++        """
++        self._ensure_scale_caches(kv_cache)
++        k_scale_cache = self._k_scale_cache
++        v_scale_cache = self._v_scale_cache
++        assert k_scale_cache is not None and v_scale_cache is not None
++        return k_scale_cache, v_scale_cache
++
+     def __init__(
+         self,
+         num_heads: int,
+@@ -650,14 +664,14 @@ class Qwen4ExpQSAAttention(Qwen3NextAttention, AttentionLayerBase):
+         )
+         # One launch does the indexer prepare, the main QK-norm/RoPE/gate and
+         # the main K/V cache write (see QSAIndexer.forward); otherwise all of
+-        # them take the separate kernels. The fused writer receives a
+-        # per-tensor-scaled data pointer, which Triton cannot lower below
+-        # sm_89, and which cannot carry a per-(token, head) scale at all, so
+-        # per-token-head quant writes go through do_kv_cache_update instead.
++        # them take the separate kernels. A per-token-head int8 cache is written
++        # here too: the fused kernel quantizes each (token, head) itself and
++        # lands its scale in the cell padding (see qsa_prepare). The fp8 cache
++        # stays on the host per-tensor scale, which Triton cannot lower below
++        # sm_89.
+         self.use_fused_qsa_prepare = (
+             self.use_fused_qk_norm_rope_gate
+             and self.indexer.use_fused_pre_indexer
+-            and not self.kv_quant_mode.is_per_token_head
              and (
                  self.kv_cache_torch_dtype != torch.uint8
                  or current_platform.has_device_capability(89)
