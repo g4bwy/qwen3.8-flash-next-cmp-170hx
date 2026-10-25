@@ -3722,3 +3722,40 @@ So the answer to why 12.4k and 205-215 were never reached again is that 205-215 
 again in every one of these cells, and 12.4k was replaced by a deliberate purchase, about
 10% of cold prefill paid for 1.92x KV pool, 2,580,745 to 4,961,194 tokens, which is what
 holds four concurrent 1M contexts resident instead of two or three.
+
+## What the fp8 KV tax is not (2026-10-25)
+
+The tax is measured and prefill-only, 76.37 to 85.47 s on a cold 1M TTFT, 9.1 s, with
+decode inside the salt spread. Four candidate mechanisms have now been eliminated, three of
+them today.
+
+| candidate | how it was ruled out |
+|---|---|
+| attention read slower on fp8 | measured, fp8 is 4.8 % **faster** at the prefill dispatch under CUDA graph timing, and 1 % faster at decode |
+| the fp8-only tile override | it earns 23 % of itself, removing it costs time, measured |
+| cache write | 0.14 % of device time in the only capture that measured it |
+| GDN and linear-attention state caches | state dtype comes from `mamba_cache_dtype`, not `kv_cache_dtype`, `mamba_mixer2.py:1123-1126`, so fp8 KV never touched the 36 linear layers |
+
+The one dtype-dependent difference still standing is the loss of `use_fused_qsa_prepare`,
+`nvidia/qsa.py:500-507`, which is refused when the cache storage is `torch.uint8` because
+Triton cannot lower an fp8 pointer below sm_89. That turns one launch into about thirteen
+per QSA layer per step, the writer plus the whole indexer prepare, some 36 extra launches
+per step per rank and roughly 17,400 over a 1M prompt. Arithmetic caps it at 0.1 to 0.5 % of
+the wall, so it is a contributor and not the mechanism.
+
+Two corrections to the record while this is open. `serve-4x-1m.sh:12-14` says fp8 reads cost
+about 12 s and the int8 handoff gives back 13 s "so cold prefill wall stays where bf16-KV
+was". Those are unrelated levers, the hop quantizes pipeline activations and touches no KV
+file, and the 2x2 factorial at `results.md:1341-1346` shows it, hop moves 11.9 s and 11.8 s
+independent of dtype, fp8 costs 12.0 s and 12.1 s independent of the hop. Also stale, the
+same differential measured today is 9.1 s, not 12 s.
+
+Method note, the hard way. The two-sided profiler comparison that would settle this crashed
+the lane on 2026-10-25 at 13:24. The engine's `max_iterations: 150` budget is calibrated for
+**decode** windows, a few hundred small kernels per step, and the window was armed inside a
+1M **prefill** where every step is 2,048 tokens through CUDA graphs. The cell's TTFT went
+from an expected 76 s to 338 s before the EngineCore raised `TimeoutError` waiting on its
+workers. The pre-flight also passed while the boot log was already reporting
+`expandable_segments: memory mapping failed with OOM ... free: 16056320`, because it checked
+request count and config and not device headroom. Do not arm a profiler window on this box
+during a prefill, and check free device memory before touching the lane at all.
