@@ -3930,3 +3930,36 @@ was 135), decode unchanged (~210), pool unmoved (the QSA group is not the
 binding one, 4.6% more QSA bytes against a dtype-independent wall). If it
 lands there, int8 is at fp8 speed with native dtypes, a fused writer fp8
 cannot use, and the fp8 tax's original 9.1 s remains its own open question.
+
+## The fix boots: int8 prefill 135 -> 89 s (2026-10-25, boot a7909d5fa)
+
+Reinstalled the 4-commit lane, `--kv-cache-dtype int8_per_token_head`, clean log, pool
+4,958,208 tokens / 4.96x (vs 520-byte 4,952,238: the wider cell costs 6k tokens, 0.1%, as
+predicted, the QSA group is not pool-binding). Cells at the A/B shape, warmup then
+`bench.py --ctx 1000000 --fills 100 --concurrency 1 --decode 1024 --cooldown 60`.
+
+| salt | prompt tok | TTFT s | in tok/s | win avg | sust | acc len |
+|---|---|---|---|---|---|---|
+| 130100 | 988,214 | 88.8 | 10,538 | 204.8 | 215 | 4.86 |
+| 130200 | 988,845 | 89.3 | 10,477 | 199.7 | 209 | 4.88 |
+| 130300 | 989,439 | 88.9 | 10,477 | 48.4 | 119 | 1.14 |
+
+The prefill gap is closed: 135 s on the 520-byte layout, 88.8-89.3 s now, against fp8 85.5 s
+and bf16 76.4 s. The read kernel, not the int8 math, was the whole 46 s, and widening the cell
+stride from 520 to 544 restored it. Cells 1 and 2 are clean: acceptance 4.86/4.88 (the fp8
+lane's own 4.837), sustained 209/215, prefix match 100, zero preempts. So int8 is now within
+3.5 s of fp8 prefill and gives up the 9.1 s fp8 tax almost entirely, the opposite of the 2x it
+booted at.
+
+Salt 130300 is a decode-side outlier, not a prefill or dtype problem: its TTFT (88.9) matches
+the other two, but the decode window read 48 tok/s with acceptance length 1.14, and the boot
+log shows the drafter accepting 0 of 1700 drafts for ~30 s at 22:17 then recovering. That is
+the known deep-fill acceptance dip (results.md 2026-10-07, patch 8, net wall nil), a
+within-boot transient, and it does not touch the prefill conclusion. The two clean cells carry
+it. Worth a repeat of 130300 in isolation to confirm the dip is transient here too.
+
+Open, smaller: int8 prefill (89.0 s mean) sits about 3.5 s / 4% above fp8 (85.5 s). Likely the
+config table, not alignment: fp8 takes the sm_80 wide-tile override (BLOCK_N=128 warps=4,
+ops/qsa.py:668) that int8 does not (is_fp8=False -> BLOCK_N=32). The read microbench used 32
+for both, so fp8's real advantage was never in it. Cheap follow-up: try the same wide-tile
+override for int8 prefill on sm_80.
