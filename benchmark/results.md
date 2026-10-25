@@ -4031,3 +4031,43 @@ bf16" properly reads "faster than bf16-at-2048" until the 2x2 is complete; (b) t
 default deserves scrutiny beyond TTFT (per-step latency variance, preemption replay cost
 at fatter chunks, MTP draft budget interaction, the accepted-dip frequency in cells 2-3);
 (c) the fused-vs-unfused greedy gate still stands before promotion talk.
+
+## The 2x2: budget dominates dtype, dtype is nearly free (2026-10-25)
+
+bf16 (`auto`) on the same build with `--max-num-batched-tokens 9728`, three pinned cells,
+all clean (bg 0, match 100):
+
+| salt | prompt tok | TTFT s | in tok/s | win avg | sust | acc len |
+|---|---|---|---|---|---|---|
+| 130100 | 988,214 | 64.1 | 14,308 | 204.8 | 212 | 4.88 |
+| 130200 | 988,845 | 63.9 | 14,373 | 206.9 | 219 | 4.86 |
+| 130300 | 989,439 | 64.1 | 14,306 | 203.7 | 212 | 4.89 |
+
+Cold 1M TTFT by config:
+
+| TTFT s | @2048 shipped | @9728 |
+|---|---|---|
+| bf16 | 76.4 | 64.0 |
+| int8 | 88.9 | 65.6 |
+| fp8 | 85.5 | - |
+
+Readings.
+1. The scheduler budget is the largest single prefill lever found on this box: bf16 buys
+   itself -16% TTFT, both 1-byte dtypes -26%, all by chunk alignment against the 1616/3232
+   group blocks. The documented "fp8 costs 10% of prefill for its pool" framing collapses
+   to int8's honest 1.6 s (2.5%) at equal, correct scheduling; fp8's share is probably at
+   or below parity (its read kernel measured 22% faster per row than bf16's), pending its
+   own 9728 cell.
+2. The int8 trade, restated honestly: +2.5% cold prefill, -46% prefill against its own
+   misconfigured boot, pool 1.85x. At 2048 that trade was being priced at 14%.
+3. The acceptance dips are not settled noise: three dips across two int8@9728 boots
+   (cells 2-3 pattern, recoverable on fresh salt), zero across three bf16@9728 cells on
+   the same hour of the same box. n is one boot each, so it is a lead, not a finding: an
+   int8-specific deep-fill acceptance interaction with fatter chunks is exactly the kind
+   of thing the fused writer or the per-row scale traffic could cause at depth. The
+   certificate battery must include the fixed-salt accept window at deep fills for both
+   arms before 9728 or int8 ships.
+4. Still open: fp8@9728 (one boot), preemption replay cost at 9696-row chunks (a
+   preempted step now replays 6x1616 of state), concurrency cells at 9728, the greedy
+   fused-vs-unfused gate, and whether the README tables and serve-script header should
+   now recommend 9728 as the default once (3) clears.
