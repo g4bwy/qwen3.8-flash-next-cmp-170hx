@@ -3988,14 +3988,17 @@ extrapolates to its measured 9.1 s at 1M. fp8 pays this even though its read ker
 FASTER per row than bf16's (the sm_80 BLOCK_N=128 override earning its keep at the lane's
 chunk size, where the same override measured slower at my fixed synthetic grid).
 
-int8 = the same chunk penalty plus a 1.52x read per row against fp8, 2.77 vs 1.82 us,
-which is the fp32-promoted V tile (fp16 codes times fp32 per-token scale) pushing the PV
-dot to tf32 while fp8 keeps its dot fp16 by folding its scale into host floats. The earlier
-"promotion costs zero" probe was wrong; the lane prices it at ~5 s per 1M.
+int8 = the same chunk penalty plus a 1.52x read per row against fp8, 2.77 vs 1.82 us, measured
+at fp8's sm_80 (BLOCK_N=128, warps=4) config which int8 cannot copy: the tile sweep showed
+(128,4) is 2x SLOWER for int8 (33.4 vs 17.4 ms at the same grid). The remaining int8-vs-fp8
+read cost is the two per-token fp32 scale gathers the dynamic layout needs and fp8's host-scale
+path does not, inherent traffic of the design. A first guess, the fp16xfp32 V-descale promotion
+pushing the PV dot to tf32, was TESTED by editing the kernel to land V on fp16 before the dot
+and REJECTED: it made the read 1.6x slower (28.1 vs 17.4 ms), the change was reverted, tree
+back at cd2d7eb305. The promotion is not the cost.
 
 Fix candidates, priced by the same traces:
 1. Scheduler-level, no code: raise `--max-num-batched-tokens` to 9728 so chunks floor to
    3×3232 = 9696 rows, 16% below bf16's current step count. Test on the lane.
-2. Kernel-level: keep the V-tile fp16 through the dot (scale-multiply in fp32, cast the
-   tile back to fp16 before tl.dot, same shape fp8 achieves), expected -15..-20% int8
-   read time, worth ~4-5 s at 1M on its own.
+2. Kernel-level: none found. No tile beats (32,1) for int8, and the V-promotion theory is
+   dead; the per-token scale traffic is the price of dynamic per-token-head quantization.
