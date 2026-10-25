@@ -6,13 +6,16 @@
 # Apply the patch series first: git am --keep-non-patch patches/00*.patch
 # Details and measured numbers: README.md.
 #
-# PP=4 with fp8 KV (2026-10-16): the QSA layers store e4m3 and decode it
-# in-kernel on sm_80 (upstream #60602 + #60992), so the pool roughly doubles,
-# 2.65M tokens (2.6x) -> 5.10M: four 1M streams resident together, where a
-# third used to evict the first. fp8 KV reads cost ~12 s on a cold 1M prompt;
-# the int8 handoff (patch 8 env below) gives back 13 s, so cold prefill wall
-# stays where bf16-KV was. A Mamba align-mode preemption still replays its
-# whole prompt (~2 min): watch the preempt column, not just capacity.
+# PP=4 with fp8 KV (2026-10-16): the QSA layers store e4m3 bytes in uint8 and
+# decode them in-kernel on sm_80 (upstream #60602 + #60992), so the pool roughly
+# doubles, 2.65M tokens (2.6x) -> 5.10M, four 1M streams resident where a third
+# used to evict the first. Price is about 10% of a cold 1M prefill, measured on
+# the shipped tree 2026-10-25 as 76.4 -> 85.5 s TTFT with decode unchanged. Do
+# not read that against the int8 activation hop below, patch 8, which moves about
+# 12 s at either KV dtype. The two are orthogonal levers whose sizes happen to be
+# similar, the 2x2 is in results.md, and the hop's gain is already banked here.
+# A Mamba align-mode preemption still replays its whole prompt (~2 min), watch the
+# preempt column and not only capacity.
 #
 # YaRN costs VRAM before the pool is sized. The cos/sin cache is 1 GiB per
 # rank at factor 4.0, and it comes out of the KV pool. Two failure modes
