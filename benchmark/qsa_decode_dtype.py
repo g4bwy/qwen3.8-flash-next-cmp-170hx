@@ -133,6 +133,16 @@ def main():
     )
     gate = torch.ones_like(q)
     common = (li, bt, t2r, False)
+    # Trees before the explicit-mode change inferred the quantization from the
+    # cache dtype, newer ones take kv_quant_mode. Speak both dialects.
+    mode_kw = {}
+    if (
+        "kv_quant_mode"
+        in inspect.signature(qsa_ops.qsa_sparse_paged_attention).parameters
+    ):
+        from vllm.v1.kv_cache_interface import KVQuantMode
+
+        mode_kw = {"kv_quant_mode": KVQuantMode.FP8_PER_TENSOR}
     run8 = functools.partial(
         qsa_ops.qsa_sparse_paged_attention,
         q,
@@ -143,6 +153,7 @@ def main():
         1.0,
         1.0,
         output_gate=gate,
+        **mode_kw,
     )
     runb = functools.partial(
         qsa_ops.qsa_sparse_paged_attention,
@@ -188,16 +199,12 @@ def main():
         f"-> {100 * eb / cb:.0f}% of it"
     )
     verdict = (
-        "bandwidth-bound: both arms sit at the same fraction of their own ceiling, "
-        "so the e4m3 decode is free and the gather addressing is the suspect"
-        if abs(ratio - 2.0) < 0.15
-        else (
-            "the fp8 path pays a per-element penalty: it reads half the bytes yet "
-            "takes more than half the bf16 time, so decode is the suspect"
-            if ratio < 2.0
-            else "bf16 is slower than 2x, which should not happen: the fp8 decode "
-            "is costing more than the bytes it saves"
-        )
+        f"time tracks the element count, not the byte count (ratio {ratio:.2f} "
+        "against 2.00 for pure bandwidth): a cache format change cannot buy this "
+        "kernel time, and neither can removing the e4m3 decode"
+        if abs(ratio - 1.0) < 0.15
+        else f"ratio {ratio:.2f}, read the two arms' GB/s columns before naming a "
+        "mechanism, this tool no longer guesses at one"
     )
     print(
         json.dumps(
