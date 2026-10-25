@@ -27,7 +27,7 @@ from vllm.models.qwen4_exp.nvidia.ops import qsa as qsa_ops  # noqa: E402
 HEAD_DIM = 256
 NUM_Q_HEADS = 24
 NUM_KV_HEADS = 2
-PAGE_SIZE = 64
+PAGE_SIZE = 1616  # real lane block-size; the padded scale cell geometry depends on it
 TOPK = 2048
 
 

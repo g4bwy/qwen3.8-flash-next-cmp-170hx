@@ -3856,3 +3856,38 @@ effect no single-kernel microbenchmark sees. The next instrument is not another 
 it is the fused-off boot discriminator already staged (`lab/qsa-int8-kv-nofuse`), which if it
 still reads ~135 s would prove the writer is not it, and a whole-step nsys trace of one prefill
 step on the lane. Recording this so the 2x is not chased in the kernels again.
+
+## The int8 penalty is flat per-token, and no QSA kernel explains it (2026-10-25)
+
+A prefill-only scaling cell on the idle int8 lane (fresh salt, `decode 1`):
+
+| fill | tokens | TTFT s | in tok/s |
+|---|---|---|---|
+| 25% | 247,329 | 31.6 | 7,837 |
+| 50% | 494,937 | 64.7 | 7,650 |
+| 75% | 742,117 | 99.2 | 7,483 |
+| 100% | 989,900 | 135.9 | 7,286 |
+
+Throughput is ~flat at 7.3-7.8k tok/s and TTFT is near-linear in tokens (ratios 1.0, 2.05,
+3.14, 4.30 against token ratios 1,2,3,4; the mild super-linearity is the depth term, ~7%
+over 1M). bf16 holds 12,137 tok/s and fp8 10,915. So int8 carries a **constant per-token
+prefill penalty of about 38%**, essentially independent of depth.
+
+That signature has two consequences. First, it is per-token work, not a depth-growing read.
+Second, it is invisible at decode, because decode pays it on 1-8 tokens inside a 22 ms step
+(60-250 ns a rounding error) while prefill pays it on 2048 tokens per chunk. A per-token cost
+that prefill shows and decode hides is exactly what a store looks like - but the stores do not
+reproduce it:
+
+- fused int8 store (`IS_INT8_PTH` branch, 2048 tokens): 1.06x
+- unfused per-token-head int8 writer: 0.88x (faster, half the bytes)
+- sparse read int8 at the real block_size 1616 geometry: 1.04x
+
+So int8 prefill is 38% slower per token, and the three int8-specific kernels together account
+for about 4-6%. This is a hard, measured contradiction, not a hand-wave: the port touches
+nothing else, the base tree is byte-identical (`dcc9c271d8`), and the launch count is the same.
+Therefore the 59 s is not attributable to the kernels I can reach, and the next instrument is
+mandatory, not optional: a whole-step CUDA kernel trace of one int8 prefill versus one bf16
+prefill on the identical tree, which is `benchmark/qsa_prefill_trace.py` and requires the
+serving lane stopped (it wants all four cards). Until that trace names the kernel, tuning QSA
+kernels is chasing a number that the measurements say is not there.
