@@ -46,17 +46,30 @@ def build(depth, rows, seed, dtype):
 
     nb = pages  # dense physical pages so every gathered byte is real, not page 0
     base = torch.randn((nb, PAGE_SIZE, NUM_KV_HEADS, HEAD_DIM), generator=g)
-    k_cache = base.to(dtype=dtype, device=dev).contiguous()
-    v_cache = base.to(dtype=dtype, device=dev).contiguous()
     if dtype == torch.int8:
-        # Realistic int8 codes and a fp32 per-(token,head) scale in [1e-3, 1e-2].
-        k_cache = (base * 100).clamp(-127, 127).to(torch.int8).to(dev).contiguous()
-        v_cache = (base * 100).clamp(-127, 127).to(torch.int8).to(dev).contiguous()
-        ks = torch.full((nb, PAGE_SIZE, NUM_KV_HEADS), 0.005,
-                        dtype=torch.float32, device=dev)
-        vs = ks.clone()
+        # Lane-exact layout: one packed cell per (token, KV head),
+        # [K(256) | Kscale slot(16) | V(256) | Vscale slot(16)], the strides the
+        # real _pth views / _ensure_scale_caches hand the kernels.
+        codes = (base * 100).clamp(-127, 127).to(torch.int8).to(dev)
+        cell = torch.zeros(nb, PAGE_SIZE, NUM_KV_HEADS, 2 * HEAD_DIM + 32,
+                           dtype=torch.int8, device=dev)  # physical NHD, lane order
+        cell[..., :HEAD_DIM] = codes
+        cell[..., HEAD_DIM + 16:2 * HEAD_DIM + 16] = codes
+        kv_logical = cell.transpose(1, 2)  # (nb, heads, tokens, 544)
+        back = kv_logical.transpose(1, 2)  # what _pth views hand the launcher
+        k_view, v_view = back.split(HEAD_DIM + 16, dim=-1)
+        k_cache, v_cache = k_view[..., :HEAD_DIM], v_view[..., :HEAD_DIM]
+        flat = cell.view(-1).view(torch.float32)  # 136 f32 units per cell
+        ks = torch.as_strided(flat, (nb, PAGE_SIZE, NUM_KV_HEADS),
+                              (PAGE_SIZE * 2 * 136, 2 * 136, 136), 64)
+        vs = torch.as_strided(flat, (nb, PAGE_SIZE, NUM_KV_HEADS),
+                              (PAGE_SIZE * 2 * 136, 2 * 136, 136), 132)
     else:
+        k_cache = base.to(dtype=dtype, device=dev).contiguous()
+        v_cache = base.to(dtype=dtype, device=dev).contiguous()
         ks = vs = None
+    print(f"  {str(dtype):15s} k_cache strides {tuple(k_cache.stride())} "
+          f"mod16 {[s % 16 for s in k_cache.stride()]}")
     bt = torch.arange(pages, dtype=torch.int32, device=dev).unsqueeze(0).contiguous()
     q = torch.randn((rows, NUM_Q_HEADS, HEAD_DIM), generator=g).to(
         dtype=torch.bfloat16, device=dev

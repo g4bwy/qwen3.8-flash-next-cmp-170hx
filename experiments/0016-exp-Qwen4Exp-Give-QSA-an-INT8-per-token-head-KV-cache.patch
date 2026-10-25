@@ -1,7 +1,7 @@
 From 553faa42cb73fcf574610d4081430e2fc957cc33 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Sat, 24 Oct 2026 23:35:32 +0200
-Subject: [PATCH 1/3] [WIP][Qwen4Exp] Give QSA an INT8 per-token-head KV cache
+Subject: [PATCH 1/4] [WIP][Qwen4Exp] Give QSA an INT8 per-token-head KV cache
 
 Serves the main attention cache as int8 with one fp32 scale per (token, KV head)
 per side, reusing the mode that already exists in the tree rather than inventing
@@ -515,7 +515,7 @@ index f82cca1c2a..8f5de90b59 100644
 From 4788e55f1483cabdd3734a459c2058256b2979d0 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 14:43:29 +0100
-Subject: [PATCH 2/3] [WIP][Qwen4Exp] Read the QSA sparse attention from an
+Subject: [PATCH 2/4] [WIP][Qwen4Exp] Read the QSA sparse attention from an
  int8 per-token-head cache
 
 Completes the parked int8 KV lane, which could write the cache but refused to read
@@ -873,7 +873,7 @@ index 8f5de90b59..06ca4865af 100644
 From b57a32fd3beefed31f0163b93aeeb8a0f85320e8 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 15:07:09 +0100
-Subject: [PATCH 3/3] [WIP][Qwen4Exp] Fill the INT8 per-token-head cache from
+Subject: [PATCH 3/4] [WIP][Qwen4Exp] Fill the INT8 per-token-head cache from
  the fused QSA prepare
 
 The fused prepare kernel was refused for a per-token-head cache because it
@@ -1193,6 +1193,235 @@ index 06ca4865af..f926d4d2e4 100644
              and (
                  self.kv_cache_torch_dtype != torch.uint8
                  or current_platform.has_device_capability(89)
+-- 
+2.55.0
+
+
+From cd2d7eb305adfe55d5d2d9ff1cf78dc5f83652ad Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 21:55:59 +0100
+Subject: [PATCH 4/4] [WIP][Qwen4Exp] Widen the per-token-head scale slot to 16
+ bytes
+
+The int8 lane ran 131k-prefill reads at 81 ms per call against bf16's 19 ms
+on the identical grid, a whole-step trace of the live config showed. The
+cause is the cell: K(256) + one 4-byte fp32 scale pad gives a head stride of
+520, which Triton cannot prove divisible by 16, so every K and V column load
+loses its vectorization. bf16 and fp8 cells are 512-byte aligned and never
+hit this; decode hides it because one query row is microseconds either way.
+
+The scale keeps riding in the cell padding, now in a 16-byte slot (fp32 at
+the slot's front, 12 bytes of never-read pad behind it): half-width 272, cell
+544, so every stride the kernels see is 16-byte aligned again. Layout math
+moves from four literals to the single PTH_SCALE_SLOT_BYTES constant
+(customize_spec, _ensure_scale_caches, the fused writer's V offset, the
+prepare head-width inverse, the kernel warmup). The fused writer takes it as
+a MAIN_PTH_SLOT constexpr.
+
+Measured on the prefill grid (6464, 2, 1): read int8/bf16 4.92x at cell 520,
+1.07x at cell 544. Fused-vs-unfused byte parity re-verified on the new
+layout, all 11 checks, bf16/uint8 lanes still byte-identical. The QSA pool
+grows 4.6% per token per head, which the boot pool will barely move: the
+pool caps on a dtype-independent group. Test stub gained the kv_quant_mode
+attribute it has been missing since the lane's first commit.
+---
+ tests/models/qwen4_exp/test_qsa_reference.py  |  2 ++
+ vllm/models/qwen4_exp/common/qsa_cache.py     |  8 ++++++++
+ vllm/models/qwen4_exp/nvidia/ops/qsa.py       |  7 ++++---
+ .../qwen4_exp/nvidia/ops/qsa_prepare.py       | 20 +++++++++++--------
+ vllm/models/qwen4_exp/nvidia/qsa.py           | 19 ++++++++++--------
+ 5 files changed, 37 insertions(+), 19 deletions(-)
+
+diff --git a/tests/models/qwen4_exp/test_qsa_reference.py b/tests/models/qwen4_exp/test_qsa_reference.py
+index da7ab0a352..cf25c6dbfe 100644
+--- a/tests/models/qwen4_exp/test_qsa_reference.py
++++ b/tests/models/qwen4_exp/test_qsa_reference.py
+@@ -18,6 +18,7 @@ from vllm.models.qwen4_exp.nvidia.ops import qsa_indexer as qsa_indexer_ops
+ from vllm.models.qwen4_exp.nvidia.qsa import qsa_kv_cache_dtype
+ from vllm.platforms import current_platform
+ from vllm.triton_utils import HAS_TRITON
++from vllm.v1.kv_cache_interface import KVQuantMode
+ from vllm.v1.worker.utils import clear_layer_kv_caches
+ 
+ requires_qsa_kernels = pytest.mark.skipif(
+@@ -64,6 +65,7 @@ def test_qsa_mtp_index_share_updates_cache_but_skips_selection(
+     )
+     attn = SimpleNamespace(
+         use_fused_qsa_prepare=True,
++        kv_quant_mode=KVQuantMode.NONE,
+         kv_cache=torch.empty(0, 1, 1, 2),
+         kv_cache_dtype="auto",
+         q_norm=SimpleNamespace(weight=torch.ones(1), variance_epsilon=1e-6),
+diff --git a/vllm/models/qwen4_exp/common/qsa_cache.py b/vllm/models/qwen4_exp/common/qsa_cache.py
+index 5eba092eec..0a46b2a90a 100644
+--- a/vllm/models/qwen4_exp/common/qsa_cache.py
++++ b/vllm/models/qwen4_exp/common/qsa_cache.py
+@@ -44,6 +44,14 @@ from vllm.v1.kv_cache_interface import (
+     MLAAttentionSpec,
+ )
+ 
++# Each per-token-head cell half reserves this many bytes after its head data
++# for the fp32 scale. One scale needs 4; 16 is the smallest choice that keeps
++# every head-column base and the whole cell 16-byte aligned. A narrower slot
++# (4 bytes on an int8 cache) makes the head stride 520, which Triton cannot
++# prove divisible by 16, so it vectorizes none of the sparse attention's
++# gathers: measured 5x slower reads at 131k prefill shape.
++PTH_SCALE_SLOT_BYTES = 16
++
+ 
+ def canonical_qsa_rope_positions(positions: torch.Tensor) -> torch.Tensor:
+     """Return exact per-token positions as ``[tokens, 1, 3]`` int64 rows."""
+diff --git a/vllm/models/qwen4_exp/nvidia/ops/qsa.py b/vllm/models/qwen4_exp/nvidia/ops/qsa.py
+index 2cfbeae33a..d89010d897 100644
+--- a/vllm/models/qwen4_exp/nvidia/ops/qsa.py
++++ b/vllm/models/qwen4_exp/nvidia/ops/qsa.py
+@@ -12,6 +12,7 @@ from vllm.model_executor.warmup.jit_warmup_triton_helper import (
+     TritonWarmupTensor,
+     triton_scalar_specialization_rep,
+ )
++from vllm.models.qwen4_exp.common.qsa_cache import PTH_SCALE_SLOT_BYTES
+ from vllm.platforms import current_platform
+ from vllm.triton_utils import HAS_TRITON, tl, triton
+ from vllm.v1.kv_cache_interface import KVQuantMode
+@@ -899,9 +900,9 @@ def warmup_qsa_sparse_paged_attention(
+     """Compile every production-reachable split-K/merge specialization."""
+     per_token_scale = kv_quant_mode.is_per_token_head
+     padded_half = kv_cache.shape[-1] // 2
+-    # A per-token-head cell is the head plus one fp32 scale, so the head width is
+-    # the half cell minus the padding, and the reader gets a narrowed view.
+-    head_dim = padded_half - 4 if per_token_scale else padded_half
++    # A per-token-head cell is the head plus its 16-byte scale slot, so the head
++    # width is the half cell minus the slot, and the reader gets a narrowed view.
++    head_dim = padded_half - PTH_SCALE_SLOT_BYTES if per_token_scale else padded_half
+     key_cache, value_cache = kv_cache.transpose(1, 2).split(padded_half, dim=-1)
+     # An fp8 cache is allocated as uint8 storage; warm the dtype the impl hands
+     # over: an e4m3 view on sm_89+, the raw bytes below.
+diff --git a/vllm/models/qwen4_exp/nvidia/ops/qsa_prepare.py b/vllm/models/qwen4_exp/nvidia/ops/qsa_prepare.py
+index 61cc944b04..229672a332 100644
+--- a/vllm/models/qwen4_exp/nvidia/ops/qsa_prepare.py
++++ b/vllm/models/qwen4_exp/nvidia/ops/qsa_prepare.py
+@@ -4,6 +4,7 @@
+ 
+ import torch
+ 
++from vllm.models.qwen4_exp.common.qsa_cache import PTH_SCALE_SLOT_BYTES
+ from vllm.triton_utils import tl, triton
+ 
+ 
+@@ -237,6 +238,7 @@ def _qsa_prepare_kernel(
+     MAIN_HK: tl.constexpr,
+     MAIN_D: tl.constexpr,
+     MAIN_PAGE_SIZE: tl.constexpr,
++    MAIN_PTH_SLOT: tl.constexpr,
+     IS_INT8_PTH: tl.constexpr,
+ ):
+     pid = tl.program_id(0)
+@@ -295,9 +297,9 @@ def _qsa_prepare_kernel(
+                     + kv_head * main_cache_stride_head
+                 )
+                 if IS_INT8_PTH:
+-                    # The per-token-head cell is [K | K scale | V | V scale]:
+-                    # four INT8 bytes hold the K scale, so V starts MAIN_D + 4
+-                    # bytes in and each scale rides at the end of its own half.
++                    # The per-token-head cell is [K | K slot | V | V slot]: the
++                    # fp32 scale rides in a 16-byte slot after each half, so V
++                    # starts MAIN_D + PTH_SCALE_SLOT_BYTES bytes in.
+                     k_scale_dst = (
+                         main_k_scale_ptr
+                         + page * main_k_scale_stride_block
+@@ -312,7 +314,7 @@ def _qsa_prepare_kernel(
+                     )
+                     _store_rotated_pth(dst, k_scale_dst, y, o1, o2)
+                     v = tl.load(src + MAIN_HK * MAIN_D + dims)
+-                    _store_v_pth(dst + MAIN_D + 4, v_scale_dst, v)
++                    _store_v_pth(dst + MAIN_D + MAIN_PTH_SLOT, v_scale_dst, v)
+                 else:
+                     _store_rotated(dst, y, o1, o2, main_k_scale)
+                     v = tl.load(src + MAIN_HK * MAIN_D + dims)
+@@ -636,12 +638,13 @@ def qsa_prepare(
+     is_int8_pth = main_k_scale_cache is not None
+     cell = main_kv_cache.shape[-1]
+     if is_int8_pth:
+-        # An INT8 per-token-head cell is [K | K scale | V | V scale] in bytes,
+-        # and the FP32 scale that trails each half pads it by four bytes, so the
+-        # head width is the cell minus that padding, halved.
++        # An INT8 per-token-head cell is [K | K slot | V | V slot] in bytes, and
++        # each half trails its FP32 scale in a 16-byte slot (PTH_SCALE_SLOT_BYTES
++        # keeps every column 16-byte aligned for Triton's vectorized loads), so
++        # the head width is the cell minus that padding, halved.
+         assert main_kv_cache.dtype == torch.int8
+         assert main_kv_cache.stride(-1) == 1
+-        main_head_dim = (cell - 2 * 4) // 2
++        main_head_dim = (cell - 2 * PTH_SCALE_SLOT_BYTES) // 2
+         assert main_v_scale_cache is not None
+         # One FP32 scale per (block, slot, KV head), viewed the same way the
+         # read kernel views it: dims are (block, token, head).
+@@ -766,6 +769,7 @@ def qsa_prepare(
+         MAIN_HK=num_main_kv_heads,
+         MAIN_D=main_head_dim,
+         MAIN_PAGE_SIZE=main_kv_cache.shape[1],
++        MAIN_PTH_SLOT=PTH_SCALE_SLOT_BYTES,
+         IS_INT8_PTH=is_int8_pth,
+         num_warps=1,
+     )
+diff --git a/vllm/models/qwen4_exp/nvidia/qsa.py b/vllm/models/qwen4_exp/nvidia/qsa.py
+index f926d4d2e4..b2a8496302 100644
+--- a/vllm/models/qwen4_exp/nvidia/qsa.py
++++ b/vllm/models/qwen4_exp/nvidia/qsa.py
+@@ -67,7 +67,7 @@ from vllm.v1.kv_cache_interface import (
+     is_quantized_kv_cache,
+ )
+ 
+-from ..common.qsa_cache import QSAForwardMetadata
++from ..common.qsa_cache import PTH_SCALE_SLOT_BYTES, QSAForwardMetadata
+ from . import model
+ from .indexer_qsa import QSAIndexer
+ 
+@@ -181,16 +181,18 @@ class Qwen4ExpQSAFlashAttentionBackend(FlashAttentionBackend):
+ 
+     @classmethod
+     def customize_spec(cls, spec: AttentionSpec) -> AttentionSpec:
+-        """Per-token-head modes pack inline fp32 scales after each head's
+-        data, so the content is (data + one scale) per K/V side."""
++        """Per-token-head modes pack an inline fp32 scale after each head's
++        data, in a slot padded to keep every column 16-byte aligned (see
++        PTH_SCALE_SLOT_BYTES), so the content is (data + scale slot) per side."""
+         mode = spec.kv_quant_mode
+         if spec.state_content_bytes is not None or not mode.is_per_token_head:
+             return spec
+         hs_k, hs_v = spec.head_size, spec.head_size_v
+         if mode == KVQuantMode.INT4_PER_TOKEN_HEAD:
+             hs_k, hs_v = hs_k // 2, hs_v // 2
+-        scale_bytes = get_dtype_size(torch.float32)
+-        content = (hs_k + hs_v) * get_dtype_size(spec.dtype) + 2 * scale_bytes
++        content = (
++            hs_k + hs_v
++        ) * get_dtype_size(spec.dtype) + 2 * PTH_SCALE_SLOT_BYTES
+         return replace(spec, state_content_bytes=content)
+ 
+     @classmethod
+@@ -255,9 +257,10 @@ class Qwen4ExpQSAFlashAttentionImpl(FlashAttentionImpl):
+ 
+         The KV cache is packed as logical shape
+         ``(num_blocks, nkv, block_size, 2 * (hs + pad))`` where
+-        ``pad = sizeof(float32) / sizeof(cache_dtype)``.  The content dim holds
++        ``pad = PTH_SCALE_SLOT_BYTES / sizeof(cache_dtype)``.  The content dim holds
+         ``[K(hs) | K_scale(pad) | V(hs) | V_scale(pad)]`` per (head, slot); the
+-        last ``pad`` elements of each half hold one float32 scale.  We create
++        first ``sizeof(float32)`` bytes of each half's pad hold one float32
++        scale, the rest keeps the column 16-byte aligned.  We create
+         strided float32 views over those bytes.  ``kv_cache`` must be the
+         packed logical tensor (call before any transpose), but may have HND or
+         NHD physical strides.
+@@ -269,7 +272,7 @@ class Qwen4ExpQSAFlashAttentionImpl(FlashAttentionImpl):
+ 
+         num_blocks, nkv, block_size, content = kv_cache.shape
+         dtype_sz = kv_cache.element_size()
+-        scale_pad = get_dtype_size(torch.float32) // dtype_sz
++        scale_pad = PTH_SCALE_SLOT_BYTES // dtype_sz
+         padded_hs = content // 2
+         hs = padded_hs - scale_pad
+ 
 -- 
 2.55.0
 

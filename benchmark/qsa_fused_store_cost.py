@@ -76,7 +76,7 @@ def main():
                           dtype=torch.bfloat16, device="cuda")
     t_bf = timeit(run(idx, mrow, bf_cell, None))
 
-    i8_cell = torch.zeros(p.NUM_BLOCKS, 2, p.MAIN_PAGE, 2 * 256 + 8,
+    i8_cell = torch.zeros(p.NUM_BLOCKS, 2, p.MAIN_PAGE, 2 * 256 + 32,
                           dtype=torch.int8, device="cuda")
     ks, vs = p.load_scale_views(i8_cell)
     t_i8 = timeit(run(idx, mrow, i8_cell,

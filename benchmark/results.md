@@ -3891,3 +3891,42 @@ mandatory, not optional: a whole-step CUDA kernel trace of one int8 prefill vers
 prefill on the identical tree, which is `benchmark/qsa_prefill_trace.py` and requires the
 serving lane stopped (it wants all four cards). Until that trace names the kernel, tuning QSA
 kernels is chasing a number that the measurements say is not there.
+
+## The elephant: 520-byte cells killed Triton's vectorization, fixed at 544 (2026-10-25)
+
+The offline whole-step traces (`benchmark/qsa_prefill_trace.py`, one 131k
+prefill per dtype, same tree and env, host runs) end the hunt:
+
+| kernel | int8 | bf16 |
+|---|---|---|
+| `_qsa_sparse_paged_gqa_splitk_kernel` | 20.73 s (234x ~81 ms) | 3.89 s (195x ~19 ms) |
+| everything else (nccl, marlin, cutlass, GDN, prep) | ~same | ~same |
+
+The read kernel alone is the entire gap. Standalone, on the same grid
+`(6464,2,1)`: 520-byte cell int8 read 80.6 ms (4.92x bf16), 544-byte cell
+17.7 ms (1.07x). The cause is the stride: a per-token-head cell packed as
+K(256)+4B-scale-pad+V(256)+4B is 520 bytes, so the head stride mod 16 is 8,
+Triton drops the divisibility specialization, and every gathered K/V column
+loses vectorized loads. bf16 and fp8 cells are 512 (or 256-wide views with
+512 stride), always aligned. Decode hides it because one query row costs
+microseconds either way, which is why only prefill doubled.
+
+Why my first read microbench missed it: it allocated the int8 cache as its
+own contiguous tensor (stride 256, perfectly aligned) instead of views into
+the real packed cell. A kernel that takes strided views must be timed with
+the production strides.
+
+The fix (lab commit `cd2d7eb305`): the scale slot widens 4 to 16 bytes
+(`PTH_SCALE_SLOT_BYTES`, fp32 at the slot front, 12 never-read pad bytes
+behind it), cell 544, half-width 272. Layout math now lives in one constant
+(spec content, scale-view strides, fused writer V offset, prepare head
+width, kernel warmup head width; the kernel takes it as `MAIN_PTH_SLOT`).
+Fused-vs-unfused byte parity re-verified on the new layout, 11/11, with the
+bf16 and uint8 lanes byte-identical. `experiments/0016` re-exported as the
+4-commit lane, replay tree proven identical to the lab tip.
+
+Expected from the rerun boot: cold 1M prefill back near the fp8 class (~85 s,
+was 135), decode unchanged (~210), pool unmoved (the QSA group is not the
+binding one, 4.6% more QSA bytes against a dtype-independent wall). If it
+lands there, int8 is at fp8 speed with native dtypes, a fused writer fp8
+cannot use, and the fp8 tax's original 9.1 s remains its own open question.
