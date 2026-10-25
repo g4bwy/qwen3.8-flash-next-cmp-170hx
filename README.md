@@ -231,7 +231,7 @@ results.md, and the two tasks are not interchangeable.
 
 | lane | context | KV pool | headroom |
 |---|---|---:|---:|
-| 4 cards, official FP8, MTP-4 | 1M YaRN 4.0 | 5,086,567 | 5.09x |
+| 4 cards, official FP8, MTP-4 | 1M YaRN 4.0 | 4,961,194 | 4.96x |
 | 4 cards, W8A16 dense, MTP-4 | 1M YaRN 4.0 | 2,594,720 | 2.59x |
 
 Per-rank weight and KV columns, and the retired 3-card / 262k / 524k rows:
@@ -244,22 +244,43 @@ of the KV pool. Each YaRN step adds 0.25 GiB per rank of weights.
 Rates are tok/s unless the cell shows a duration. All rows: 74 SMs, partition
 `13,12,12,11`, draft-vocab head, decode 1024, repetition-task prompts.
 
-| lane | TTFT, full window | prefill peak | 1 stream | 4 streams, full fill |
-|---|---:|---:|---:|---|
-| 4 cards, 1M, MTP-3 | 91.9 s | 10.4k | 181-184 | 325, 2-3 of 4 |
-| 4 cards, 1M, official, MTP-4 | 90.6 s | 10.4k | 205-215 (median 212) | wall 386 s at 100/4, 2-3 of 4 resident |
-| 4 cards, 1M, W8A16 lane, MTP-4 | 93.5 s | 10.1k | 217-226 | 400 s wall at 100/4, batch-neutral |
-| + int8 handoff (patch 8), bf16 KV | 79.9 s | 12.4k | 205-215 | wall 346 s at 100/4, 4/4 would-fit, pool 2.65M |
-| + int8 handoff + fp8 KV | 92.9-93.9 s | 10.1k | 1024-tok cell 10.1 s | wall 356.5-356.8 s at 100/4, 4/4 resident, pool 5.08M |
-| + int8 heads & dense (patches 11+12 on) = SHIP | 85.2-85.6 s | 11.6k | 186-189 (decode path unchanged) | wall 333.7-338.8 s at 100/4, 4/4 resident, pool 4.96M |
+Prefill has two divisors and they differ by about 6% on the same cell. Plain
+numbers are cold prompt tokens divided by TTFT, `†` marks rows recorded from
+`bench.py` `in tok/s`, which divides by the whole cell wall instead. Decode
+is the pinned-salt sustained peak unless the cell says win avg, and win avg runs
+about 5% low, so the two are not interchangeable. Check the divisor before
+reading any two rows as a comparison.
 
-- The sustained column is a 1.5 s peak that typically lands in the wind-down
+| lane | TTFT, full window | prefill | 1 stream | 4 streams, full fill |
+|---|---|---:|---:|---|
+| 4 cards, 1M, MTP-3 | 91.9 s | 10.4k † | 181-184 | 325, 2-3 of 4 |
+| 4 cards, 1M, official, MTP-4 | 90.6 s | 10.4k † | 205-215 (median 212) | wall 386 s at 100/4, 2-3 of 4 resident |
+| 4 cards, 1M, W8A16 lane, MTP-4 | 93.5 s | 10.1k † | 217-226 | 400 s wall at 100/4, batch-neutral |
+| + int8 handoff (patch 8), bf16 KV, trial boot 2026-10-16, never shipped | 79.9 s | 12.4k | no decode measured on this boot | wall 346 s at 100/4, pool 2.65M holds 2-3 of 4 |
+| + int8 handoff + fp8 KV | 92.9-93.9 s | 10.1k, divisor unrecorded | no rate recorded | wall 356.5-356.8 s at 100/4, 4/4 resident, pool 5.08M |
+| + int8 heads & dense (patches 11+12) | 85.2-85.6 s | 11.6k | 186-189, no source in results.md | wall 333.7-338.8 s at 100/4, 4/4 resident, pool 4.96M |
+| = SHIP, patch 13, fp8 KV, 2026-10-25, salts 130100-130300 | 85.4-85.5 s | 11.6k | 209-212, win avg 198-199 | 333.7-338.8 s not re-run on this boot |
+| same tree, `--kv-cache-dtype auto`, same salts, reference only | 76.3-76.4 s | 12.9k | 212-215, win avg 198-205 | not run, pool 2.58M caps it at 2-3 of 4 |
+
+- The sustained figure is a 1.5 s peak that typically lands in the wind-down
   of the run. Compare grids on wall or out tok/s. Full grids, repeat runs and
   the salt law: [benchmark/results.md](benchmark/results.md).
-- The last row is boot C, two battery sessions plus boot B (results.md). The
-  int8 pair moves prefill-bound cells only: decode stays on the bf16 kernels
-  (the int8 branch needs M>=512, captured batches are <=80), so single-stream
-  repeats the env-off band and 205-215 remains the pinned-salt figure.
+- The fp8 pair at the foot of the table is the only single-variable read on the
+  shipped kernels, measured 2026-10-25 with identical salts so the prompts match
+  across boots. It prices the lane's central trade, about 10% of cold prefill and
+  11.9% of TTFT paid for 1.92x KV pool, 2,580,745 to 4,961,194 tokens, which is
+  what holds four 1M contexts resident instead of two or three. Decode does not
+  move, 213 against 211 sustained, inside the spread of the three salts, and
+  acceptance is marginally better on fp8, 4.783 against 4.837. Raw per-cell
+  dumps from both boots are local only, the numbers above are the record.
+- The 12.4k row is not a target that was lost. It was a one-variable bf16 trial
+  booted on 2026-10-16 and superseded the same day, and bf16 on today's tree
+  measures 12.9k, higher still, because patches 11 to 13 moved prefill-bound
+  cells. The int8 pair changes prefill only, decode stays on the bf16 kernels
+  since the int8 branch needs M>=512 and captured batches are at most 80.
+- The earlier rows carry no date or base and should be read as history. Five
+  upstream bases have passed under this lane since 2026-10-13 and each rebase
+  cert found roughly 1% of cold drift.
 - Since 2026-10-22 the battery adds a four-resident deep-plateau cell, an
   8192-decode batch cell, and an oversubscription cell (results.md, Protocol
   battery v2). The 100/4 wall cells are mostly serialized prefill, so they
@@ -369,7 +390,7 @@ about one position in 130 moves because of the quantization. Full tables:
 
 ```
 patchset-qwen38-pp/
-  patches/0001-*.patch .. 0012-*.patch   the series, git am
+  patches/0001-*.patch .. 0013-*.patch   the series, git am
   serve-4x-1m.sh                         the service lane: 4 gpus, 1M, YaRN 4.0 (PROF=1 arms the profiler)
   archive/                               retired lanes, the 3-card set, the TP=4 trial, and their tables
   benchmark/                             measurement tools, raw results, and the full record, see its README
