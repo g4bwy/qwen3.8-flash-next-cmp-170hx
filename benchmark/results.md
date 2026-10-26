@@ -4108,3 +4108,45 @@ Shipping consequence (pending the usual battery): `serve-4x-1m.sh` should move t
 quality cost in these cells. Before that: concurrency cells, preemption replay at fatter
 chunks, accept-window probes, and the README tables rewrite (the 11.6k row and the
 "price is about 10% of prefill" header comment both describe the mis-scheduled regime).
+
+## Production incident 2026-10-26: tool-call errors force a config rollback; 9728 survives it
+
+Owner observed an abnormal rate of tool-call errors on live agent traffic and rolled back
+four levers at once: `VLLM_QWEN4EXP_DRAFT_W8A8=0`, `VLLM_QWEN4EXP_DENSE_W8A8=0`,
+`VLLM_QWEN4EXP_DENSE_W8A8_MIN_M=0`, and the PLE table back to pinned host RAM
+(`host_file_gather=false`, `host_file_gather_mmap=false`, `cpu_offload` stays on). The live
+boot keeps fp8 KV and the 9728 chunk budget, which the owner reports works fine under that
+traffic: first production day for the new budget, passed. Pool at the pinned-PLE boot:
+5,005,970 tokens / 5.01x, 104k above the file-gather fp8@9728 boot (2.1%, allocation
+side-effect of the gather path, not KV bytes).
+
+Reasoning on suspects, kept short because the rollback is confounded (four variables at
+once) and no server-side parse errors exist in the log:
+1. Low acceptance on real traffic (2.37-3.11 mean length, 34-53% draft rates across the
+   day's SpecDecoding lines) is NOT a lead. Synthetic pinned-salt cells measure 4.8+
+   because the prompt is a repetition task; agent prose is harder. And acceptance is
+   verifier-safe by construction: the drafter can only slow output, never corrupt it.
+   Draft-side W8A8 therefore cannot mechanically produce malformed tool calls.
+2. The verifier can corrupt output, and `VLLM_QWEN4EXP_DENSE_W8A8` moves verifier dense
+   linears (qkv/o, GDN projections, shared MLP) to int8 scoring at prefill and, with
+   patch 13 at MIN_M=1, at decode too. Its quality gates (needles, accept-window,
+   corpus floors, 2026-10-23) never included qwen3_xml tool-call validity. Grammar
+   drift invisible to those gates is the leading hypothesis.
+3. PLE file gather (patches 9-10) reads n-gram rows via preadv/mmap; wrong rows would
+   degrade conditioning and could plausibly surface as garbled structured output, but
+   the path is read-only-from-file and was hardware-certified; rated unlikely,
+   pinned stays as the belt-and-braces choice meanwhile.
+
+Bisection plan for the next rig window, one lever per boot, same probe:
+1. Build a synthetic tool-call battery (schemas + prompts with mandatory tool calls,
+   scored on parse-validity rate and argument-JSON validity; no request-side data, the
+   corpus is generated). Nothing in benchmark/ measures tool-call validity today, which
+   is exactly how this escaped certification. It becomes a permanent gate for any arm
+   that touches verifier logits.
+2. Boot ladder on the battery: current safe config as control, then +DENSE_W8A8(+MIN_M=1),
+   then +DRAFT_W8A8, then +file_gather. The step that reproduces elevated parse failures
+   owns the bug.
+3. If DENSE_W8A8 owns it: decide between gating the arm off by default (status quo) or
+   a repair pass (per-channel scales, or restricting scope to shapes the battery proves
+   safe). Acceptance and speed history of the arm stays valid, only its quality case
+   reopens.
