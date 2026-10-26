@@ -11,7 +11,8 @@ The same boot with `--max-num-batched-tokens 9728` runs 62.7 s, the fastest
 prefill measured on this box; that setting awaits its cert battery.
 
 - Box: 4x NVIDIA CMP 170HX (GA100, unlocked to 64 GB and 74 SM), one NUMA node,
-  PLE n-gram table served by mmap file gather (patches 9-10), no pinned table.
+  PLE n-gram table pinned in host RAM (the file-gather path of patches 9-10 is
+  built and certified but reverted from the default 2026-10-26, see results.md).
   Every number here is at a 200 W per-card
   cap.
 - PCIe is the limit. Gen2, GPU1 at x16, GPU0/2/3 at x4, and `nvidia-smi topo -m`
@@ -112,9 +113,11 @@ Retired configs are in [archive/](archive/README.md): the 3-card set, the
 
 The script sets:
 
-- MTP-4 spec decode, and the PLE n-gram table served by mmap file gather
-  (`--engram-config '{"cpu_offload": true, "host_file_gather": true,
-  "host_file_gather_mmap": true}'`).
+- MTP-4 spec decode. The PLE n-gram table is pinned in host RAM; the file-gather
+  backends (patches 9-10) stay available via
+  `--engram-config '{"cpu_offload": true, "host_file_gather": true,
+  "host_file_gather_mmap": true}'` and are held off the default pending the
+  tool-call bisect of 2026-10-26.
 - Prefix caching with `--mamba-cache-mode align`,
   `--prefix-cache-retention-interval 16160` and `--prefix-match-unit 16`.
   MTP-4 forces a 1616 scheduler block (1600 + 16 per extra draft row) and the
@@ -126,11 +129,13 @@ The script sets:
   retries. vLLM forbids it only with KV connectors, and we run none.
 - `VLLM_SAFETENSORS_DROP_CACHE=1` (patch 6): consumed shards leave the page
   cache, so the 173 GiB boot read does not evict reusable cache.
-- The int8 lane on by default (patches 11-13): draft head and dense linears score
-  as W8A8, and `VLLM_QWEN4EXP_DENSE_W8A8_MIN_M=1` lets the dense arm serve the
-  captured decode buckets. Startup proof: `Dense bf16 linears scored as W8A8 int8
-  via CUTLASS from batch M=1: 39 of 151 layers` and `MTP draft head scores as W8A8
-  int8 via CUTLASS`.
+- W8A8 arms (patches 11-13) are OFF by default since 2026-10-26: elevated
+  tool-call errors on live agent traffic prompted a rollback of draft, dense,
+  gather-PLE, and MIN_M together, confounded until the one-lever-per-boot bisect
+  in results.md runs. When on, the startup proof lines are `Dense bf16 linears
+  scored as W8A8 int8 via CUTLASS from batch M=1: 39 of 151 layers` and `MTP
+  draft head scores as W8A8 int8 via CUTLASS`; absence of the first line is how
+  a safe boot announces itself.
 
 Startup checks for the YaRN lane:
 
@@ -388,7 +393,7 @@ about one position in 130 moves because of the quantization. Full tables:
 | 9 | upstream PR #58815, adopted (drift-adapted port): `--engram-config '{"host_file_gather": true}'` serves PLE n-gram rows by per-step `preadv` from page-cache-resident checkpoint shards instead of a 47.6 GiB pinned host table. Boot load 1:16 -> 0:49, ~48 GiB pinned RAM freed, needles/acceptance unchanged; cost is a per-step worker stream sync in staging (100/4 276-380 s vs pinned ~350 steady, cold 1M +3 s). Pairs with patch 6's range-sparing; the threaded prefill-ahead variant was measured slower and shelved (experiments/0013, results.md) |
 | 10 | opt-in `host_file_gather_mmap` gather backend for patch 9: one read-only mmap per checkpoint shard at bind, then per-step `index_select` instead of a per-row `preadv` loop, `FADV_WILLNEED` pre-queue kept. Cold 1M 92.6 -> 90.9 s (pinned parity), 100/4 362 -> 358-362 s, byte-identical rows (logprob A/B at the noise floor). Off by default so memory-tight hosts keep the reclaim-friendly preadv path |
 | 11 | opt-in `VLLM_QWEN4EXP_DRAFT_W8A8=1`: the 40k MTP draft head scores as per-channel int8 (dynamic per-token activation quant + `cutlass_scaled_mm`) instead of a bf16 GEMM. sm_80 int8 tensor cores run at twice the bf16 rate, and CUTLASS beat the bf16 head at every decode-M point benched (1.39-1.67x, quant cost free). The verifier never sees it: teacher-forced logprob captures differ below the boot's own noise floor, and the Boot-A battery was quality-neutral |
-| 12 | opt-in `VLLM_QWEN4EXP_DENSE_W8A8=1`: the shipped FP8 checkpoint keeps all dense linears (attention qkv/o, GDN projections, shared MLP) in BF16, only routed experts are FP8, so this claims those `UnquantizedLinearMethod` layers and scores prefill-sized batches (M>=512) as W8A8 int8 via CUTLASS. Decode stays bf16 and inside the captured graphs; the int8 copy lives next to the weight (pool -2.5%). Cold 1M TTFT 90.4 -> 85.4 s, 100/4 in_tps +6% at a quarter of the old spread, quality gates (needles, accept-window, corpus floors) clean in two battery sessions |
+| 12 | opt-in `VLLM_QWEN4EXP_DENSE_W8A8=1`: the shipped FP8 checkpoint keeps all dense linears (attention qkv/o, GDN projections, shared MLP) in BF16, only routed experts are FP8, so this claims those `UnquantizedLinearMethod` layers and scores prefill-sized batches (M>=512) as W8A8 int8 via CUTLASS. Decode stays bf16 and inside the captured graphs; the int8 copy lives next to the weight (pool -2.5%). Cold 1M TTFT 90.4 -> 85.4 s, 100/4 in_tps +6% at a quarter of the old spread, quality gates (needles, accept-window, corpus floors) clean in two battery sessions. Rolled back from the default 2026-10-26 on production tool-call errors; the gates listed never covered qwen3_xml validity, and as a verifier-side change this is the bisect's lead |
 | 13 | opt-in `VLLM_QWEN4EXP_DENSE_W8A8_MIN_M` (default 512, unset behaviour): lowers patch 12's batch floor so the int8 arm also serves the captured decode buckets, and stamps the floor at enable time so the branch a graph captures is fixed before capture. Measured under graph replay at the production layout, M=5 is 1.19-1.50x over the bf16 GEMM on the five large dense shapes; live it lands as 3-5% single-stream decode (step 23.94 -> 22.79 ms, win avg 192.6 -> 200.6 over three salts), because the arm claims 36 of 138 linears, not the whole `gemm-bf16` category, and each claimed GEMM pays its own activation quant. Quality at the floor: cross-arm values 9.46-9.72% flips against 8.98-9.24% floors, acceptance unchanged, needles clean; pool -0.12% |
 
 ## Gotchas

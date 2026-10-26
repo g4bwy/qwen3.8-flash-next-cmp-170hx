@@ -40,6 +40,13 @@ Measurements behind the claims: [benchmark/results.md](benchmark/results.md).
   mirrors it; backport that one line or boot with `--kernel-config
   '{"enable_jit_warmup": false}'` if you must stay on a windowed base. The
   current series base is past the fix.
+- Spec-decode acceptance is regime-bound, and the two regimes differ by almost
+  2x. Synthetic pinned-salt repetition cells read 4.8+ mean length, ~97% draft
+  rates; live agent and tool traffic reads 2.4-3.1 (34-53%) on the same server,
+  visible in the frontend's per-minute SpecDecoding lines. Neither number
+  predicts the other, and low acceptance is slow, not wrong: the verifier
+  gates every token, so nothing in the drafter can corrupt output. Do not chase
+  acceptance dips by comparing across regimes.
 - A KV cache whose cell size is not a multiple of 16 bytes pays a silent
   read-kernel penalty on Triton: head strides like 520 fail the
   divisible-by-16 specialization, vectorized gather loads drop out, and the
