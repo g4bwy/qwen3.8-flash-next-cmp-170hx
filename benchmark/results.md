@@ -4150,3 +4150,35 @@ Bisection plan for the next rig window, one lever per boot, same probe:
    a repair pass (per-channel scales, or restricting scope to shapes the battery proves
    safe). Acceptance and speed history of the arm stays valid, only its quality case
    reopens.
+
+## tool_call_battery.py: built, calibrated, baseline 21/21 on the safe config (2026-10-27)
+
+Seven grammar families, salted prompts, greedy, verdicts per case (OK / NO_CALL /
+BAD_JSON / WRONG_NAME / MISSING_CALL / MISSING_ARG / TYPE_FAIL / HTTP_ERR), exit
+non-zero below --min-valid. Calibration run: salt 152001, n=3, 21 cases, fp8 KV
+plus 9728 budget with the W8A8 arms off and PLE pinned: 21/21.
+
+What building it surfaced, all of it now design policy or documented behavior:
+- The default token budget is a first-class variable. At max_tokens 256 the
+  pick-from-many case failed twice with an EMPTY message and finish=length: the
+  hidden reasoning phase ate the whole budget before any tool call was emitted.
+  The gate therefore defaults to 768 and exposes --max-tokens; a config change
+  that lengthens reasoning is a real user-visible tool failure, so this is
+  signal, not noise, but it must not be confused with grammar rot.
+- Greedy is not bit-deterministic across requests at this serving config: an
+  identical case verdicted NO_CALL once and OK twice within one boot (reasoning
+  length fluctuates around the boundary). Rate comparisons at n >= 3 per family
+  are the gate, single-run absolute thresholds are not. --min-valid stays 100
+  for reference but trust the family table and repeats.
+- Two early failures were battery bugs, not model bugs: the multi-handoff case
+  required a tool it never offered, and one pick prompt mixed booking with
+  currency conversion. Both fixed; the second is a reminder that ambiguous
+  prompts measure the prompt.
+- The multi_handoff design (assistant tool_calls + tool results in history) is
+  accepted over the wire by this server, and parallel tool calls come back
+  properly parsed from qwen3_xml.
+
+Bisect usage (rig idle): same salt, same n, per boot of the ladder (control,
++dense W8A8, +draft W8A8, +gather). A family whose rate drops against this
+baseline localizes the failure; long_context vs the rest separates prefill-side
+from decode-side arms.

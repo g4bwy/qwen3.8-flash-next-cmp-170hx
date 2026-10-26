@@ -76,6 +76,17 @@ kernel-level benches noted below. Reproduce commands are at the end of
   turn.
 - `prefix_state_check.py` - cache-hit state correctness; exits non-zero.
 
+## Output validity
+
+- `tool_call_battery.py` - synthetic qwen3_xml tool-call gate: seven grammar
+  families (string/enum, numeric/bool, array + nested object, pick-one-of-8,
+  two parallel calls, ~20k-token long-context call, multi-turn handoff), scored
+  NO_CALL / BAD_JSON / WRONG_NAME / MISSING_* / TYPE_FAIL per case, exits
+  non-zero below `--min-valid` (default 100). Same salt means the same prompts;
+  any verifier-logits change (W8A8 arms, KV formats) runs the battery before and
+  after. Born from the 2026-10-26 production tool-call incident, whose gates had
+  no validity axis (results.md).
+
 ## Conventions
 
 - All HTTP tools default to `http://127.0.0.1:8000`. Always pass
