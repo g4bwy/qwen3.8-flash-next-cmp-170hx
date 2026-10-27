@@ -4208,3 +4208,29 @@ int8 hop, 9->7 host_file_gather, 10->8 mmap gather, 11->9 draft W8A8,
 the serve-script comments were renumbered; production posture is unchanged
 (pinned PLE, W8A8 arms off). Fender boots on the old base until the owner
 reinstalls here; banner then reads dev626+g<am-head> = dev615 + 11.
+
+## Battery v2: stream mode, adversarial families, deep-session soak (2026-10-27)
+
+Prompted by the owner's note that sporadic tool errors persist on the SAFE config
+(fp8@9728, W8A8 off, PLE pinned, patch 8 hop on) across multi-million-token
+sessions, so 21 clean grammar calls could not have seen them. Added:
+- `--stream`: full SSE delta reassembly client-side (stitched names, interleaved
+  tool_call indices, junk-line tolerant, `TRUNCATED` verdict on
+  finish_reason=length with no call). The streaming surface is where a frontend
+  parser bug lives; the Python path had this battle-tested, vllm-rs is a port.
+- Two adversarial families: `braces_unicode` (verbatim-copy argument containing
+  `{}`, quotes, `<div>` markup, non-ASCII, the classic qwen3_xml breakers) and
+  `long_arguments` (~400-word payload to copy). Nine families total.
+- `--deep-tokens N`: rebuilds long_context as an N-token system document, the
+  production regime of calling a tool at 900k depth.
+Stream soak, salt 152001, n=2, 18/18 on the Rust frontend at shallow depth.
+Not exonerating: a 1-in-10k sporadic needs volume plus the real content and
+depth distribution. The decisive cheap discriminator needs no tooling: when an
+error lands, look at what the client received. Raw `<tool_call>`/`<function=...>`
+text leaking into message content means the model emitted the grammar and the
+frontend parser failed on it (vllm-rs suspect, A/B with RUST=0). Clean prose
+with no tool call means the model never emitted one (engine suspect: reasoning
+truncation, deep-context quality, hop/KV numerics). Bisect ladder grows to:
+grep past failures, then RUST=0 A/B battery run, then deep soak at 650000, then
+the original arm ladder; PP_INT8_HOP=0 joins as its own boot since it is the
+only verifier-side perturbation still enabled beyond fp8 KV itself.

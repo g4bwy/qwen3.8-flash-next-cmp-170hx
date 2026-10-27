@@ -275,6 +275,41 @@ def base_cases(rng):
             "expect": {"name": "save_note", "args": {"text": "str"}},
         },
     ]
+    brace_payload = {"cfg": {"emblem": "café 例",
+                             "html": '<div class="a"></div>'},
+                     "note": "x{y} → télé 例"}
+    brace_doc = (
+        "Copy this snippet verbatim, character by character, into the code "
+        "argument of a save_snippet tool call: "
+        + json.dumps(brace_payload, ensure_ascii=False)
+    )
+    cases.append({
+        "family": "braces_unicode",
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "save_snippet",
+                "description": "Store a code snippet string.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"code": {"type": "string"}},
+                    "required": ["code"],
+                },
+            },
+        }],
+        "tool_choice": "auto",
+        "messages": [{"role": "user", "content": brace_doc}],
+        "expect": {"name": "save_snippet", "args": {"code": "str"}},
+    })
+    big = " ".join(rng.choice(WORDS) for _ in range(400))
+    cases.append({
+        "family": "long_arguments",
+        "tools": [generic_tool("save_note")], "tool_choice": "auto",
+        "messages": [{"role": "user", "content":
+                      "Save a note whose text is exactly this paragraph, do "
+                      "not summarize it: " + big}],
+        "expect": {"name": "save_note", "args": {"text": "str"}},
+    })
     long_doc = filler(rng, 15000)
     cases.append({
         "family": "long_context",
@@ -293,9 +328,18 @@ def base_cases(rng):
     return cases
 
 
-def build_cases(salt, n, only):
+def build_cases(salt, n, only, deep_words=0):
     rng = random.Random(salt)
     base = base_cases(rng)
+    if deep_words:
+        doc = filler(rng, int(deep_words))
+        for c in base:
+            if c["family"] == "long_context":
+                c["messages"] = [
+                    {"role": "system",
+                     "content": "You are a careful assistant. " + doc},
+                    c["messages"][1],
+                ]
     out = []
     for i in range(n):
         for c in base:
@@ -339,6 +383,8 @@ def evaluate(case, reply):
         return "HTTP_ERR", None
     calls = (choices[0].get("message") or {}).get("tool_calls") or []
     if not calls:
+        if choices[0].get("finish_reason") == "length":
+            return "TRUNCATED", None
         return "NO_CALL", None
     want_names = ([case["expect"]["name"]] if "name" in case["expect"]
                   else case["expect"]["names"])
@@ -367,7 +413,56 @@ def evaluate(case, reply):
     return "OK", got
 
 
-def run_case(base_url, model, case, timeout, max_tokens):
+def _stream_message(resp):
+    """Reassemble an SSE chat stream into (message, finish_reason).
+
+    Delta semantics mirror OpenAI: content appends, tool_calls carry an index
+    and partial name/argument fragments that must be stitched. A frontend
+    parser that mishandles a tag split across chunks shows up here as a
+    message that never validates, exactly like in a real client.
+    """
+    content = ""
+    finish = None
+    acc = {}
+    for raw in resp:
+        line = raw.decode(errors="replace").strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload == "[DONE]":
+            break
+        try:
+            d = json.loads(payload)
+        except ValueError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        choices = d.get("choices") or []
+        if not choices:
+            continue
+        finish = choices[0].get("finish_reason") or finish
+        delta = choices[0].get("delta") or {}
+        if isinstance(delta.get("content"), str):
+            content += delta["content"]
+        for tcd in delta.get("tool_calls") or []:
+            slot = acc.setdefault(
+                tcd.get("index", 0),
+                {"id": None, "type": "function",
+                 "function": {"name": "", "arguments": ""}})
+            if tcd.get("id"):
+                slot["id"] = tcd["id"]
+            fn = tcd.get("function") or {}
+            if isinstance(fn.get("name"), str):
+                slot["function"]["name"] += fn["name"]
+            if isinstance(fn.get("arguments"), str):
+                slot["function"]["arguments"] += fn["arguments"]
+    msg = {"role": "assistant", "content": content}
+    if acc:
+        msg["tool_calls"] = [acc[k] for k in sorted(acc)]
+    return {"choices": [{"message": msg, "finish_reason": finish}]}, finish
+
+
+def run_case(base_url, model, case, timeout, max_tokens, stream=False):
     body = json.dumps({
         "model": model,
         "messages": case["messages"],
@@ -375,6 +470,7 @@ def run_case(base_url, model, case, timeout, max_tokens):
         "tool_choice": case["tool_choice"],
         "temperature": 0,
         "max_tokens": max_tokens,
+        "stream": stream,
     }).encode()
     req = urllib.request.Request(
         base_url.rstrip("/") + "/v1/chat/completions",
@@ -382,8 +478,13 @@ def run_case(base_url, model, case, timeout, max_tokens):
         headers={"Content-Type": "application/json"})
     t0 = time.perf_counter()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            reply = r.read().decode()
+        if stream:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data, _ = _stream_message(r)
+            reply = json.dumps(data)
+        else:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                reply = r.read().decode()
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
         reply = ""
         print(f"  !! {case['id']}: {exc}", file=sys.stderr)
@@ -418,6 +519,13 @@ def main():
                     "the call; 256 truncated reasoning to death on pick cases")
     ap.add_argument("--min-valid", type=float, default=100.0,
                     help="exit non-zero below this OK rate, percent")
+    ap.add_argument("--deep-tokens", type=int, default=0,
+                    help="replace the long_context filler with this many "
+                    "tokens (~words x 1.3); 650000 reproduces a session that "
+                    "must call a tool at 900k depth. One prefill each.")
+    ap.add_argument("--stream", action="store_true",
+                    help="exercise the SSE path: deltas reassembled client-"
+                    "side, which is where a streaming parser bug surfaces")
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
 
@@ -425,18 +533,20 @@ def main():
         args.base_url.rstrip("/") + "/v1/models", timeout=30).read())
     model = args.model or listed["data"][0]["id"]
     only = set(f.strip() for f in args.only.split(",")) if args.only else None
-    cases = build_cases(args.salt, args.n, only)
+    cases = build_cases(args.salt, args.n, only,
+                        int(args.deep_tokens / 1.3) if args.deep_tokens
+                        else 0)
     print(f"tool-call battery: {len(cases)} cases, salt {args.salt}, "
           f"greedy, conc {args.conc}, model {model}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.conc) as ex:
         rows = list(ex.map(
             lambda c: run_case(args.base_url, model, c, args.timeout,
-                               args.max_tokens),
+                               args.max_tokens, args.stream),
             cases))
 
-    order = ["OK", "NO_CALL", "BAD_JSON", "WRONG_NAME", "MISSING_CALL",
-             "MISSING_ARG", "TYPE_FAIL", "HTTP_ERR"]
+    order = ["OK", "NO_CALL", "TRUNCATED", "BAD_JSON", "WRONG_NAME",
+             "MISSING_CALL", "MISSING_ARG", "TYPE_FAIL", "HTTP_ERR"]
     families = sorted({r["family"] for r in rows})
     print(f"{'family':>16}  {'ok':>4}  " +
           "  ".join(f"{v[:8]:>8}" for v in order[1:]))
