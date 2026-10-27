@@ -4207,7 +4207,7 @@ int8 hop, 9->7 host_file_gather, 10->8 mmap gather, 11->9 draft W8A8,
 12->10 dense W8A8, 13->11 dense MIN_M decode arm. README, GOTCHAS.md and
 the serve-script comments were renumbered; production posture is unchanged
 (pinned PLE, W8A8 arms off). Fender boots on the old base until the owner
-reinstalls here; banner then reads dev626+g<am-head> = dev615 + 11.
+reinstalls here; banner observed after reinstall: 0.33.0rc1.dev65+g0032c8f14 = v0.33.0rc0 +54 +11, the wheel-stamp line dev615 predates the rc0 tag fetch; same base either way.
 
 ## Battery v2: stream mode, adversarial families, deep-session soak (2026-10-27)
 
@@ -4255,3 +4255,17 @@ patches; tree `3cd817fadef69a0329e44ea368212746ede2de04` (replay-verified
 11/11, suites 407 pass + 11 env fails = pristine parity, ruff/format clean).
 Fender: re-am the eleven fresh exports and boot again; the guard now trips
 only on a genuinely half-enabled pipeline.
+
+### Post-fix boot on 5c1eb11cb3: certified at smoke depth (2026-10-27 14:19)
+
+Owner re-am'd the eleven exports and booted with the hop guard fix in.
+Banner 0.33.0rc1.dev65+g0032c8f14 = v0.33.0rc0 +54 +11 (local scm
+pre-bumps the candidate; the wheel stamp for the same commit reads
+0.32.1rc1.dev615; both correct). Hop ACTIVE on all stages, profile_run and
+captures clean, zero errors, FA2, pinned PLE (gather flags false, the
+2026-10-26 posture), W8A8 arms off, pool 5,292,537 / 5.29x. Chunk budget
+9728 is live in this boot. Needles pass. One cold probe (salt 140100,
+logs/probe-rebasefix-cold-140100.json): TTFT 71.1 s, match 1.0, preempts 0,
+acceptance 3.23; bg=64 drafts from co-tenant traffic during the window, so
+the timing is indicative only. The 9728 cert battery remains un-run
+(owner-approved batteries only).
