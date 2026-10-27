@@ -1,4 +1,4 @@
-From 6f29a75b71f5adb350c1e7e6ace473415faa2b68 Mon Sep 17 00:00:00 2001
+From ebd4990d045b1abd9fbd30e1d77f509a3849da02 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 23:44:56 +0200
 Subject: [PATCH 11/11] [Perf][Qwen4Exp] Let the dense W8A8 arm serve decode

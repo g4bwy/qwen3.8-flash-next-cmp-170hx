@@ -34,7 +34,7 @@ prefill measured on this box; that setting awaits its cert battery.
   patch 2, #58815 as patch 7; both still open upstream,
   so they survive rebases as adopted commits). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `a5fd67bb062cd4a66f6a9cb1c9c2bfbcde143ccc`. If it does not, you applied
+  `3cd817fadef69a0329e44ea368212746ede2de04`. If it does not, you applied
   something else or onto something else.
 - The base's `humming-kernels[cu13]` pin moved to 0.1.17 (0.1.12 fails the
   new `vllm/utils/humming.py` imports). The editable precompiled install
@@ -52,7 +52,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout 5c1eb11cb361d63668e813958b207edfc366827a
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # a5fd67bb062cd4a66f6a9cb1c9c2bfbcde143ccc
+git rev-parse 'HEAD^{tree}'   # 3cd817fadef69a0329e44ea368212746ede2de04
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard

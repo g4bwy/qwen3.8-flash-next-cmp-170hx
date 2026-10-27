@@ -1,4 +1,4 @@
-From 1c2d0f1e9ceeea05cfd779e21cc8b8514992e6f6 Mon Sep 17 00:00:00 2001
+From 0867f0c93d8d6a9e8c357f05f62b22648ad2e661 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 23:52:14 +0200
 Subject: [PATCH 09/11] [Perf][MTP] Score the Qwen4Exp draft head with W8A8

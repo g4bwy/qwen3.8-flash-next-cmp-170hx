@@ -1,4 +1,4 @@
-From 165675950d18f1369d6ef671b90e1e94ba4ea016 Mon Sep 17 00:00:00 2001
+From 46dc54fadee66b27ed92a2da7c8de0f8e3f09a88 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Wed, 21 Oct 2026 19:22:07 +0200
 Subject: [PATCH 07/11] [Model Loader][Qwen4Exp] Serve PLE rows from checkpoint

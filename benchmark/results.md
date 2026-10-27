@@ -4191,7 +4191,7 @@ series' patches 1-3: the drafter's `intermediate_tensors is None` branch,
 the config and model-state PP+PLE ban lifts (nvidia and amd), and the
 per-layer KV planning fix behind the `StopIteration`. The base commit is now
 5c1eb11cb3 itself (newest tip with a live cu130 wheel, dev615). The rebase
-carries 11 patches, tree `a5fd67bb062cd4a66f6a9cb1c9c2bfbcde143ccc`
+carries 11 patches, tree `a5fd67bb06`, hot-fixed the same day to `3cd817fade`, see below
 (replay-verified 11/11 in wt-pristine-1027; CPU suites 405 pass with the
 same 11 test_ple env failures as the pristine base; ruff clean; all patched
 modules import). #60234 came without regression tests for those contracts,
@@ -4234,3 +4234,24 @@ truncation, deep-context quality, hop/KV numerics). Bisect ladder grows to:
 grep past failures, then RUST=0 A/B battery run, then deep soak at 650000, then
 the original arm ladder; PP_INT8_HOP=0 joins as its own boot since it is the
 only verifier-side perturbation still enabled beyond fp8 KV itself.
+
+### Boot fail on the fresh rebase, fixed same day (2026-10-27)
+
+First 11-patch boot aborted in profile_run: PP1/PP3 raised the int8-hop
+half-enable guard ("received handoff is not int8+scaled",
+boot-4x-1m-int8-hop-fail.log). Root cause: with old patch 2 gone, upstream
+`__init__` rebinds `make_empty_intermediate_tensors` to the factory as an
+instance attribute, which silently shadows patch 6's class method, so dummy
+handoffs were bf16 while real traffic would have been int8. The guard did
+its job; the bug was shadowing introduced by the renumbering, invisible to
+apply-time conflict detection.
+
+Fix folded into patch 6: the factory binding and its import are removed (the
+class method serves both arms, flag-off identical to the factory shape),
+plus tests/models/qwen4_exp/test_pp_int8_hop.py pinning both arms and
+forbidding the factory binding via a source check, so the next rebase that
+reintroduces it fails CPU-side instead of at boot. Series unchanged at 11
+patches; tree `3cd817fadef69a0329e44ea368212746ede2de04` (replay-verified
+11/11, suites 407 pass + 11 env fails = pristine parity, ruff/format clean).
+Fender: re-am the eleven fresh exports and boot again; the guard now trips
+only on a genuinely half-enabled pipeline.

@@ -1,4 +1,4 @@
-From 42db21492af88cb6c1f836fa2997e1879314ba6c Mon Sep 17 00:00:00 2001
+From 0b922bc80f7a1a93f39bdfea85909f885ba9a787 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 16 Oct 2026 11:21:02 +0200
 Subject: [PATCH 06/11] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
@@ -21,11 +21,76 @@ byte-identical to the pre-patch path on eager and CUDA-graph boots.
 Receiving stages raise instead of silently casting when a plain bf16
 handoff arrives with the flag set, so a half-enabled pipeline cannot
 corrupt values.
----
- vllm/envs.py                          |  4 ++
- vllm/models/qwen4_exp/nvidia/model.py | 84 ++++++++++++++++++++++++++-
- 2 files changed, 85 insertions(+), 3 deletions(-)
 
+Also unbind upstream's instance-attribute factory wiring in __init__:
+it silently shadows this class method, and a bf16 dummy handoff from
+profile_run hit the strict half-enable guard on the 2026-10-27 boot. A
+test pins both arms of the method and forbids the factory binding from
+returning unnoticed at the next rebase.
+---
+ tests/models/qwen4_exp/test_pp_int8_hop.py | 51 +++++++++++++
+ vllm/envs.py                               |  4 +
+ vllm/models/qwen4_exp/nvidia/model.py      | 89 ++++++++++++++++++++--
+ 3 files changed, 136 insertions(+), 8 deletions(-)
+ create mode 100644 tests/models/qwen4_exp/test_pp_int8_hop.py
+
+diff --git a/tests/models/qwen4_exp/test_pp_int8_hop.py b/tests/models/qwen4_exp/test_pp_int8_hop.py
+new file mode 100644
+index 0000000000..9ea255101b
+--- /dev/null
++++ b/tests/models/qwen4_exp/test_pp_int8_hop.py
+@@ -0,0 +1,51 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""The int8 hop's handoff buffers must come from its class method.
++
++Boot 2026-10-27 on base 5c1eb11cb3: upstream rebinds
++`make_empty_intermediate_tensors` as an instance attribute in __init__,
++which silently shadows any class-level override, so the dummy runs in
++profile_run handed stages a bf16 block and the half-enabled guard (rightly)
++aborted the boot. These tests pin both arms of the class method and forbid
++the factory binding from coming back unnoticed at the next rebase.
++"""
++
++import inspect
++from types import SimpleNamespace
++
++import torch
++from torch import nn
++
++from vllm.models.qwen4_exp.nvidia import model as model_module
++
++
++def _bare_model(hop: bool) -> "model_module.Qwen4ExpModel":
++    model = object.__new__(model_module.Qwen4ExpModel)
++    nn.Module.__init__(model)
++    model.config = SimpleNamespace(hidden_size=64, hc_count=4)
++    model._pp_int8_hop = hop
++    return model
++
++
++def test_hop_class_method_serves_both_arms() -> None:
++    on = _bare_model(True).make_empty_intermediate_tensors(
++        batch_size=8, dtype=torch.bfloat16, device=torch.device("cpu")
++    )
++    assert on["hidden_states"].dtype is torch.int8
++    assert on["hidden_states"].shape == (8, 64 * 4)
++    assert on["hidden_scale"].dtype is torch.float32
++    assert set(on.tensors) == {"hidden_states", "hidden_scale"}
++
++    off = _bare_model(False).make_empty_intermediate_tensors(
++        batch_size=8, dtype=torch.bfloat16, device=torch.device("cpu")
++    )
++    assert off["hidden_states"].dtype is torch.bfloat16
++    assert set(off.tensors) == {"hidden_states"}
++
++
++def test_factory_binding_stays_gone() -> None:
++    src = inspect.getsource(model_module)
++    assert "make_empty_intermediate_tensors_factory(" not in src, (
++        "an instance-attribute factory binding shadows the hop class method "
++        "and breaks profile_run under VLLM_QWEN4EXP_PP_INT8_HOP"
++    )
 diff --git a/vllm/envs.py b/vllm/envs.py
 index e03d4abd7f..50d4f025cd 100755
 --- a/vllm/envs.py
@@ -49,7 +114,7 @@ index e03d4abd7f..50d4f025cd 100755
      "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index f527ad0997..5135d2e742 100644
+index f527ad0997..bab031c18b 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
 @@ -13,6 +13,7 @@ from vllm import envs
@@ -60,7 +125,15 @@ index f527ad0997..5135d2e742 100644
  from vllm.model_executor.layers.fused_moe.utils import (
      is_model_fused_shared_expert_compatible,
  )
-@@ -90,6 +91,8 @@ from .ops.cute_dsl.hc_down_silu import request_hc_down_silu_warmup
+@@ -65,7 +66,6 @@ from vllm.model_executor.models.utils import (
+     WeightsMapper,
+     _merge_multimodal_embeddings,
+     extract_layer_index,
+-    make_empty_intermediate_tensors_factory,
+     make_layers,
+     maybe_fuse_shared_experts,
+     maybe_prefix,
+@@ -90,6 +90,8 @@ from .ops.cute_dsl.hc_down_silu import request_hc_down_silu_warmup
  from .ple_layer import Qwen4ExpPLELayer
  from .qsa import Qwen4ExpQSAAttention
  
@@ -69,7 +142,7 @@ index f527ad0997..5135d2e742 100644
  # Transformers v5.18 renamed `qwen_sparse_attention` to `indexed_attention`
  # TODO: Delete qwen_... once Transformers 5.18.0 is the minimum required version.
  _QSA_LAYER_TYPES = ("qwen_sparse_attention", "indexed_attention")
-@@ -405,7 +408,34 @@ class Qwen4ExpMixtureOfExperts(MixtureOfExperts):
+@@ -405,7 +407,34 @@ class Qwen4ExpMixtureOfExperts(MixtureOfExperts):
              moe.experts.update_expert_map()
  
  
@@ -104,7 +177,7 @@ index f527ad0997..5135d2e742 100644
      hf_to_vllm_mapper = Qwen3_5Model.hf_to_vllm_mapper | _EXTRA_WEIGHTS_MAPPER
  
      def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
-@@ -421,6 +451,13 @@ class Qwen4ExpModel(nn.Module):
+@@ -421,6 +450,13 @@ class Qwen4ExpModel(nn.Module):
              vllm_config.parallel_config.use_sequence_parallel_moe
          )
          self.vocab_size = config.vocab_size
@@ -118,7 +191,18 @@ index f527ad0997..5135d2e742 100644
          self._qsa_layer_ids = frozenset(
              layer_idx
              for layer_idx, layer_type in enumerate(config.layer_types)
-@@ -497,6 +534,27 @@ class Qwen4ExpModel(nn.Module):
+@@ -451,10 +487,6 @@ class Qwen4ExpModel(nn.Module):
+             Qwen4ExpSparseMoeBlock,
+             "mlp",
+         )
+-        intermediate_size = config.hidden_size * config.hc_count
+-        self.make_empty_intermediate_tensors = make_empty_intermediate_tensors_factory(
+-            ["hidden_states"], intermediate_size
+-        )
+ 
+         self.hyper_connection_mixer: GatedResidual | None
+         if get_pp_group().is_last_rank:
+@@ -497,6 +529,27 @@ class Qwen4ExpModel(nn.Module):
      def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
          return self.embed_tokens(input_ids)
  
@@ -146,7 +230,7 @@ index f527ad0997..5135d2e742 100644
      @staticmethod
      def _start_layer_ple_prefetch(
          layer: nn.Module,
-@@ -545,8 +603,23 @@ class Qwen4ExpModel(nn.Module):
+@@ -545,8 +598,23 @@ class Qwen4ExpModel(nn.Module):
          else:
              if intermediate_tensors is None:
                  raise ValueError("pipeline stage requires intermediate tensors")
@@ -172,7 +256,7 @@ index f527ad0997..5135d2e742 100644
          full_num_tokens = positions.shape[-1]
          block_output = None
          injection = None
-@@ -611,7 +684,12 @@ class Qwen4ExpModel(nn.Module):
+@@ -611,7 +679,12 @@ class Qwen4ExpModel(nn.Module):
                  hidden_states = last_layer.mlp_hyper_connection.combine(
                      hidden_states, block_output, injection
                  )

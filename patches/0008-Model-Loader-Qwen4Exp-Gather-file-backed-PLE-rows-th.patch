@@ -1,4 +1,4 @@
-From 146a7968eee149351f3694ea0859badd0bbb5558 Mon Sep 17 00:00:00 2001
+From 5006e323326a6bb85c3392b1a7a7c6d4da062166 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 16:55:55 +0200
 Subject: [PATCH 08/11] [Model Loader][Qwen4Exp] Gather file-backed PLE rows
