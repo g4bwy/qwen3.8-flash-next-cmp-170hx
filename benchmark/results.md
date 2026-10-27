@@ -4182,3 +4182,29 @@ Bisect usage (rig idle): same salt, same n, per boot of the ladder (control,
 +dense W8A8, +draft W8A8, +gather). A family whose rate drops against this
 baseline localizes the failure; long_context vs the rest separates prefill-side
 from decode-side arms.
+
+### Series rebased onto 5c1eb11cb3; patches 1-3 absorbed upstream (2026-10-27)
+
+Upstream merged #60234 ("Allow pipeline parallelism for Qwen4Exp PLE models
+and their MTP drafter", 2026-10-27), which lands the substance of this
+series' patches 1-3: the drafter's `intermediate_tensors is None` branch,
+the config and model-state PP+PLE ban lifts (nvidia and amd), and the
+per-layer KV planning fix behind the `StopIteration`. The base commit is now
+5c1eb11cb3 itself (newest tip with a live cu130 wheel, dev615). The rebase
+carries 11 patches, tree `a5fd67bb062cd4a66f6a9cb1c9c2bfbcde143ccc`
+(replay-verified 11/11 in wt-pristine-1027; CPU suites 405 pass with the
+same 11 test_ple env failures as the pristine base; ruff clean; all patched
+modules import). #60234 came without regression tests for those contracts,
+so the old patches' unique tests are salvaged as new patch 1 (tests only);
+the bare-instance wire-shape test now binds upstream's factory where the
+model class defines no override, holding for both backends and for the
+int8-hop build. Patch 6 (int8 hop) was the one real conflict and resolved
+with both sides intact (PPMissingLayer placement + hop encode/decode).
+
+Old -> new numbering, for the narratives above which keep their original
+numbers: 4->2 rope, 5->3 draft vocab, 6->4 drop-cache, 7->5 fp8 PLE, 8->6
+int8 hop, 9->7 host_file_gather, 10->8 mmap gather, 11->9 draft W8A8,
+12->10 dense W8A8, 13->11 dense MIN_M decode arm. README, GOTCHAS.md and
+the serve-script comments were renumbered; production posture is unchanged
+(pinned PLE, W8A8 arms off). Fender boots on the old base until the owner
+reinstalls here; banner then reads dev626+g<am-head> = dev615 + 11.

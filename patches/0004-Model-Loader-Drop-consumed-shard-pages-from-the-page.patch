@@ -1,7 +1,7 @@
-From 923bc83653fcc3b2e37cd71be0eec01bafdcfa38 Mon Sep 17 00:00:00 2001
+From e5db9668c0e29349ff83c0a414c3adb824727509 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 12:16:26 +0200
-Subject: [PATCH 06/12] [Model Loader] Drop consumed shard pages from the page
+Subject: [PATCH 04/11] [Model Loader] Drop consumed shard pages from the page
  cache
 
 Set VLLM_SAFETENSORS_DROP_CACHE=1 to posix_fadvise(FADV_DONTNEED) each
@@ -192,10 +192,10 @@ index 0000000000..307143eb4f
 +    for off, length in calls:
 +        assert all(off >= e or off + length <= b for b, e in keep)
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 1d6a4aa598..72d7638d2f 100755
+index a7bde6b336..e03d4abd7f 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -122,6 +122,7 @@ if TYPE_CHECKING:
+@@ -123,6 +123,7 @@ if TYPE_CHECKING:
      VLLM_USE_MEGA_AOT_ARTIFACT: bool = False
      VLLM_USE_TRITON_AWQ: bool = False
      VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
@@ -203,7 +203,7 @@ index 1d6a4aa598..72d7638d2f 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1130,6 +1131,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1135,6 +1136,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_FASTSAFETENSORS_QUEUE_SIZE": lambda: int(
          os.getenv("VLLM_FASTSAFETENSORS_QUEUE_SIZE", "0")
      ),

@@ -1,7 +1,7 @@
-From f9f320427bfae48a7002eccb209e7f1c257d285a Mon Sep 17 00:00:00 2001
+From 2152590e89b4496282225c82ac7f7b797feb5abb Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
-Subject: [PATCH 05/12] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
+Subject: [PATCH 03/11] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
 
 Every draft token of MTP speculation runs compute_logits with the full
 248,320-row lm_head: on sm_80 at the ~1.1 TB/s measured for these cards
@@ -71,7 +71,7 @@ index 0000000000..dddb7c8f81
 +    assert _remap_mtp_weight_name("mtp.draft_lm_head.weight") == "draft_lm_head.weight"
 +    assert _remap_mtp_weight_name("mtp.shared_head.head.weight") == "lm_head.weight"
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index 64b2dfd8c4..125914703d 100644
+index fb15d07646..61acbb3450 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -13,6 +13,7 @@ The MTP draft model reuses the Qwen4Exp backbone (PLE/HC/MoE) but:
@@ -123,7 +123,7 @@ index 64b2dfd8c4..125914703d 100644
      if name.startswith("mtp.shared_head.head."):
          return name.replace("mtp.shared_head.head.", "lm_head.", 1)
      if name.startswith("model.shared_head.head."):
-@@ -426,8 +447,48 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+@@ -424,8 +445,48 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
              prefix=maybe_prefix(prefix, "mtp"),
          )
  
@@ -173,7 +173,7 @@ index 64b2dfd8c4..125914703d 100644
                  self.lm_head = self.model.embed_tokens
              else:
                  self.lm_head = ParallelLMHead(
-@@ -469,11 +530,26 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+@@ -467,11 +528,26 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
      def compute_logits(
          self, hidden_states: torch.Tensor, spec_step_idx: int = 0
      ) -> torch.Tensor | None:
@@ -201,10 +201,10 @@ index 64b2dfd8c4..125914703d 100644
                  if remapped_name is not None:
                      yield remapped_name, weight
 diff --git a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
-index 474b106503..59f1757112 100644
+index 7b70fd0ee0..526b04f99c 100644
 --- a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
 +++ b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
-@@ -273,6 +273,13 @@ class TargetDependentARSpeculator(DraftModelSpeculator):
+@@ -277,6 +277,13 @@ class TargetDependentARSpeculator(DraftModelSpeculator):
  
          self._prepare_eplb_forward(num_tokens)
  

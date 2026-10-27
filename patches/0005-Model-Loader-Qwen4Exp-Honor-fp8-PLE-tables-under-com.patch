@@ -1,7 +1,7 @@
-From e3692838a165129a3ef977e20c175c7c73f356ad Mon Sep 17 00:00:00 2001
+From 0774095d8263cef405c26ce399fa6f991ba745d3 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 9 Oct 2026 20:51:39 +0200
-Subject: [PATCH 07/12] [Model Loader] Qwen4Exp: Honor fp8 PLE tables under
+Subject: [PATCH 05/11] [Model Loader] Qwen4Exp: Honor fp8 PLE tables under
  compressed-tensors
 
 The compressed-tensors branch of Qwen4ExpPLEEmbeddingMethod

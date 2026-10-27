@@ -1,7 +1,7 @@
-From 64c80e86d8fb51c4c673a4af9163b4998ea8b4f8 Mon Sep 17 00:00:00 2001
+From 42db21492af88cb6c1f836fa2997e1879314ba6c Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 16 Oct 2026 11:21:02 +0200
-Subject: [PATCH 08/12] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
+Subject: [PATCH 06/11] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
  pipeline handoff
 
 The hyper-connection model ships the materialized 4-stream state
@@ -23,14 +23,14 @@ handoff arrives with the flag set, so a half-enabled pipeline cannot
 corrupt values.
 ---
  vllm/envs.py                          |  4 ++
- vllm/models/qwen4_exp/nvidia/model.py | 67 ++++++++++++++++++++++++++-
- 2 files changed, 69 insertions(+), 2 deletions(-)
+ vllm/models/qwen4_exp/nvidia/model.py | 84 ++++++++++++++++++++++++++-
+ 2 files changed, 85 insertions(+), 3 deletions(-)
 
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 72d7638d2f..eb37037adb 100755
+index e03d4abd7f..50d4f025cd 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -123,6 +123,7 @@ if TYPE_CHECKING:
+@@ -124,6 +124,7 @@ if TYPE_CHECKING:
      VLLM_USE_TRITON_AWQ: bool = False
      VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
      VLLM_SAFETENSORS_DROP_CACHE: bool = False
@@ -38,7 +38,7 @@ index 72d7638d2f..eb37037adb 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1139,6 +1140,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1144,6 +1145,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_SAFETENSORS_DROP_CACHE": lambda: (
          os.getenv("VLLM_SAFETENSORS_DROP_CACHE", "0").lower() in ("1", "true")
      ),
@@ -49,7 +49,7 @@ index 72d7638d2f..eb37037adb 100755
      "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index dc621e676f..8b14c7db22 100644
+index f527ad0997..5135d2e742 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
 @@ -13,6 +13,7 @@ from vllm import envs
@@ -60,7 +60,7 @@ index dc621e676f..8b14c7db22 100644
  from vllm.model_executor.layers.fused_moe.utils import (
      is_model_fused_shared_expert_compatible,
  )
-@@ -88,6 +89,8 @@ from .ops.cute_dsl.hc_down_silu import request_hc_down_silu_warmup
+@@ -90,6 +91,8 @@ from .ops.cute_dsl.hc_down_silu import request_hc_down_silu_warmup
  from .ple_layer import Qwen4ExpPLELayer
  from .qsa import Qwen4ExpQSAAttention
  
@@ -69,7 +69,7 @@ index dc621e676f..8b14c7db22 100644
  # Transformers v5.18 renamed `qwen_sparse_attention` to `indexed_attention`
  # TODO: Delete qwen_... once Transformers 5.18.0 is the minimum required version.
  _QSA_LAYER_TYPES = ("qwen_sparse_attention", "indexed_attention")
-@@ -403,7 +406,34 @@ class Qwen4ExpMixtureOfExperts(MixtureOfExperts):
+@@ -405,7 +408,34 @@ class Qwen4ExpMixtureOfExperts(MixtureOfExperts):
              moe.experts.update_expert_map()
  
  
@@ -104,7 +104,7 @@ index dc621e676f..8b14c7db22 100644
      hf_to_vllm_mapper = Qwen3_5Model.hf_to_vllm_mapper | _EXTRA_WEIGHTS_MAPPER
  
      def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
-@@ -419,6 +449,13 @@ class Qwen4ExpModel(nn.Module):
+@@ -421,6 +451,13 @@ class Qwen4ExpModel(nn.Module):
              vllm_config.parallel_config.use_sequence_parallel_moe
          )
          self.vocab_size = config.vocab_size
@@ -118,29 +118,40 @@ index dc621e676f..8b14c7db22 100644
          self._qsa_layer_ids = frozenset(
              layer_idx
              for layer_idx, layer_type in enumerate(config.layer_types)
-@@ -493,10 +530,16 @@ class Qwen4ExpModel(nn.Module):
-         tensors = {
-             "hidden_states": torch.zeros(
-                 (batch_size, self.config.hidden_size * self.config.hc_count),
--                dtype=dtype,
+@@ -497,6 +534,27 @@ class Qwen4ExpModel(nn.Module):
+     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
+         return self.embed_tokens(input_ids)
+ 
++    def make_empty_intermediate_tensors(
++        self,
++        batch_size: int,
++        dtype: torch.dtype,
++        device: torch.device,
++    ) -> IntermediateTensors:
++        tensors = {
++            "hidden_states": torch.zeros(
++                (batch_size, self.config.hidden_size * self.config.hc_count),
 +                dtype=torch.int8 if self._pp_int8_hop else dtype,
-                 device=device,
-             )
-         }
++                device=device,
++            )
++        }
 +        if self._pp_int8_hop:
 +            tensors["hidden_scale"] = torch.zeros(
 +                (batch_size, self.config.hc_count),
 +                dtype=torch.float32,
 +                device=device,
 +            )
-         return IntermediateTensors(tensors)
- 
++        return IntermediateTensors(tensors)
++
      @staticmethod
-@@ -547,7 +590,23 @@ class Qwen4ExpModel(nn.Module):
+     def _start_layer_ple_prefetch(
+         layer: nn.Module,
+@@ -545,8 +603,23 @@ class Qwen4ExpModel(nn.Module):
          else:
              if intermediate_tensors is None:
                  raise ValueError("pipeline stage requires intermediate tensors")
 -            hidden_states = intermediate_tensors["hidden_states"]
+-
 +            if self._pp_int8_hop:
 +                hidden_q = intermediate_tensors["hidden_states"]
 +                if hidden_q.dtype != torch.int8 or (
@@ -161,17 +172,20 @@ index dc621e676f..8b14c7db22 100644
          full_num_tokens = positions.shape[-1]
          block_output = None
          injection = None
-@@ -613,6 +672,10 @@ class Qwen4ExpModel(nn.Module):
+@@ -611,7 +684,12 @@ class Qwen4ExpModel(nn.Module):
+                 hidden_states = last_layer.mlp_hyper_connection.combine(
                      hidden_states, block_output, injection
                  )
-             intermediate = {"hidden_states": hidden_states}
+-            return IntermediateTensors({"hidden_states": hidden_states})
++            intermediate = {"hidden_states": hidden_states}
 +            if self._pp_int8_hop:
 +                intermediate["hidden_states"], intermediate["hidden_scale"] = (
 +                    _pp_hop_quantize(hidden_states, self.config.hc_count)
 +                )
-             return IntermediateTensors(intermediate)
++            return IntermediateTensors(intermediate)
  
          # The final mixer consumes the last pending combine and returns both
+         # the sampled single stream and the materialized multi-stream state.
 -- 
 2.55.0
 

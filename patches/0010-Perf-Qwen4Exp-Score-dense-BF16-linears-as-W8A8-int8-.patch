@@ -1,7 +1,7 @@
-From 7e1c10384ee544f65fbcfbc282c07e933980f502 Mon Sep 17 00:00:00 2001
+From 66aa29a5368529cb72a8f0451797b4958cb7b98a Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 10:09:31 +0200
-Subject: [PATCH 12/12] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8
+Subject: [PATCH 10/11] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8
  on sm_80
 
 The shipped FP8 checkpoint quantizes only the routed experts: its
@@ -342,10 +342,10 @@ index 0000000000..42ee27b2e5
 +        method.apply(_linear(n=n, k=k), x)
 +        assert calls == [("bf16", 2, 1024)]
 diff --git a/vllm/envs.py b/vllm/envs.py
-index ec17da7588..62917e8a53 100755
+index 6b97c61639..e41360e1e0 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -125,6 +125,7 @@ if TYPE_CHECKING:
+@@ -126,6 +126,7 @@ if TYPE_CHECKING:
      VLLM_SAFETENSORS_DROP_CACHE: bool = False
      VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
      VLLM_QWEN4EXP_DRAFT_W8A8: bool = False
@@ -353,7 +353,7 @@ index ec17da7588..62917e8a53 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1152,6 +1153,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1157,6 +1158,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_DRAFT_W8A8": lambda: (
          os.getenv("VLLM_QWEN4EXP_DRAFT_W8A8", "0").lower() in ("1", "true")
      ),
@@ -537,10 +537,10 @@ index 0000000000..0f06eefe07
 +        sum(isinstance(c, LinearBase) for c in module.modules()),
 +    )
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index 8b14c7db22..b95023a2a6 100644
+index 5135d2e742..6241419c5e 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
-@@ -83,6 +83,7 @@ from vllm.v1.attention.backends.registry import MambaAttentionBackendEnum
+@@ -85,6 +85,7 @@ from vllm.v1.attention.backends.registry import MambaAttentionBackendEnum
  from vllm.v1.kv_cache_interface import MambaSpec
  
  from ..common.hyperconnection import is_hc_sequence_parallel_enabled
@@ -548,7 +548,7 @@ index 8b14c7db22..b95023a2a6 100644
  from .hyperconnection import GatedResidual, HyperConnectionConfig
  from .low_latency_gemm import enable_qwen4_exp_low_latency_gemm
  from .ops.cute_dsl.hc_down_silu import request_hc_down_silu_warmup
-@@ -810,6 +811,7 @@ class Qwen4ExpForCausalLM(
+@@ -827,6 +828,7 @@ class Qwen4ExpForCausalLM(
          )
          self.set_moe_parameters(self.model.layers)
          enable_qwen4_exp_low_latency_gemm(self, self.model_config.dtype)
@@ -557,7 +557,7 @@ index 8b14c7db22..b95023a2a6 100644
              # Precompile the fused HC down+SiLU kernels for every CUDA-graph
              # capture size in the fused dispatch range, so no CuTe-DSL JIT
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index 20dcb4bf20..225392ef4a 100644
+index 95a663ced6..72b756ef91 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -58,6 +58,7 @@ from vllm.models.common.ops.sequence_parallel import (
@@ -568,7 +568,7 @@ index 20dcb4bf20..225392ef4a 100644
  from .hyperconnection import GatedResidual, HyperConnectionConfig
  from .low_latency_gemm import enable_qwen4_exp_low_latency_gemm
  from .model import (
-@@ -541,6 +542,7 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+@@ -539,6 +540,7 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
          )
          self.set_moe_parameters(self.model.layers)
          enable_qwen4_exp_low_latency_gemm(self, vllm_config.model_config.dtype)

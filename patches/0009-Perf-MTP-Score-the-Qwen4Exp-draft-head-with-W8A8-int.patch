@@ -1,7 +1,7 @@
-From 3bd3be9830a143ef90df5dc5efa29f341bdac36f Mon Sep 17 00:00:00 2001
+From 1c2d0f1e9ceeea05cfd779e21cc8b8514992e6f6 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 23:52:14 +0200
-Subject: [PATCH 11/12] [Perf][MTP] Score the Qwen4Exp draft head with W8A8
+Subject: [PATCH 09/11] [Perf][MTP] Score the Qwen4Exp draft head with W8A8
  int8 via CUTLASS
 
 The vocab-truncated draft head runs a bf16 GEMV four times per graphed
@@ -74,10 +74,10 @@ index b79b179d95..64cf47004b 100644
 +    assert seen == [(torch.float32, False), (torch.bfloat16, True)]
 +    assert not hasattr(fp32_layer, "_draft_w8a8")
 diff --git a/vllm/envs.py b/vllm/envs.py
-index eb37037adb..ec17da7588 100755
+index 50d4f025cd..6b97c61639 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -124,6 +124,7 @@ if TYPE_CHECKING:
+@@ -125,6 +125,7 @@ if TYPE_CHECKING:
      VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
      VLLM_SAFETENSORS_DROP_CACHE: bool = False
      VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
@@ -85,7 +85,7 @@ index eb37037adb..ec17da7588 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1143,6 +1144,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1148,6 +1149,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_PP_INT8_HOP": lambda: (
          os.getenv("VLLM_QWEN4EXP_PP_INT8_HOP", "0").lower() in ("1", "true")
      ),
@@ -101,7 +101,7 @@ index eb37037adb..ec17da7588 100755
      "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index 125914703d..20dcb4bf20 100644
+index 61acbb3450..95a663ced6 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -21,6 +21,7 @@ import torch
@@ -158,7 +158,7 @@ index 125914703d..20dcb4bf20 100644
  def expand_draft_logits(
      sub_logits: torch.Tensor, draft_vocab_ids: torch.Tensor, vocab_size: int
  ) -> torch.Tensor:
-@@ -473,6 +506,9 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+@@ -471,6 +504,9 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
                      prefix=maybe_prefix(prefix, "draft_lm_head"),
                  )
                  self.draft_logits_processor = LogitsProcessor(int(ids.numel()))

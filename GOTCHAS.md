@@ -6,8 +6,11 @@ Measurements behind the claims: [benchmark/results.md](benchmark/results.md).
 
 - The PLE table defaults to pinned host RAM as fp8 (`float8_e4m3fn`,
   `pinned=True`), several GB, measured before sizing other host workloads. The
-  serve scripts run the file-gather path (patches 9-10) instead, so the table
-  is page cache the kernel can reclaim, not pinned RSS.
+  serve scripts run pinned since the 2026-10-26 rollback; the file-gather path
+  (patches 7-8) is built and certified, flip
+  `--engram-config '{"cpu_offload": true, "host_file_gather": true,
+  "host_file_gather_mmap": true}'` to serve rows from reclaimable page cache
+  instead of pinned RSS.
 - The `--hf-overrides` lines are base-sensitive. Since #56446 the YaRN limit is
   `max_position_embeddings` itself. On an earlier base drop that key, because
   the old rule computed `original x factor`.

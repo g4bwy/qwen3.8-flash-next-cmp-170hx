@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 1M context variant of the (now archived) 4-card 262k script. YaRN factor
 # 4.0, the vendor's own recipe. Expect "Using max model len 1000000" for the
-# drafter too. The override rules and the patch 4 startup check are in
+# drafter too. The override rules and the patch 2 startup check are in
 # archive/serve-4x-512k.sh.
 # Apply the patch series first: git am --keep-non-patch patches/00*.patch
 # Details and measured numbers: README.md.
@@ -77,7 +77,7 @@ export VLLM_SAFETENSORS_DROP_CACHE=1
 # process tree. Without the env the engine is byte-identical to pre-patch.
 export VLLM_QWEN4EXP_PP_INT8_HOP=${VLLM_QWEN4EXP_PP_INT8_HOP:-1}
 
-# Series patches 11-13: int8 for the draft head, the dense linears, and patch 13's
+# Series patches 9-11: int8 for the draft head, the dense linears, and patch 11's
 # floor that lets the dense arm serve the captured decode buckets. +3-5% single-
 # stream decode and -5% cold TTFT, quality at the within-boot floor (results.md,
 # 2026-10-24). ROLLED BACK TO OFF 2026-10-26: elevated tool-call errors on live

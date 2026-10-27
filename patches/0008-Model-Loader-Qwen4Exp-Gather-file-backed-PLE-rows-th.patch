@@ -1,7 +1,7 @@
-From b84e39dd0c75d763f3946325701f3744ae08ddad Mon Sep 17 00:00:00 2001
+From 146a7968eee149351f3694ea0859badd0bbb5558 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 16:55:55 +0200
-Subject: [PATCH 10/12] [Model Loader][Qwen4Exp] Gather file-backed PLE rows
+Subject: [PATCH 08/11] [Model Loader][Qwen4Exp] Gather file-backed PLE rows
  through a persistent mmap
 
 host_file_gather serves each step's PLE rows with one preadv syscall per
@@ -153,10 +153,10 @@ index 166d7c9154..b79b179d95 100644
      conv_state_len = 6
      dilation = 2
 diff --git a/tests/test_config.py b/tests/test_config.py
-index 4999cf63d0..42c9b4c5e4 100644
+index 55bb4ed1ef..f6ff8d453c 100644
 --- a/tests/test_config.py
 +++ b/tests/test_config.py
-@@ -1919,6 +1919,11 @@ def test_engram_host_file_gather_requires_cuda_qwen4exp(
+@@ -1950,6 +1950,11 @@ def test_engram_host_file_gather_requires_cuda_qwen4exp(
          config.verify_model_config(model)
  
  
@@ -168,7 +168,7 @@ index 4999cf63d0..42c9b4c5e4 100644
  def test_engram_hash_tracks_execution_options():
      configs = [
          EngramConfig(cpu_offload=True),
-@@ -1926,6 +1931,7 @@ def test_engram_hash_tracks_execution_options():
+@@ -1957,6 +1962,7 @@ def test_engram_hash_tracks_execution_options():
          EngramConfig(cpu_offload=True, embedding_across_dp=True),
          EngramConfig(cpu_offload=True, dp_shared_memory=True),
          EngramConfig(host_file_gather=True),

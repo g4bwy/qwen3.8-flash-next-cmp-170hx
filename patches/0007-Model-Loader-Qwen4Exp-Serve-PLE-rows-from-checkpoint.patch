@@ -1,7 +1,7 @@
-From 683eb8ba86e170ffa4b31c10b88a43a892055df8 Mon Sep 17 00:00:00 2001
+From 165675950d18f1369d6ef671b90e1e94ba4ea016 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Wed, 21 Oct 2026 19:22:07 +0200
-Subject: [PATCH 09/12] [Model Loader][Qwen4Exp] Serve PLE rows from checkpoint
+Subject: [PATCH 07/11] [Model Loader][Qwen4Exp] Serve PLE rows from checkpoint
  files via page cache (host_file_gather)
 
 Adopt upstream PR #58815: --engram-config '{"host_file_gather": true}'
@@ -116,10 +116,10 @@ index 023477b345..f7eaa208a2 100644
  ## Sharing host tables across DP replicas
  
 diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
-index 9c91e52412..e245701b3b 100644
+index 397f2be15d..4e0dd401ea 100644
 --- a/tests/models/qwen4_exp/test_config.py
 +++ b/tests/models/qwen4_exp/test_config.py
-@@ -20,6 +20,7 @@ from vllm.sequence import IntermediateTensors
+@@ -21,6 +21,7 @@ from vllm.sequence import IntermediateTensors
  from vllm.v1.worker.gpu.model_states.mamba_hybrid import MambaHybridModelState
  
  from ...utils import spawn_new_process_for_each_test
@@ -127,7 +127,7 @@ index 9c91e52412..e245701b3b 100644
  
  
  def _text_config(**kwargs) -> Qwen4ExpTextConfig:
-@@ -322,6 +323,7 @@ def test_qwen4_exp_model_state_prepares_ngram_context() -> None:
+@@ -330,6 +331,7 @@ def test_qwen4_exp_model_state_prepares_ngram_context() -> None:
      model_state.ngram_context = torch.empty((8, 3), dtype=torch.int32)
      model_state.ngram_context_offsets = torch.arange(-3, 0, dtype=torch.int64)
      model_state.ple_query_start_loc = torch.empty(9, dtype=torch.int32)
@@ -135,7 +135,7 @@ index 9c91e52412..e245701b3b 100644
  
      input_batch = SimpleNamespace(
          num_reqs=2,
-@@ -371,6 +373,39 @@ def test_qwen4_exp_model_state_prepares_ngram_context() -> None:
+@@ -379,6 +381,39 @@ def test_qwen4_exp_model_state_prepares_ngram_context() -> None:
      assert model_inputs["ngram_context"].data_ptr() == ngram_context.data_ptr()
  
  
@@ -581,10 +581,10 @@ index b4382ebd15..166d7c9154 100644
      conv_state_len = 6
      dilation = 2
 diff --git a/tests/test_config.py b/tests/test_config.py
-index cb52aea7b7..4999cf63d0 100644
+index 0d21e52dfd..55bb4ed1ef 100644
 --- a/tests/test_config.py
 +++ b/tests/test_config.py
-@@ -1660,7 +1660,9 @@ def test_engram_tensor_parallel_size(dp_size: int, across_dp: bool, expected: in
+@@ -1691,7 +1691,9 @@ def test_engram_tensor_parallel_size(dp_size: int, across_dp: bool, expected: in
      assert config.get_parallel_size(parallel) == expected
  
  
@@ -595,7 +595,7 @@ index cb52aea7b7..4999cf63d0 100644
  def test_engram_rejects_elastic_cross_dp(option):
      parallel = ParallelConfig(
          tensor_parallel_size=4,
-@@ -1884,12 +1886,46 @@ def test_engram_draft_config_validates_target(monkeypatch, target_has_ple, expli
+@@ -1915,12 +1917,46 @@ def test_engram_draft_config_validates_target(monkeypatch, target_has_ple, expli
              assert config.engram_config.cpu_offload is True
  
  

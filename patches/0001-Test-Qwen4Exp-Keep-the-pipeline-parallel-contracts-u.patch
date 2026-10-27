@@ -1,0 +1,190 @@
+From c6f2664e803e0c7a1ca9b252b190b6708616af99 Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 10:37:50 +0100
+Subject: [PATCH 01/11] [Test][Qwen4Exp] Keep the pipeline-parallel contracts
+ under regression guards
+
+#60234 absorbed the code of this series' first three patches;
+their regression tests had no upstream equivalent: the MTP drafter
+drafts on the last rank, PP is accepted with and without PLE, the PP
+wire carries hidden states only (ids ride the stage-local #61016
+flow), and non-first ranks feed runner input ids to the decoder
+layers. The bare-instance construction now binds upstream's
+factory-made make_empty_intermediate_tensors where the model class
+does not define one, so the wire-shape assertion holds on both the
+plain and the int8-hop build.
+---
+ tests/models/qwen4_exp/test_config.py | 140 ++++++++++++++++++++++++++
+ 1 file changed, 140 insertions(+)
+
+diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
+index dba9f94eed..397f2be15d 100644
+--- a/tests/models/qwen4_exp/test_config.py
++++ b/tests/models/qwen4_exp/test_config.py
+@@ -12,9 +12,12 @@ from transformers import Qwen4ExpConfig, Qwen4ExpTextConfig
+ from vllm.config import CacheConfig, ParallelConfig
+ from vllm.config.speculative import SpeculativeConfig
+ from vllm.model_executor.models.config import (
++    Qwen3_5ForConditionalGenerationConfig,
+     Qwen4ExpForConditionalGenerationConfig,
+ )
++from vllm.model_executor.models.utils import make_empty_intermediate_tensors_factory
+ from vllm.models.qwen4_exp.nvidia.model_state import Qwen4ExpModelState
++from vllm.sequence import IntermediateTensors
+ from vllm.v1.worker.gpu.model_states.mamba_hybrid import MambaHybridModelState
+ 
+ from ...utils import spawn_new_process_for_each_test
+@@ -134,6 +137,60 @@ def test_qwen4_exp_mtp_returns_sample_and_multi_streams(
+     assert returned_multi_hidden.is_contiguous()
+ 
+ 
++def test_qwen4_exp_mtp_drafts_on_last_pipeline_rank() -> None:
++    """On a non-first last rank the drafter embeds from input ids directly.
++
++    This is how the speculator drives it after patch 1: the target's hidden
++    states and the tokens to append are both local there, and no
++    IntermediateTensors are fed.
++    """
++    from vllm.models.qwen4_exp.nvidia.mtp import (
++        Qwen4ExpMultiTokenPredictor,
++    )
++
++    model = object.__new__(Qwen4ExpMultiTokenPredictor)
++    model.use_hc_sequence_parallel = False
++    model.use_sequence_parallel = False
++    torch.nn.Module.__init__(model)
++    model.hc_count = 2
++    model.hidden_size = 4
++    model.num_mtp_layers = 1
++    model.pre_fc_norm_embedding = torch.nn.Identity()
++    model.pre_fc_norm_hidden = torch.nn.Identity()
++    model.fc_embedding = torch.nn.Identity()
++    model.fc_hidden = torch.nn.Identity()
++    model.embed_tokens = lambda input_ids: torch.zeros(input_ids.shape[0], 4)
++
++    def decoder(**kwargs):
++        hidden = kwargs["hidden_states"]
++        assert kwargs["prev_block_output"].shape == (hidden.shape[0], model.hidden_size)
++        return hidden, hidden, torch.zeros(hidden.shape[0], model.hc_count)
++
++    model.layers = [decoder]
++    model.hyper_connection_mixer = SimpleNamespace(
++        combine_and_mix=lambda hidden_states, block_output, injection: (
++            hidden_states,
++            hidden_states.unflatten(-1, (2, 4)).mean(-2),
++            None,
++        ),
++    )
++
++    multi_hidden = torch.arange(16, dtype=torch.float32).reshape(2, 8)
++    pp_group = SimpleNamespace(is_first_rank=False, is_last_rank=True)
++
++    with patch("vllm.models.qwen4_exp.nvidia.mtp.get_pp_group", return_value=pp_group):
++        sample_hidden, returned_multi_hidden = model.forward(
++            input_ids=torch.arange(2),
++            positions=torch.arange(2),
++            hidden_states=multi_hidden,
++        )
++
++    torch.testing.assert_close(
++        sample_hidden, multi_hidden.unflatten(-1, (2, 4)).mean(dim=-2)
++    )
++    torch.testing.assert_close(returned_multi_hidden, multi_hidden)
++
++
+ @spawn_new_process_for_each_test
+ @pytest.mark.parametrize("backend", ["amd", "nvidia"])
+ def test_qwen4_exp_mtp_remaps_mixed_precision_layer_indices(backend: str) -> None:
+@@ -182,6 +239,89 @@ def test_qwen4_exp_mtp_override_sets_draft_config(
+     assert draft_config.n_predict == 1
+ 
+ 
++@pytest.mark.parametrize("ple_layer_ids", [[1], []])
++def test_qwen4_exp_allows_pipeline_parallel_with_or_without_ple(
++    ple_layer_ids,
++) -> None:
++    """Qwen4Exp PP supports both the PLE and non-PLE configurations."""
++    vllm_config = SimpleNamespace(
++        model_config=SimpleNamespace(
++            hf_text_config=_text_config(ple_layer_ids=ple_layer_ids),
++            multimodal_config=None,
++        ),
++        parallel_config=ParallelConfig(pipeline_parallel_size=2),
++        speculative_config=None,
++    )
++    with patch.object(
++        Qwen3_5ForConditionalGenerationConfig, "verify_and_update_config"
++    ):
++        Qwen4ExpForConditionalGenerationConfig.verify_and_update_config(vllm_config)
++
++
++@spawn_new_process_for_each_test
++@pytest.mark.parametrize("backend", ["amd", "nvidia"])
++def test_qwen4_exp_pp_intermediate_tensors_never_carry_input_ids(
++    backend: str,
++) -> None:
++    """PLE token IDs ride the stage-local #61016 flow, never the PP wire."""
++    model_module = import_module(f"vllm.models.qwen4_exp.{backend}.model")
++    model = object.__new__(model_module.Qwen4ExpModel)
++    torch.nn.Module.__init__(model)
++
++    for config in (_text_config(), _text_config(ple_layer_ids=[])):
++        model.config = config
++        if not hasattr(model_module.Qwen4ExpModel, "make_empty_intermediate_tensors"):
++            # Upstream wiring: the factory is bound per instance in __init__.
++            model.make_empty_intermediate_tensors = (
++                make_empty_intermediate_tensors_factory(
++                    ["hidden_states"], config.hidden_size * config.hc_count
++                )
++            )
++        tensors = model.make_empty_intermediate_tensors(
++            batch_size=8,
++            dtype=torch.bfloat16,
++            device=torch.device("cpu"),
++        )
++        assert set(tensors.tensors) == {"hidden_states"}
++
++
++@spawn_new_process_for_each_test
++@pytest.mark.parametrize("backend", ["amd", "nvidia"])
++def test_qwen4_exp_pp_forward_uses_runner_input_ids(backend: str) -> None:
++    """Non-first PP ranks feed the stage-local input IDs to decoder layers."""
++    model_module = import_module(f"vllm.models.qwen4_exp.{backend}.model")
++    model = object.__new__(model_module.Qwen4ExpModel)
++    torch.nn.Module.__init__(model)
++    model.config = _text_config()
++    model.start_layer = 0
++    model.end_layer = 1
++    model.hyper_connection_mixer = None
++
++    seen_input_ids: list[torch.Tensor | None] = []
++
++    class CaptureLayer:
++        def __call__(self, **kwargs):
++            seen_input_ids.append(kwargs["input_ids"])
++            return kwargs["hidden_states"], None, None
++
++    model.layers = [CaptureLayer()]
++    input_ids = torch.tensor([11, 13], dtype=torch.int32)
++    intermediate_tensors = IntermediateTensors({"hidden_states": torch.zeros(2, 32)})
++    pp_group = SimpleNamespace(is_first_rank=False, is_last_rank=False)
++
++    with patch.object(model_module, "get_pp_group", return_value=pp_group):
++        output = model.forward(
++            input_ids=input_ids,
++            positions=torch.arange(2),
++            intermediate_tensors=intermediate_tensors,
++        )
++
++    assert len(seen_input_ids) == 1
++    assert seen_input_ids[0] is input_ids
++    assert isinstance(output, IntermediateTensors)
++    assert set(output.tensors) == {"hidden_states"}
++
++
+ def test_qwen4_exp_model_state_prepares_ngram_context() -> None:
+     model_state = object.__new__(Qwen4ExpModelState)
+     model_state.uses_ngram_embedding = True
+-- 
+2.55.0
+
