@@ -288,7 +288,8 @@ reading any two rows as a comparison.
 | + int8 handoff (patch 6), bf16 KV, trial boot 2026-10-16, never shipped | 79.9 s | 12.4k | no decode measured on this boot | wall 346 s at 100/4, pool 2.65M holds 2-3 of 4 |
 | + int8 handoff + fp8 KV | 92.9-93.9 s | 10.1k, divisor unrecorded | no rate recorded | wall 356.5-356.8 s at 100/4, 4/4 resident, pool 5.08M |
 | + int8 heads & dense (patches 9+10) | 85.2-85.6 s | 11.6k | 186-189, no source in results.md | wall 333.7-338.8 s at 100/4, 4/4 resident, pool 4.96M |
-| = SHIP, patch 11, fp8 KV, 2026-10-25, salts 130100-130300 | 85.4-85.5 s | 11.6k | 209-212, win avg 198-199 | 333.7-338.8 s not re-run on this boot |
+| arms-on posture (patches 10-11), fp8 KV, 2026-10-25, salts 130100-130300 | 85.4-85.5 s | 11.6k | 209-212, win avg 198-199 | 333.7-338.8 s not re-run on this boot |
+| = SHIP (live since 2026-10-27): base 5c1eb11cb3, 11 patches, 9728 chunk budget, pinned PLE, W8A8 arms off | 66.0-66.3 s | 15.0k | win avg 191-195, sust 202-204 | wall 299.3-306.3 s at 100/4, 4/4 resident, pool 5.29M; tool-call battery 27/27 |
 | same tree, `--kv-cache-dtype auto`, same salts, reference only | 76.3-76.4 s | 12.9k | 212-215, win avg 198-205 | not run, pool 2.58M caps it at 2-3 of 4 |
 | fp8 KV, `--max-num-batched-tokens 9728`, same build, same salts, 2026-10-26 | 62.6-62.9 s | 15.8k | 209-212, win avg 199-201 | not run |
 | same budget, `--kv-cache-dtype auto`, same salts | 63.9-64.1 s | 15.4k | 212-219, win avg 204-207 | not run |

@@ -4269,3 +4269,41 @@ logs/probe-rebasefix-cold-140100.json): TTFT 71.1 s, match 1.0, preempts 0,
 acceptance 3.23; bg=64 drafts from co-tenant traffic during the window, so
 the timing is indicative only. The 9728 cert battery remains un-run
 (owner-approved batteries only).
+
+### 9728 cert battery on the new base: PASS (2026-10-27 14:31-16:0x)
+
+Tree = 11 patches on 5c1eb11cb3 (banner 0.33.0rc1.dev65+g0032c8f14),
+posture = LIVE config: 9728 chunk budget, pinned PLE, W8A8 arms off, hop on.
+Pool 5,292,537. All battery steps rc=0, bg=0 and preempts=0 in every cell
+(17/17; the scheduled tool-battery step died on a wrong path and was
+re-run standalone, 27/27). Raw: logs/battery-cert-9728/. Salts 153100-153900
+(>=100 above the 24h max 152003); tool battery reuses its calibration salt
+152001 by design; corpus probe ran twice on time seeds.
+
+| gate | cert | reference |
+|---|---|---|
+| needles | pass | pass |
+| floor / vs mmap-ref | 7.634 / 8.226 % flips | ref = floor +0.6pp, the legitimate 9728 chunking shift |
+| accept-window (fixed salt) | 4.996 (n=3) | 4.995-4.998 across A/B/C, unchanged |
+| corpus greedy / sampled (acc win, 2 runs) | 3.091, 3.174 / 2.349, 2.329 | floors >2.9 / >2.0 pass, ratios 0.76/0.73 |
+| tool-call battery (9 families x 3) | 27/27 = 100% | baseline 21/21 pre-family-growth (now 9 families), 0 production errors since rollback |
+| cold trio TTFT | 66.0 / 66.0 / 66.3 s, all match 1.0 | 2048 era: 85.2-85.6 (-23%); old-base 9728 boots: 62.7-71.2 |
+| cold in_tps / prefill peak | 13.8-13.9k / 15.0k prompt-over-TTFT | 10.9-11.6k |
+| 100/4 wall | 299.3-306.3 s (median 305) | boot B median 334.1 (-8.6%) |
+| 100/4 in_tps | 12.9-13.2k | 11.7-11.8k (+10%) |
+| deep plateau | 540.6 tok/s | 488 / 459 / 423 / 592 spread on identical content - the band moved with the base |
+| oversub | 6/4 over pool, 0 preempts, sust 486 | 400-400 era |
+
+Caveats, recorded not hidden. The 100/4 quartet had three cells in the
+content lottery (match 0.56-0.96, acc 2.5-4.2) and sustained columns move
+with it; the fixed-content accept-window and both corpus runs say the
+drafter and verifier are exactly themselves. Cross-boot attribution mixes
+two variables (229 upstream commits plus the chunk budget); the old-base
+9728 boots isolate the budget as the dominant term for prefill, and the
+decode-side band (deep plateau, cold sust 202-204 vs 199.0) is the
+upstream delta, consistent with the 239 tok/s probe datapoint.
+
+Verdict: 9728 certified on the new base; production posture stands as the
+certified one. The W8A8 arms (9-11) stay off pending the bisect with
+tool_call_battery as the added gate; nothing in this battery speaks to
+them.
