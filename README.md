@@ -29,12 +29,12 @@ prefill measured on this box; that setting awaits its cert battery.
   TTFT and 7.7 % of prefill rate, and buys 4.3 % more KV pool that the
   five-resident cell showed does not convert. The old +6 % and +20 % pair mixed
   depth with quantization, at the same depth the 2026-10-12 edge was +2 to +6 %.
-- Base commit: `5c1eb11cb361d63668e813958b207edfc366827a` (vllm-project/vllm main, 2026-10-27; newest main with a published cu130 wheel, `0.32.1rc1.dev615+g5c1eb11cb`).
+- Base commit: `8084f0624dba24aba6ebac62d8e10cc00730a0fe` (vllm-project/vllm main, 2026-10-30; newest main with a published cu130 wheel, `0.33.0rc1.dev308+g8084f0624`; the 2 newer tips 404).
 - 11 patches: nine ours, two adopted from upstream PRs (#58094 as
   patch 2, #58815 as patch 7; both still open upstream,
   so they survive rebases as adopted commits). After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `3cd817fadef69a0329e44ea368212746ede2de04`. If it does not, you applied
+  `3615b0aaebb9f34a405f92649da37a5ed726f929`. If it does not, you applied
   something else or onto something else.
 - The base's `humming-kernels[cu13]` pin moved to 0.1.17 (0.1.12 fails the
   new `vllm/utils/humming.py` imports). The editable precompiled install
@@ -50,13 +50,13 @@ prefill measured on this box; that setting awaits its cert battery.
 ```bash
 git clone https://github.com/vllm-project/vllm
 cd vllm
-git checkout 5c1eb11cb361d63668e813958b207edfc366827a
+git checkout 8084f0624dba24aba6ebac62d8e10cc00730a0fe
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # 3cd817fadef69a0329e44ea368212746ede2de04
+git rev-parse 'HEAD^{tree}'   # 3615b0aaebb9f34a405f92649da37a5ed726f929
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
-5c1eb11cb3`), then re-run the `git am`.
+8084f0624dba24aba6ebac62d8e10cc00730a0fe`), then re-run the `git am`.
 
 ## Build
 
@@ -65,7 +65,7 @@ Python 3.12, `uv` on PATH ([install](https://docs.astral.sh/uv/)).
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=5c1eb11cb361d63668e813958b207edfc366827a \
+VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=8084f0624dba24aba6ebac62d8e10cc00730a0fe \
   uv pip install -e . --torch-backend=auto
 ```
 
@@ -77,7 +77,7 @@ that commit must satisfy two rules:
    `https://wheels.vllm.ai/<sha>/cu130/vllm/metadata.json` and stops on 404.
    Wheel CI lags main by hours, so walk down from the tip and take the newest
    commit that answers 200. The wheel for this base:
-   `0.32.1rc1.dev615+g5c1eb11cb`, cp38-abi3, x86_64 and aarch64. Match the
+   `0.33.0rc1.dev308+g8084f0624`, cp38-abi3, x86_64 and aarch64. Match the
    `+g<sha>` tail to your base. Ignore the leading number, which only tracks
    upstream packaging.
 2. Pass that 40-hex sha in `VLLM_PRECOMPILED_WHEEL_COMMIT`. Without it, a

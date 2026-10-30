@@ -1,4 +1,4 @@
-From 46dc54fadee66b27ed92a2da7c8de0f8e3f09a88 Mon Sep 17 00:00:00 2001
+From 9dd165aa62af0221b66ed4ba3867f2237ab7c8e9 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Wed, 21 Oct 2026 19:22:07 +0200
 Subject: [PATCH 07/11] [Model Loader][Qwen4Exp] Serve PLE rows from checkpoint
@@ -116,10 +116,10 @@ index 023477b345..f7eaa208a2 100644
  ## Sharing host tables across DP replicas
  
 diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
-index 397f2be15d..4e0dd401ea 100644
+index 039649e8ed..8b8d39f633 100644
 --- a/tests/models/qwen4_exp/test_config.py
 +++ b/tests/models/qwen4_exp/test_config.py
-@@ -21,6 +21,7 @@ from vllm.sequence import IntermediateTensors
+@@ -28,6 +28,7 @@ from vllm.sequence import IntermediateTensors
  from vllm.v1.worker.gpu.model_states.mamba_hybrid import MambaHybridModelState
  
  from ...utils import spawn_new_process_for_each_test
@@ -127,7 +127,7 @@ index 397f2be15d..4e0dd401ea 100644
  
  
  def _text_config(**kwargs) -> Qwen4ExpTextConfig:
-@@ -330,6 +331,7 @@ def test_qwen4_exp_model_state_prepares_ngram_context() -> None:
+@@ -337,6 +338,7 @@ def test_qwen4_exp_model_state_prepares_ngram_context() -> None:
      model_state.ngram_context = torch.empty((8, 3), dtype=torch.int32)
      model_state.ngram_context_offsets = torch.arange(-3, 0, dtype=torch.int64)
      model_state.ple_query_start_loc = torch.empty(9, dtype=torch.int32)
@@ -135,7 +135,7 @@ index 397f2be15d..4e0dd401ea 100644
  
      input_batch = SimpleNamespace(
          num_reqs=2,
-@@ -379,6 +381,39 @@ def test_qwen4_exp_model_state_prepares_ngram_context() -> None:
+@@ -386,6 +388,39 @@ def test_qwen4_exp_model_state_prepares_ngram_context() -> None:
      assert model_inputs["ngram_context"].data_ptr() == ngram_context.data_ptr()
  
  
@@ -176,7 +176,7 @@ index 397f2be15d..4e0dd401ea 100644
      model_state = object.__new__(Qwen4ExpModelState)
      model_state.uses_ngram_embedding = True
 diff --git a/tests/models/qwen4_exp/test_ple.py b/tests/models/qwen4_exp/test_ple.py
-index b4382ebd15..166d7c9154 100644
+index a503876143..ebacb34731 100644
 --- a/tests/models/qwen4_exp/test_ple.py
 +++ b/tests/models/qwen4_exp/test_ple.py
 @@ -2,13 +2,18 @@
@@ -214,7 +214,7 @@ index b4382ebd15..166d7c9154 100644
      Qwen4ExpPLEFp8EmbeddingMethod,
      Qwen4ExpPLENvFp4EmbeddingMethod,
      Qwen4ExpPLEPinnedHostEmbedding,
-@@ -1111,6 +1118,365 @@ def test_ple_fp8_embedding_supports_mixed_precision_config(
+@@ -1114,6 +1121,365 @@ def test_ple_fp8_embedding_supports_mixed_precision_config(
      )
  
  
@@ -581,10 +581,10 @@ index b4382ebd15..166d7c9154 100644
      conv_state_len = 6
      dilation = 2
 diff --git a/tests/test_config.py b/tests/test_config.py
-index 0d21e52dfd..55bb4ed1ef 100644
+index c7b3d6e472..7b27caf484 100644
 --- a/tests/test_config.py
 +++ b/tests/test_config.py
-@@ -1691,7 +1691,9 @@ def test_engram_tensor_parallel_size(dp_size: int, across_dp: bool, expected: in
+@@ -1740,7 +1740,9 @@ def test_engram_tensor_parallel_size(dp_size: int, across_dp: bool, expected: in
      assert config.get_parallel_size(parallel) == expected
  
  
@@ -595,7 +595,7 @@ index 0d21e52dfd..55bb4ed1ef 100644
  def test_engram_rejects_elastic_cross_dp(option):
      parallel = ParallelConfig(
          tensor_parallel_size=4,
-@@ -1915,12 +1917,46 @@ def test_engram_draft_config_validates_target(monkeypatch, target_has_ple, expli
+@@ -1981,12 +1983,46 @@ def test_engram_draft_config_validates_target(monkeypatch, target_has_ple, expli
              assert config.engram_config.cpu_offload is True
  
  
@@ -643,7 +643,7 @@ index 0d21e52dfd..55bb4ed1ef 100644
      assert len({config.compute_hash() for config in configs}) == len(configs)
  
 diff --git a/vllm/config/engram.py b/vllm/config/engram.py
-index 156f6fca05..1c0457669c 100644
+index a2b8c50e78..afc7810990 100644
 --- a/vllm/config/engram.py
 +++ b/vllm/config/engram.py
 @@ -37,6 +37,11 @@ class EngramConfig:
@@ -658,7 +658,7 @@ index 156f6fca05..1c0457669c 100644
      embedding_across_dp: bool = False
      """Shard embeddings across TP and all DP ranks when enabled.
      Otherwise, each DP rank has a separate TP-sharded embedding replica."""
-@@ -81,6 +86,11 @@ class EngramConfig:
+@@ -82,6 +87,11 @@ class EngramConfig:
                  "EngramConfig requires a model with supported Engram "
                  "embeddings and non-empty n-gram layer ids."
              )
@@ -670,7 +670,7 @@ index 156f6fca05..1c0457669c 100644
  
      def resolve_dp_shared_memory(self, parallel_config: "ParallelConfig") -> None:
          """Share host tables by default wherever the configuration permits."""
-@@ -107,6 +117,8 @@ class EngramConfig:
+@@ -108,6 +118,8 @@ class EngramConfig:
              raise ValueError(
                  "Engram embedding_across_dp is not supported with elastic EP yet."
              )

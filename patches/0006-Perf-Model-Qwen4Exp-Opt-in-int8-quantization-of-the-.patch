@@ -1,4 +1,4 @@
-From 0b922bc80f7a1a93f39bdfea85909f885ba9a787 Mon Sep 17 00:00:00 2001
+From aa68ff061e8cdf9ce1fd19e3b458e29c57df8a61 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 16 Oct 2026 11:21:02 +0200
 Subject: [PATCH 06/11] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
@@ -92,7 +92,7 @@ index 0000000000..9ea255101b
 +        "and breaks profile_run under VLLM_QWEN4EXP_PP_INT8_HOP"
 +    )
 diff --git a/vllm/envs.py b/vllm/envs.py
-index e03d4abd7f..50d4f025cd 100755
+index f336fcfd3a..cebdc6f20f 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -124,6 +124,7 @@ if TYPE_CHECKING:
@@ -103,7 +103,7 @@ index e03d4abd7f..50d4f025cd 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1144,6 +1145,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1146,6 +1147,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_SAFETENSORS_DROP_CACHE": lambda: (
          os.getenv("VLLM_SAFETENSORS_DROP_CACHE", "0").lower() in ("1", "true")
      ),
@@ -114,7 +114,7 @@ index e03d4abd7f..50d4f025cd 100755
      "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index f527ad0997..bab031c18b 100644
+index 08ad38361e..f11f4b1905 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
 @@ -13,6 +13,7 @@ from vllm import envs
@@ -122,18 +122,18 @@ index f527ad0997..bab031c18b 100644
  from vllm.distributed import get_pp_group
  from vllm.forward_context import get_forward_context, is_forward_context_available
 +from vllm.logger import init_logger
- from vllm.model_executor.layers.fused_moe.utils import (
-     is_model_fused_shared_expert_compatible,
- )
-@@ -65,7 +66,6 @@ from vllm.model_executor.models.utils import (
-     WeightsMapper,
+ from vllm.model_executor.layers.fusion.mm_input_norm import build_mm_input_norm
+ from vllm.model_executor.layers.logits_processor import LogitsProcessor
+ from vllm.model_executor.layers.mamba.gdn.qwen_gdn_linear_attn import (
+@@ -63,7 +64,6 @@ from vllm.model_executor.models.utils import (
      _merge_multimodal_embeddings,
      extract_layer_index,
+     get_fused_shared_expert_layers,
 -    make_empty_intermediate_tensors_factory,
      make_layers,
      maybe_fuse_shared_experts,
      maybe_prefix,
-@@ -90,6 +90,8 @@ from .ops.cute_dsl.hc_down_silu import request_hc_down_silu_warmup
+@@ -88,6 +88,8 @@ from .ops.cute_dsl.hc_down_silu import request_hc_down_silu_warmup
  from .ple_layer import Qwen4ExpPLELayer
  from .qsa import Qwen4ExpQSAAttention
  
@@ -142,7 +142,7 @@ index f527ad0997..bab031c18b 100644
  # Transformers v5.18 renamed `qwen_sparse_attention` to `indexed_attention`
  # TODO: Delete qwen_... once Transformers 5.18.0 is the minimum required version.
  _QSA_LAYER_TYPES = ("qwen_sparse_attention", "indexed_attention")
-@@ -405,7 +407,34 @@ class Qwen4ExpMixtureOfExperts(MixtureOfExperts):
+@@ -403,7 +405,34 @@ class Qwen4ExpMixtureOfExperts(MixtureOfExperts):
              moe.experts.update_expert_map()
  
  
@@ -177,7 +177,7 @@ index f527ad0997..bab031c18b 100644
      hf_to_vllm_mapper = Qwen3_5Model.hf_to_vllm_mapper | _EXTRA_WEIGHTS_MAPPER
  
      def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
-@@ -421,6 +450,13 @@ class Qwen4ExpModel(nn.Module):
+@@ -419,6 +448,13 @@ class Qwen4ExpModel(nn.Module):
              vllm_config.parallel_config.use_sequence_parallel_moe
          )
          self.vocab_size = config.vocab_size
@@ -191,9 +191,9 @@ index f527ad0997..bab031c18b 100644
          self._qsa_layer_ids = frozenset(
              layer_idx
              for layer_idx, layer_type in enumerate(config.layer_types)
-@@ -451,10 +487,6 @@ class Qwen4ExpModel(nn.Module):
+@@ -449,10 +485,6 @@ class Qwen4ExpModel(nn.Module):
              Qwen4ExpSparseMoeBlock,
-             "mlp",
+             enable_eplb=vllm_config.parallel_config.enable_eplb,
          )
 -        intermediate_size = config.hidden_size * config.hc_count
 -        self.make_empty_intermediate_tensors = make_empty_intermediate_tensors_factory(
@@ -202,7 +202,7 @@ index f527ad0997..bab031c18b 100644
  
          self.hyper_connection_mixer: GatedResidual | None
          if get_pp_group().is_last_rank:
-@@ -497,6 +529,27 @@ class Qwen4ExpModel(nn.Module):
+@@ -495,6 +527,27 @@ class Qwen4ExpModel(nn.Module):
      def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
          return self.embed_tokens(input_ids)
  
@@ -230,7 +230,7 @@ index f527ad0997..bab031c18b 100644
      @staticmethod
      def _start_layer_ple_prefetch(
          layer: nn.Module,
-@@ -545,8 +598,23 @@ class Qwen4ExpModel(nn.Module):
+@@ -543,8 +596,23 @@ class Qwen4ExpModel(nn.Module):
          else:
              if intermediate_tensors is None:
                  raise ValueError("pipeline stage requires intermediate tensors")
@@ -256,7 +256,7 @@ index f527ad0997..bab031c18b 100644
          full_num_tokens = positions.shape[-1]
          block_output = None
          injection = None
-@@ -611,7 +679,12 @@ class Qwen4ExpModel(nn.Module):
+@@ -609,7 +677,12 @@ class Qwen4ExpModel(nn.Module):
                  hidden_states = last_layer.mlp_hyper_connection.combine(
                      hidden_states, block_output, injection
                  )

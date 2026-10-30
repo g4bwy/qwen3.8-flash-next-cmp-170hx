@@ -4307,3 +4307,32 @@ Verdict: 9728 certified on the new base; production posture stands as the
 certified one. The W8A8 arms (9-11) stay off pending the bisect with
 tool_call_battery as the added gate; nothing in this battery speaks to
 them.
+
+### Series rebased onto 8084f0624d (2026-10-30)
+
++254 upstream commits over the 10-27 base, newest wheeled tip (2 newer tips
+404). Nothing new absorbed a series patch; the interesting part is that
+upstream grew code AROUND two of ours. Transformers-backend MTP drafts
+(#61270) reworked `compose_draft_hf_overrides`, the very function patch 2
+adopts: patch 2 now carries a merged body where the rope-subset forwarding
+leg and upstream's `transformers_mtp_overrides` thread coexist, and the
+superseded dict-policy test upstream still shipped was replaced by the
+patch's own non-rope test. In parallel, the MRV2 draft-runner refactor
+(#64458 area) touched the line where patch 3's `full_head_window` hook
+lands; merged by keeping upstream's `skip_attn_for_dummy_run` wrapper.
+Two rebase scars recorded: the hop patch's import block collided with
+upstream's (an `init_logger` line wrongly dropped during resolution,
+caught by CPU collection before export - the base model.py never imported
+a logger, ours does), and mtp.py's fused-moe helper import was pruned as
+upstream removed its last user.
+
+Tree `3615b0aaebb9f34a405f92649da37a5ed726f929` (replay 11/11 in
+wt-pristine-1030). CPU parity exact: 11 test_ple env failures on branch
+AND pristine; branch 416 passed. Ruff/format clean; rope tests 28/28;
+chain-delta diff vs the old base confined to the intended rope merge.
+Wheel stamp `0.33.0rc1.dev308+g8084f0624` (CI now uses the same rc1
+pre-bump scheme the local banner showed on 10-27); banner after reinstall
+= dev319+g<am-head>. Qwen4Exp fixes gained: QSA indexer prefill workspace
+reservation during profiling (#60490, pool math may move), quantized-qkv +
+BF16-QSA checkpoint loading (#62318), MRV2 PP draft/sampled-token broadcast
+fixes (#64458). Fender still runs the 10-27 dev65 boot until reinstall.
