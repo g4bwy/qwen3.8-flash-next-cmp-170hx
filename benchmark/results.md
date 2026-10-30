@@ -4363,3 +4363,16 @@ probe at salt 154100 was live investigation traffic, and the cert comparison
 of the tool battery is confounded: 27/27 baseline ran on Rust@dev65, this
 leg runs Python@dev319, so frontend AND base differ at once. A same-tree
 flip (Python@dev65 or Rust@dev319) is the isolation boot if the rate moves.
+
+Result of this leg (salt 152001, n=3, same prompts as every prior run):
+27/27 = 100%, all nine families clean on Python@dev319, identical to
+Rust@dev65's cert run and to the 21/21 calibration. So the synthetic
+battery cannot separate the frontends at this posture, and never could
+have caught the 10-26 incident: the failing era ran with the W8A8 arms ON
+under real sampled+thinking agent traffic; the battery is greedy, fixed
+prompts, low concurrency, and was first run post-rollback. What this leg
+establishes is a clean Python-frontend control on the current tree. The
+ladder that localizes the incident remains: same battery per boot with
++dense W8A8, then +draft W8A8, then +gather arms ON; a family that drops
+against 27/27 names the lever. long_context dropping first would point
+prefill-side (dense arm), NO_CALL/TRUNCATE patterns decode-side.
