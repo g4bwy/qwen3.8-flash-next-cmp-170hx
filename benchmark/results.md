@@ -4336,3 +4336,18 @@ pre-bump scheme the local banner showed on 10-27); banner after reinstall
 reservation during profiling (#60490, pool math may move), quantized-qkv +
 BF16-QSA checkpoint loading (#62318), MRV2 PP draft/sampled-token broadcast
 fixes (#64458). Fender still runs the 10-27 dev65 boot until reinstall.
+
+### dev319 boot on 8084f0624d: smoke-certified (2026-10-30 16:56)
+
+Banner 0.33.0rc1.dev319+g51ea594bf = dev308 + 11, as predicted. Hop
+ACTIVE, pinned PLE, arms off, zero errors, startup complete. Pool
+5,316,417 = +23,880 vs the dev65 boot, the QSA workspace reservation
+(#60490) landing in the profile math, direction of change understood.
+Needles pass. Two cold probes: salt 154100 voided by co-tenant traffic
+(bg=56, inflated engine-aggregate 357 tok/s, TTFT 76 s under queuing -
+the bg gate earned its keep); clean rerun salt 154200: TTFT 69.2 s,
+sust 204, acc 4.85, match 1.0, bg 0. Note for the next battery: 69.2 s
+runs ~4% slower than the 66.0-66.3 cert trio, single cell so nothing
+is claimed; prefill rate 14.3k prompt/TTFT vs 14.9-15.0k. If it holds
+across a trio it needs a look (candidates: the new upstream QSA
+accounting, or plain boot-to-boot variance).
