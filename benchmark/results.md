@@ -4351,3 +4351,15 @@ runs ~4% slower than the 66.0-66.3 cert trio, single cell so nothing
 is claimed; prefill rate 14.3k prompt/TTFT vs 14.9-15.0k. If it holds
 across a trio it needs a look (candidates: the new upstream QSA
 accounting, or plain boot-to-boot variance).
+
+### Frontend note on the dev319 boot + tool-battery leg, Python frontend
+
+The 10-30 dev319 boot runs the PYTHON frontend (APIServer process, uvicorn
+access log; the Rust era printed RustFrontend lines and, tellingly, warnings
+that 'structured_outputs_config' and 'enable_auto_tool_choice' have no
+effect there). Owner's investigation posture for the 2026-10-26 tool-call
+errors. Consequences for this file: the bg=56 co-tenant window in the cold
+probe at salt 154100 was live investigation traffic, and the cert comparison
+of the tool battery is confounded: 27/27 baseline ran on Rust@dev65, this
+leg runs Python@dev319, so frontend AND base differ at once. A same-tree
+flip (Python@dev65 or Rust@dev319) is the isolation boot if the rate moves.
