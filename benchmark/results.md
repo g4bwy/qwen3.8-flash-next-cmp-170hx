@@ -4440,3 +4440,23 @@ changing chunk scheduling. Settled by a trio when the next battery runs or
 by two more single cells on consecutive boots; no dedicated bench.
 Serve still pins util 0.9453; the util-drop experiment (default 1.0 +
 extensible) remains queued behind a clean reading of this watch item.
+
+### Util-drop experiment: PASS, --gpu-memory-utilization retired (2026-11-03 00:09 boot)
+
+Same dev541 tree, single change: the flag removed, extensible KV resolves
+its default (1.0 ceiling, runtime headroom instead of a static cap). Pool
+5,468,656 tokens, +286k (+5.5%) over the 0.9453 boot, the largest the lane
+has had, with the honest accounting visible in the log (per-rank "fit
+within the requested" 1832-2081 blocks, equalized at 1832, "Extended KV
+cache to 1832 blocks (24.00 GiB)" on the binding rank). Zero errors,
+needles pass. Cold probe salt 156100: TTFT 69.56 s, acceptance 4.844,
+match 1.0, bg 0, preempts 0, win avg 194.7, a fully healthy cell.
+Verdict: retire the tuning, 0.9453 stays out of the serve script. The
+estimate-era reason for a hand-tuned util no longer exists; with
+#56492 the pool sizes itself from real free memory after capture.
+TTFT watch item, third opinion: 69.2, 69.8, 69.6 across dev319 and two
+dev541 boots against the 66.0-66.3 cert trio of 10-27. Not the util
+setting, not content (both clean cells matched). The 10-27 trio is now the
+minority reading; if it persists through one more boot the live throughput
+row gets updated to the 69 s level and the trio is attributed to its day
+(luckier host state or a base-side delta in the +480 commits since dev65).

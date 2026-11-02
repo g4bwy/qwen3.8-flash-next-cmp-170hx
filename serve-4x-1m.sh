@@ -160,7 +160,6 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --block-size 1616 \
     --prefix-match-unit 16 \
     --kv-cache-dtype fp8 \
-    --gpu-memory-utilization 0.9453 \
     --max-model-len 1000000 \
     --hf-overrides '{"text_config":{"max_position_embeddings":1000000,"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":262144}}}' \
     --max-num-seqs 8 \
