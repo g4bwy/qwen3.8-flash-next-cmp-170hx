@@ -1,8 +1,8 @@
-From 7f53b3503591f1fe56db7ccfb61f5c99db9df6a9 Mon Sep 17 00:00:00 2001
+From 6ce08ce080de6804e3a59712694b83caa8ec919c Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 23:52:14 +0200
-Subject: [PATCH 09/11] [Perf][MTP] Score the Qwen4Exp draft head with W8A8
- int8 via CUTLASS
+Subject: [PATCH 7/9] [Perf][MTP] Score the Qwen4Exp draft head with W8A8 int8
+ via CUTLASS
 
 The vocab-truncated draft head runs a bf16 GEMV four times per graphed
 decode step (once per MTP position) and is pure weight bandwidth on
@@ -34,10 +34,10 @@ replace.
  3 files changed, 70 insertions(+)
 
 diff --git a/tests/models/qwen4_exp/test_ple.py b/tests/models/qwen4_exp/test_ple.py
-index 808f9ac56c..4f94df28ea 100644
+index 292ffc8c8e..63286d7dea 100644
 --- a/tests/models/qwen4_exp/test_ple.py
 +++ b/tests/models/qwen4_exp/test_ple.py
-@@ -8,6 +8,7 @@ from dataclasses import dataclass
+@@ -7,6 +7,7 @@ from dataclasses import dataclass
  from itertools import accumulate
  from pathlib import Path
  from types import SimpleNamespace
@@ -45,7 +45,7 @@ index 808f9ac56c..4f94df28ea 100644
  
  import pytest
  import torch
-@@ -3047,3 +3048,27 @@ def test_amd_ngram_embedding_matches_reference_under_compile(
+@@ -2830,3 +2831,27 @@ def test_amd_ngram_embedding_matches_reference_under_compile(
      )
      expected = loaded_weight[ngram_ids.cpu()].flatten(-2).to(device)
      torch.testing.assert_close(output.float(), expected.float(), rtol=0, atol=0)
@@ -74,10 +74,10 @@ index 808f9ac56c..4f94df28ea 100644
 +    assert seen == [(torch.float32, False), (torch.bfloat16, True)]
 +    assert not hasattr(fp32_layer, "_draft_w8a8")
 diff --git a/vllm/envs.py b/vllm/envs.py
-index cebdc6f20f..4af3ae9a1b 100755
+index 94317ee5e0..cfcb8948d8 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -125,6 +125,7 @@ if TYPE_CHECKING:
+@@ -127,6 +127,7 @@ if TYPE_CHECKING:
      VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
      VLLM_SAFETENSORS_DROP_CACHE: bool = False
      VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
@@ -85,7 +85,7 @@ index cebdc6f20f..4af3ae9a1b 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1150,6 +1151,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1181,6 +1182,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_PP_INT8_HOP": lambda: (
          os.getenv("VLLM_QWEN4EXP_PP_INT8_HOP", "0").lower() in ("1", "true")
      ),

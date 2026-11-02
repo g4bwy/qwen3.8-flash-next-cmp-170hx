@@ -1,7 +1,7 @@
-From 005d386385ad31605aa38f85e70d226807de867c Mon Sep 17 00:00:00 2001
+From a7f6bc9c5dcd414266a0be51e1c36ed9ed5e4d1e Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
-Subject: [PATCH 03/11] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
+Subject: [PATCH 3/9] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
 
 Every draft token of MTP speculation runs compute_logits with the full
 248,320-row lm_head: on sm_80 at the ~1.1 TB/s measured for these cards
@@ -30,10 +30,9 @@ syv-ai/HyperQwen's qwen3_5-mtp-draft-vocab patch, adapted to the
 qwen4_exp MTP module. Opt out by deleting the two files.
 ---
  .../models/qwen4_exp/test_mtp_draft_vocab.py  | 29 +++++++
- vllm/config/speculative.py                    | 27 -------
  vllm/models/qwen4_exp/nvidia/mtp.py           | 78 ++++++++++++++++++-
  .../target_dependent_ar/speculator.py         |  7 ++
- 4 files changed, 113 insertions(+), 28 deletions(-)
+ 3 files changed, 113 insertions(+), 1 deletion(-)
  create mode 100644 tests/models/qwen4_exp/test_mtp_draft_vocab.py
 
 diff --git a/tests/models/qwen4_exp/test_mtp_draft_vocab.py b/tests/models/qwen4_exp/test_mtp_draft_vocab.py
@@ -71,44 +70,6 @@ index 0000000000..dddb7c8f81
 +def test_draft_head_weight_names_remap() -> None:
 +    assert _remap_mtp_weight_name("mtp.draft_lm_head.weight") == "draft_lm_head.weight"
 +    assert _remap_mtp_weight_name("mtp.shared_head.head.weight") == "lm_head.weight"
-diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
-index 4ff8c38e18..9c9f57f2ae 100644
---- a/vllm/config/speculative.py
-+++ b/vllm/config/speculative.py
-@@ -1355,33 +1355,6 @@ class SpeculativeConfig:
-             transformers_mtp_overrides=transformers_mtp_overrides,
-         )
- 
--        return functools.partial(
--            SpeculativeConfig._apply_composed_hf_override,
--            target_hf_overrides,
--            transformers_mtp_overrides=transformers_mtp_overrides,
--=======
--        if callable(target_hf_overrides):
--            return functools.partial(
--                SpeculativeConfig._apply_composed_hf_override, target_hf_overrides
--            )
--
--        if not forward_rope_dicts:
--            return SpeculativeConfig.hf_config_override
--
--        if not isinstance(target_hf_overrides, Mapping) or not target_hf_overrides:
--            return SpeculativeConfig.hf_config_override
--
--        draft_overrides = SpeculativeConfig._select_draft_hf_overrides(
--            target_hf_overrides
--        )
--        if not draft_overrides:
--            return SpeculativeConfig.hf_config_override
--
--        return functools.partial(
--            SpeculativeConfig._apply_dict_then_arch_override, draft_overrides
-->>>>>>> 08aeebdd5d ([Bugfix][Spec Decode] Propagate rope hf_overrides to the MTP draft)
--        )
--
-     @staticmethod
-     def _is_custom_proposer_path(model: str | None) -> bool:
-         """True if ``model`` is a dotted import path (e.g. ``pkg.MyProposer``)."""
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
 index 30401ca56d..192332429b 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
@@ -240,10 +201,10 @@ index 30401ca56d..192332429b 100644
                  if remapped_name is not None:
                      yield remapped_name, weight
 diff --git a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
-index 1c7db7c697..9d5a30b58a 100644
+index f17a820c4f..29b1705b8d 100644
 --- a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
 +++ b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
-@@ -292,6 +292,13 @@ class TargetDependentARSpeculator(DraftModelSpeculator):
+@@ -293,6 +293,13 @@ class TargetDependentARSpeculator(DraftModelSpeculator):
                  and prefill_batch_desc.cg_mode == CUDAGraphMode.FULL,
              )
  

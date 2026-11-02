@@ -152,7 +152,7 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --served-model-name qwen3.8-flash-next-fp8 \
     --port 8000 \
     --pipeline-parallel-size 4 \
-    --engram-config '{"cpu_offload": true, "host_file_gather": false, "host_file_gather_mmap": false}' \
+    --engram-config '{"cpu_offload": true}' \
     --moe-backend humming \
     --enable-prefix-caching \
     --mamba-cache-mode align \

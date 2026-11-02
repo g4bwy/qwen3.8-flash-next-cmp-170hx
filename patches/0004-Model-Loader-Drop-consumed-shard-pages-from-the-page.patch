@@ -1,7 +1,7 @@
-From 243913ccb6a1a42844dee59ef2b21f7bab16fbe2 Mon Sep 17 00:00:00 2001
+From 2d601874876843b1162bc80c48283dff63ab714a Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 12:16:26 +0200
-Subject: [PATCH 04/11] [Model Loader] Drop consumed shard pages from the page
+Subject: [PATCH 4/9] [Model Loader] Drop consumed shard pages from the page
  cache
 
 Set VLLM_SAFETENSORS_DROP_CACHE=1 to posix_fadvise(FADV_DONTNEED) each
@@ -192,18 +192,18 @@ index 0000000000..307143eb4f
 +    for off, length in calls:
 +        assert all(off >= e or off + length <= b for b, e in keep)
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 430c30c33a..f336fcfd3a 100755
+index a7a8879fd9..00492a66df 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -123,6 +123,7 @@ if TYPE_CHECKING:
-     VLLM_USE_MEGA_AOT_ARTIFACT: bool = False
+@@ -125,6 +125,7 @@ if TYPE_CHECKING:
+     VLLM_COMPILE_ON_ONE_RANK: bool = False
      VLLM_USE_TRITON_AWQ: bool = False
      VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
 +    VLLM_SAFETENSORS_DROP_CACHE: bool = False
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1137,6 +1138,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1168,6 +1169,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_FASTSAFETENSORS_QUEUE_SIZE": lambda: int(
          os.getenv("VLLM_FASTSAFETENSORS_QUEUE_SIZE", "0")
      ),
@@ -219,10 +219,10 @@ index 430c30c33a..f336fcfd3a 100755
      "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/model_executor/model_loader/weight_utils.py b/vllm/model_executor/model_loader/weight_utils.py
-index 1fa5625225..46e3eaf221 100644
+index f7b0fff68c..5d43b3e12d 100644
 --- a/vllm/model_executor/model_loader/weight_utils.py
 +++ b/vllm/model_executor/model_loader/weight_utils.py
-@@ -1092,6 +1092,91 @@ def _prefetch_all_checkpoints(
+@@ -1093,6 +1093,91 @@ def _prefetch_all_checkpoints(
      threading.Thread(target=_run_prefetch, daemon=True).start()
  
  
@@ -314,7 +314,7 @@ index 1fa5625225..46e3eaf221 100644
  def safetensors_weights_iterator(
      hf_weights_files: list[str],
      use_tqdm_on_load: bool,
-@@ -1178,6 +1263,10 @@ def safetensors_weights_iterator(
+@@ -1179,6 +1264,10 @@ def safetensors_weights_iterator(
          )
  
      leftover_state_dict: dict[str, torch.Tensor] = {}
@@ -325,7 +325,7 @@ index 1fa5625225..46e3eaf221 100644
      for st_file in tqdm(
          sorted_files,
          desc=loading_desc,
-@@ -1227,6 +1316,23 @@ def safetensors_weights_iterator(
+@@ -1228,6 +1317,23 @@ def safetensors_weights_iterator(
                          continue
                      param = f.get_tensor(name)
                      yield name, param
@@ -349,7 +349,7 @@ index 1fa5625225..46e3eaf221 100644
  
  
  def multi_thread_safetensors_weights_iterator(
-@@ -1235,9 +1341,19 @@ def multi_thread_safetensors_weights_iterator(
+@@ -1236,9 +1342,19 @@ def multi_thread_safetensors_weights_iterator(
      max_workers: int = 4,
  ) -> Generator[tuple[str, torch.Tensor], None, None]:
      """Multi-Thread iterate over the weights in the model safetensor files."""

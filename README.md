@@ -6,13 +6,14 @@ The thing's basically debugging and optimizing itself, so expect some slop, but 
 
 Shipped-lane numbers are in [Throughput](#throughput). At the shipped chunk
 budget: cold 1M prefill 85.5 s TTFT, 11.6k tok/s, and 209-212 tok/s
-sustained single-stream decode at MTP-4 on fp8 KV, patch 11, 2026-10-25.
+sustained single-stream decode at MTP-4 on fp8 KV, 2026-10-25.
 The same boot with `--max-num-batched-tokens 9728` runs 62.7 s, the fastest
 prefill measured on this box; that setting awaits its cert battery.
 
 - Box: 4x NVIDIA CMP 170HX (GA100, unlocked to 64 GB and 74 SM), one NUMA node,
-  PLE n-gram table pinned in host RAM (the file-gather path of patches 7-8 is
-  built and certified but reverted from the default 2026-10-26, see results.md).
+  PLE n-gram table pinned in host RAM (upstream `disk_offload` can serve it
+  from the checkpoint files; the series' own file-gather pair was retired for
+  it on 2026-11-02, see results.md).
   Every number here is at a 200 W per-card
   cap.
 - PCIe is the limit. Gen2, GPU1 at x16, GPU0/2/3 at x4, and `nvidia-smi topo -m`
@@ -29,12 +30,15 @@ prefill measured on this box; that setting awaits its cert battery.
   TTFT and 7.7 % of prefill rate, and buys 4.3 % more KV pool that the
   five-resident cell showed does not convert. The old +6 % and +20 % pair mixed
   depth with quantization, at the same depth the 2026-10-12 edge was +2 to +6 %.
-- Base commit: `8084f0624dba24aba6ebac62d8e10cc00730a0fe` (vllm-project/vllm main, 2026-10-30; newest main with a published cu130 wheel, `0.33.0rc1.dev308+g8084f0624`; the 2 newer tips 404).
-- 11 patches: nine ours, two adopted from upstream PRs (#58094 as
-  patch 2, #58815 as patch 7; both still open upstream,
-  so they survive rebases as adopted commits). After
+- Base commit: `28dd9c36b5fac772e4cccf9563ab9b19ac09edf0` (vllm-project/vllm main, 2026-11-02; newest main with a published cu130 wheel, `0.33.0rc1.dev532+g28dd9c36b`).
+- 9 patches: eight ours, one adopted from an upstream PR (#58094 as patch 2,
+  still open upstream, so it survives rebases as an adopted commit).
+  #59958 merged upstream a native `disk_offload` PLE file-serving option that
+  replaces this series' former patches 7-8 (host_file_gather port + mmap
+  backend); the mmap row-read speedup can be re-homed onto it if the file
+  path is ever revived. After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `3615b0aaebb9f34a405f92649da37a5ed726f929`. If it does not, you applied
+  `2320d766f6597dd9b63d96cad02c6c1c424a95ae`. If it does not, you applied
   something else or onto something else.
 - The base's `humming-kernels[cu13]` pin moved to 0.1.17 (0.1.12 fails the
   new `vllm/utils/humming.py` imports). The editable precompiled install
@@ -50,13 +54,13 @@ prefill measured on this box; that setting awaits its cert battery.
 ```bash
 git clone https://github.com/vllm-project/vllm
 cd vllm
-git checkout 8084f0624dba24aba6ebac62d8e10cc00730a0fe
+git checkout 28dd9c36b5fac772e4cccf9563ab9b19ac09edf0
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # 3615b0aaebb9f34a405f92649da37a5ed726f929
+git rev-parse 'HEAD^{tree}'   # 2320d766f6597dd9b63d96cad02c6c1c424a95ae
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
-8084f0624dba24aba6ebac62d8e10cc00730a0fe`), then re-run the `git am`.
+28dd9c36b5fac772e4cccf9563ab9b19ac09edf0`), then re-run the `git am`.
 
 ## Build
 
@@ -65,7 +69,7 @@ Python 3.12, `uv` on PATH ([install](https://docs.astral.sh/uv/)).
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=8084f0624dba24aba6ebac62d8e10cc00730a0fe \
+VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=28dd9c36b5fac772e4cccf9563ab9b19ac09edf0 \
   uv pip install -e . --torch-backend=auto
 ```
 
@@ -77,7 +81,7 @@ that commit must satisfy two rules:
    `https://wheels.vllm.ai/<sha>/cu130/vllm/metadata.json` and stops on 404.
    Wheel CI lags main by hours, so walk down from the tip and take the newest
    commit that answers 200. The wheel for this base:
-   `0.33.0rc1.dev308+g8084f0624`, cp38-abi3, x86_64 and aarch64. Match the
+   `0.33.0rc1.dev532+g28dd9c36b`, cp38-abi3, x86_64 and aarch64. Match the
    `+g<sha>` tail to your base. Ignore the leading number, which only tracks
    upstream packaging.
 2. Pass that 40-hex sha in `VLLM_PRECOMPILED_WHEEL_COMMIT`. Without it, a
@@ -115,11 +119,10 @@ Retired configs are in [archive/](archive/README.md): the 3-card set, the
 
 The script sets:
 
-- MTP-4 spec decode. The PLE n-gram table is pinned in host RAM; the file-gather
-  backends (patches 7-8) stay available via
-  `--engram-config '{"cpu_offload": true, "host_file_gather": true,
-  "host_file_gather_mmap": true}'` and are held off the default pending the
-  tool-call bisect of 2026-10-26.
+- MTP-4 spec decode. The PLE n-gram table is pinned in host RAM. File serving
+  of the table is now an upstream option,
+  `--engram-config '{"cpu_offload": true, "disk_offload": true}'` (#59958);
+  the series' own gather pair was retired for it on 2026-11-02.
 - Prefix caching with `--mamba-cache-mode align`,
   `--prefix-cache-retention-interval 16160` and `--prefix-match-unit 16`.
   MTP-4 forces a 1616 scheduler block (1600 + 16 per extra draft row) and the
@@ -131,12 +134,15 @@ The script sets:
   retries. vLLM forbids it only with KV connectors, and we run none.
 - `VLLM_SAFETENSORS_DROP_CACHE=1` (patch 4): consumed shards leave the page
   cache, so the 173 GiB boot read does not evict reusable cache.
-- W8A8 arms (patches 9-11) are OFF by default since 2026-10-26: elevated
+- W8A8 arms (patches 7-9) are OFF by default since 2026-10-26: elevated
   tool-call errors on live agent traffic prompted a rollback of draft, dense,
-  gather-PLE, and MIN_M together, confounded until the one-lever-per-boot bisect
-  in results.md runs. When on, the startup proof lines are `Dense bf16 linears
-  scored as W8A8 int8 via CUTLASS from batch M=1: 39 of 151 layers` and `MTP
-  draft head scores as W8A8 int8 via CUTLASS`; absence of the first line is how
+  gather-PLE, and MIN_M together. On 2026-10-30 the lane moved from the Rust
+  frontend to the Python one and the errors stopped; no recurrence since, so
+  the Rust frontend's tool/structured-output path is the working conclusion
+  and the per-lever bisect is dropped. The arms stay off as posture, not as
+  suspects. When on, the startup proof lines are `Dense bf16 linears
+  scored as W8A8 int8 via CUTLASS ... of 151 layers` and `MTP draft head
+  scores as W8A8 int8 via CUTLASS`; absence of the first line is how
   a safe boot announces itself.
 
 Startup checks for the YaRN lane:
@@ -287,9 +293,9 @@ reading any two rows as a comparison.
 | 4 cards, 1M, W8A16 lane, MTP-4, bf16 KV, 2026-10-12 | no source for 93.5 s | 10.1k † | 216-226, two different fills, not a salt band | 400 s wall at 100/4, the official tree beat it at 386 s |
 | + int8 handoff (patch 6), bf16 KV, trial boot 2026-10-16, never shipped | 79.9 s | 12.4k | no decode measured on this boot | wall 346 s at 100/4, pool 2.65M holds 2-3 of 4 |
 | + int8 handoff + fp8 KV | 92.9-93.9 s | 10.1k, divisor unrecorded | no rate recorded | wall 356.5-356.8 s at 100/4, 4/4 resident, pool 5.08M |
-| + int8 heads & dense (patches 9+10) | 85.2-85.6 s | 11.6k | 186-189, no source in results.md | wall 333.7-338.8 s at 100/4, 4/4 resident, pool 4.96M |
-| arms-on posture (patches 10-11), fp8 KV, 2026-10-25, salts 130100-130300 | 85.4-85.5 s | 11.6k | 209-212, win avg 198-199 | 333.7-338.8 s not re-run on this boot |
-| = SHIP (live since 2026-10-27): base 5c1eb11cb3, 11 patches, 9728 chunk budget, pinned PLE, W8A8 arms off | 66.0-66.3 s | 15.0k | win avg 191-195, sust 202-204 | wall 299.3-306.3 s at 100/4, 4/4 resident, pool 5.29M; tool-call battery 27/27 |
+| + int8 heads & dense (patches 7+8) | 85.2-85.6 s | 11.6k | 186-189, no source in results.md | wall 333.7-338.8 s at 100/4, 4/4 resident, pool 4.96M |
+| arms-on posture (patches 8-9), fp8 KV, 2026-10-25, salts 130100-130300 | 85.4-85.5 s | 11.6k | 209-212, win avg 198-199 | 333.7-338.8 s not re-run on this boot |
+| = SHIP (live since 2026-10-30): base 8084f0624d, 11 patches, 9728 chunk budget, Python frontend, pinned PLE, W8A8 arms off | 66.0-66.3 s | 15.0k | win avg 191-195, sust 202-204 | wall 299.3-306.3 s at 100/4, 4/4 resident, pool 5.29M; tool-call battery 27/27 |
 | same tree, `--kv-cache-dtype auto`, same salts, reference only | 76.3-76.4 s | 12.9k | 212-215, win avg 198-205 | not run, pool 2.58M caps it at 2-3 of 4 |
 | fp8 KV, `--max-num-batched-tokens 9728`, same build, same salts, 2026-10-26 | 62.6-62.9 s | 15.8k | 209-212, win avg 199-201 | not run |
 | same budget, `--kv-cache-dtype auto`, same salts | 63.9-64.1 s | 15.4k | 212-219, win avg 204-207 | not run |
@@ -321,7 +327,7 @@ reading any two rows as a comparison.
   of nine bf16/fp8 cells at the same budget.
 - The 12.4k row is not a target that was lost. It was a one-variable bf16 trial
   booted on 2026-10-16 and superseded the same day, and bf16 on today's tree
-  measures 12.9k, higher still, because patches 9 to 11 moved prefill-bound
+  measures 12.9k, higher still, because patches 7 to 9 moved prefill-bound
   cells. The int8 pair changes prefill only, decode stays on the bf16 kernels
   since the int8 branch needs M>=512 and captured batches are at most 80.
 - The earlier rows carry no date or base and should be read as history. Five
@@ -388,14 +394,12 @@ about one position in 130 moves because of the quantization. Full tables:
 | 1 | Regression guards for the PP+PLE+MTP contracts #60234 merged without tests: the drafter drafts on the last rank, PP is accepted with and without PLE, the wire carries hidden states only (input ids ride the stage-local #61016 flow), and non-first ranks feed runner input ids to the decoder layers. Tests only |
 | 2 | upstream PR #58094, adopted: propagate rope `--hf-overrides` to the MTP draft config. Forwarding is gated to the MTP family: an independent draft model ships its own rope and target dicts must not resize it. Taken with two fixes: `PretrainedConfig` annotations renamed (NameError at import), and it forwards rope-keyed subsets rather than the full same-checkpoint dict our earlier local version used |
 | 3 | vocab-truncated MTP draft head: the drafter scores a ~40k-token head instead of the full 248k-row lm_head per draft step, +8.7% single-stream, verification and output quality untouched. Dual-head: eager mixed prefill windows draft with the full head, graphed uniform decode rounds keep the small one. Needs artifacts, build commands in checkpoint/README |
-| 4 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts), so the 173 GiB read-once load does not evict reusable cache at every boot; under patch 7's file gather the drop is range-aware and spares PLE table bytes, keeping the resident table serving from cache |
+| 4 | drop each consumed checkpoint shard from the Linux page cache (`VLLM_SAFETENSORS_DROP_CACHE=1`, set by the serve scripts), so the 173 GiB read-once load does not evict reusable cache at every boot; under PLE file serving (`disk_offload`, upstream since #59958) the drop is range-aware and spares table bytes |
 | 5 | Qwen4Exp PLE embedding honors fp8 n-gram tables inside compressed-tensors checkpoints: resolve the scheme (none -> unquantized, float8 -> fp8, else raise) instead of falling through to the Fp8Config-only gate |
 | 6 | opt-in int8 pipeline handoff (`VLLM_QWEN4EXP_PP_INT8_HOP=1`): the materialized 4-stream hyper-connection state (`hidden x hc_count` bf16, 42 MB per 2048-token chunk) crosses stages as per-token per-stream int8 plus fp32 scales, halving wire bytes on a link that is the prefill wall. Cold 1M TTFT 91.8 -> 79.9 s, 100/4 wall 386 -> 346 s, needles and acceptance clean; flag-off is byte-identical; a half-enabled pipeline raises instead of casting |
-| 7 | upstream PR #58815, adopted (drift-adapted port): `--engram-config '{"host_file_gather": true}'` serves PLE n-gram rows by per-step `preadv` from page-cache-resident checkpoint shards instead of a 47.6 GiB pinned host table. Boot load 1:16 -> 0:49, ~48 GiB pinned RAM freed, needles/acceptance unchanged; cost is a per-step worker stream sync in staging (100/4 276-380 s vs pinned ~350 steady, cold 1M +3 s). Pairs with patch 4's range-sparing; the threaded prefill-ahead variant was measured slower and shelved (experiments/0013, results.md) |
-| 8 | opt-in `host_file_gather_mmap` gather backend for patch 7: one read-only mmap per checkpoint shard at bind, then per-step `index_select` instead of a per-row `preadv` loop, `FADV_WILLNEED` pre-queue kept. Cold 1M 92.6 -> 90.9 s (pinned parity), 100/4 362 -> 358-362 s, byte-identical rows (logprob A/B at the noise floor). Off by default so memory-tight hosts keep the reclaim-friendly preadv path |
-| 9 | opt-in `VLLM_QWEN4EXP_DRAFT_W8A8=1`: the 40k MTP draft head scores as per-channel int8 (dynamic per-token activation quant + `cutlass_scaled_mm`) instead of a bf16 GEMM. sm_80 int8 tensor cores run at twice the bf16 rate, and CUTLASS beat the bf16 head at every decode-M point benched (1.39-1.67x, quant cost free). The verifier never sees it: teacher-forced logprob captures differ below the boot's own noise floor, and the Boot-A battery was quality-neutral |
-| 10 | opt-in `VLLM_QWEN4EXP_DENSE_W8A8=1`: the shipped FP8 checkpoint keeps all dense linears (attention qkv/o, GDN projections, shared MLP) in BF16, only routed experts are FP8, so this claims those `UnquantizedLinearMethod` layers and scores prefill-sized batches (M>=512) as W8A8 int8 via CUTLASS. Decode stays bf16 and inside the captured graphs; the int8 copy lives next to the weight (pool -2.5%). Cold 1M TTFT 90.4 -> 85.4 s, 100/4 in_tps +6% at a quarter of the old spread, quality gates (needles, accept-window, corpus floors) clean in two battery sessions. Rolled back from the default 2026-10-26 on production tool-call errors; the gates listed never covered qwen3_xml validity, and as a verifier-side change this is the bisect's lead |
-| 11 | opt-in `VLLM_QWEN4EXP_DENSE_W8A8_MIN_M` (default 512, unset behaviour): lowers patch 10's batch floor so the int8 arm also serves the captured decode buckets, and stamps the floor at enable time so the branch a graph captures is fixed before capture. Measured under graph replay at the production layout, M=5 is 1.19-1.50x over the bf16 GEMM on the five large dense shapes; live it lands as 3-5% single-stream decode (step 23.94 -> 22.79 ms, win avg 192.6 -> 200.6 over three salts), because the arm claims 36 of 138 linears, not the whole `gemm-bf16` category, and each claimed GEMM pays its own activation quant. Quality at the floor: cross-arm values 9.46-9.72% flips against 8.98-9.24% floors, acceptance unchanged, needles clean; pool -0.12% |
+| 7 | opt-in `VLLM_QWEN4EXP_DRAFT_W8A8=1`: the 40k MTP draft head scores as per-channel int8 (dynamic per-token activation quant + `cutlass_scaled_mm`) instead of a bf16 GEMM. sm_80 int8 tensor cores run at twice the bf16 rate, and CUTLASS beat the bf16 head at every decode-M point benched (1.39-1.67x, quant cost free). The verifier never sees it: teacher-forced logprob captures differ below the boot's own noise floor, and the Boot-A battery was quality-neutral |
+| 8 | opt-in `VLLM_QWEN4EXP_DENSE_W8A8=1`: the shipped FP8 checkpoint keeps all dense linears (attention qkv/o, GDN projections, shared MLP) in BF16, only routed experts are FP8, so this claims those `UnquantizedLinearMethod` layers and scores prefill-sized batches (M>=512) as W8A8 int8 via CUTLASS. Decode stays bf16 and inside the captured graphs; the int8 copy lives next to the weight (pool -2.5%). Cold 1M TTFT 90.4 -> 85.4 s, 100/4 in_tps +6% at a quarter of the old spread, quality gates (needles, accept-window, corpus floors) clean in two battery sessions. Rolled back from the default 2026-10-26 on production tool-call errors; the gates listed never covered qwen3_xml validity, and as a verifier-side change this is the bisect's lead |
+| 9 | opt-in `VLLM_QWEN4EXP_DENSE_W8A8_MIN_M` (default 512, unset behaviour): lowers patch 8's batch floor so the int8 arm also serves the captured decode buckets, and stamps the floor at enable time so the branch a graph captures is fixed before capture. Measured under graph replay at the production layout, M=5 is 1.19-1.50x over the bf16 GEMM on the five large dense shapes; live it lands as 3-5% single-stream decode (step 23.94 -> 22.79 ms, win avg 192.6 -> 200.6 over three salts), because the arm claims 36 of 138 linears, not the whole `gemm-bf16` category, and each claimed GEMM pays its own activation quant. Quality at the floor: cross-arm values 9.46-9.72% flips against 8.98-9.24% floors, acceptance unchanged, needles clean; pool -0.12% |
 
 ## Gotchas
 
@@ -406,7 +410,7 @@ boot, your first benchmark run, or any change to cache cell layouts.
 
 ```
 patchset-qwen38-pp/
-  patches/0001-*.patch .. 0011-*.patch   the series, git am
+  patches/0001-*.patch .. 0009-*.patch   the series, git am
   serve-4x-1m.sh                         the service lane: 4 gpus, 1M, YaRN 4.0 (PROF=1 arms the profiler)
   archive/                               retired lanes, the 3-card set, the TP=4 trial, and their tables
   benchmark/                             measurement tools, raw results, and the full record, see its README

@@ -1,7 +1,7 @@
-From 0527121c83a59c867378cde2cf6f9b32302c93b9 Mon Sep 17 00:00:00 2001
+From 2e5617f84a6ad1eb0e459df613123ff5fd67403b Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 9 Oct 2026 20:51:39 +0200
-Subject: [PATCH 05/11] [Model Loader] Qwen4Exp: Honor fp8 PLE tables under
+Subject: [PATCH 5/9] [Model Loader] Qwen4Exp: Honor fp8 PLE tables under
  compressed-tensors
 
 The compressed-tensors branch of Qwen4ExpPLEEmbeddingMethod
@@ -19,10 +19,10 @@ test_ple_embedding_falls_back_for_unsupported_quantization_configs.
  1 file changed, 11 insertions(+), 5 deletions(-)
 
 diff --git a/vllm/models/qwen4_exp/common/ngram_embedding.py b/vllm/models/qwen4_exp/common/ngram_embedding.py
-index d5bd9f6892..de651c92e1 100644
+index 8dbefee09d..ab56c4ea52 100644
 --- a/vllm/models/qwen4_exp/common/ngram_embedding.py
 +++ b/vllm/models/qwen4_exp/common/ngram_embedding.py
-@@ -209,11 +209,17 @@ class Qwen4ExpPLEEmbeddingMethod(QuantizeMethodBase):
+@@ -213,11 +213,17 @@ class Qwen4ExpPLEEmbeddingMethod(QuantizeMethodBase):
                          f"{prefix!r}; expected FP8 or NVFP4"
                      )
                  return Qwen4ExpPLEUnquantizedEmbeddingMethod()

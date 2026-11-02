@@ -1,7 +1,7 @@
-From b18fb8a6eaf503cce4ab7cc648e5a8ad35a87cff Mon Sep 17 00:00:00 2001
+From 6dc454e12f77b6b7d55d9918e9e1e185c1caf243 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Tue, 27 Oct 2026 10:37:50 +0100
-Subject: [PATCH 01/11] [Test][Qwen4Exp] Keep the pipeline-parallel contracts
+Subject: [PATCH 1/9] [Test][Qwen4Exp] Keep the pipeline-parallel contracts
  under regression guards
 
 their regression tests had no upstream equivalent: the MTP drafter
@@ -17,7 +17,7 @@ plain and the int8-hop build.
  1 file changed, 140 insertions(+)
 
 diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
-index 6d94b1e560..039649e8ed 100644
+index bb01acdd84..c2fe9f9303 100644
 --- a/tests/models/qwen4_exp/test_config.py
 +++ b/tests/models/qwen4_exp/test_config.py
 @@ -15,13 +15,16 @@ from vllm.model_executor.layers.quantization.compressed_tensors.utils import (

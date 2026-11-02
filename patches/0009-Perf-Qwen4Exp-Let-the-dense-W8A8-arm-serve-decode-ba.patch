@@ -1,7 +1,7 @@
-From 22256a261ed0316842a990206f7bb6cea6a90ab0 Mon Sep 17 00:00:00 2001
+From 4f11bc2c11a5546547741d19b41731e28518ac20 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 23:44:56 +0200
-Subject: [PATCH 11/11] [Perf][Qwen4Exp] Let the dense W8A8 arm serve decode
+Subject: [PATCH 9/9] [Perf][Qwen4Exp] Let the dense W8A8 arm serve decode
  batches
 
 Patch 12 floors the dense int8 arm at M=512, which leaves every captured
@@ -155,10 +155,10 @@ index 42ee27b2e5..a58c294dce 100644
 +    assert type(layer.quant_method) is UnquantizedLinearMethod
 +    assert not hasattr(layer.quant_method, "_qwen4exp_dense_w8a8_min_m")
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 79e7c59318..3dcbce9e27 100755
+index a0f49c967f..0bca76b90f 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -127,6 +127,7 @@ if TYPE_CHECKING:
+@@ -129,6 +129,7 @@ if TYPE_CHECKING:
      VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
      VLLM_QWEN4EXP_DRAFT_W8A8: bool = False
      VLLM_QWEN4EXP_DENSE_W8A8: bool = False
@@ -166,7 +166,7 @@ index 79e7c59318..3dcbce9e27 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1168,6 +1169,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1199,6 +1200,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_DENSE_W8A8": lambda: (
          os.getenv("VLLM_QWEN4EXP_DENSE_W8A8", "0").lower() in ("1", "true")
      ),

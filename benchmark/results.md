@@ -4376,3 +4376,45 @@ ladder that localizes the incident remains: same battery per boot with
 +dense W8A8, then +draft W8A8, then +gather arms ON; a family that drops
 against 27/27 names the lever. long_context dropping first would point
 prefill-side (dense arm), NO_CALL/TRUNCATE patterns decode-side.
+
+### Series rebased onto 28dd9c36b5; patches 7-8 retired for upstream #59958 (2026-11-02)
+
++227 upstream commits. The range merged [Qwen4Exp] PLE disk offload
+(#59958, NVIDIA + Trosfy, our patch-7 author): `--engram-config
+'{"disk_offload": true}'` keeps PLE rows in the checkpoint files, reads
+them per step (fadvise-queued preadv into pinned staging, async H2D,
+CUDA-graph-safe, NVFP4 scale planes, ETP-aware), with docs and +190 test
+lines. Its /proc/self/maps shard-binding collides by construction with our
+host_file_gather port: 27 adversarial conflict blocks across 8 files on the
+first skipped patch alone, and #59958 does not sit on top of our work (zero
+host_file_gather references upstream; it replaces the same territory).
+Decision: retire our patches 7 (preadv port) and 8 (mmap backend) rather
+than merge two rival gathers forever. Cost accounting: the retired pair was
+dormant in production since the 10-26 pinned rollback; the surviving delta
+of patch 8 over upstream's design is mmap index_select instead of a serial
+preadv loop (measured eras: 90.8-91.0 vs 92.6-92.9 cold, 358-362 vs
+362-367 at 100/4), re-homeable as a small backend onto their class if the
+file path is ever revived; #59958 also has no PP test coverage, unlike our
+certified pair.
+
+Series is 9 patches: test guards, rope (adopted #58094; re-homed again -
+draft ModelConfig construction moved to vllm/v1/worker/gpu/spec_decode/
+speculator_config.py in this range, forward_rope_dicts now passed there),
+draft vocab, drop-cache, fp8 PLE (still needed: no upstream equivalent),
+int8 hop (clean), draft/dense/MIN_M W8A8 arms. Tree
+`2320d766f6597dd9b63d96cad02c6c1c424a95ae`, replay-verified 9/9 in
+wt-pristine-1102; CPU parity exact by failure name (11 test_ple env
+failures identical on both trees); ruff/format clean; 10 modules import.
+Wheel `0.33.0rc1.dev532+g28dd9c36b`; banner after reinstall = dev541.
+Serve script: the strict EngramConfig made the old gather flags a hard arg
+error, the repo line is now '{"cpu_offload": true}' (same pinned behavior).
+
+Tool-call investigation CLOSED per owner: since the 10-30 switch to the
+Python frontend no tool-call errors recurred; most likely the Rust frontend
+(already known to ignore structured_outputs_config and
+enable_auto_tool_choice). The W8A8 arms stay off as posture, not as suspects.
+
+Other range notes worth having: #64999 restores in_proj_ba overlap on CUDA
+(GDN prefill path of this model), #64820 int64s the HC/PLE gate row offsets
+(320M-row overflow hardening), #62560 sampler warmup after capture stops
+memory growth under load (MRV2), #64914 caps chunked prompt-logprob topk.
