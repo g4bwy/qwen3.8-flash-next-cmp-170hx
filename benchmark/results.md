@@ -4418,3 +4418,25 @@ Other range notes worth having: #64999 restores in_proj_ba overlap on CUDA
 (GDN prefill path of this model), #64820 int64s the HC/PLE gate row offsets
 (320M-row overflow hardening), #62560 sampler warmup after capture stops
 memory growth under load (MRV2), #64914 caps chunked prompt-logprob topk.
+
+### dev541 boot: first run with extensible KV cache (2026-11-03 00:02)
+
+Tree = 9 patches on 28dd9c36b5 (banner 0.33.0rc1.dev541+gc4518..., = 532+9
+as predicted). Hop ACTIVE, pinned PLE, arms off, zero errors, startup
+complete, needles pass. #56492 is live: per-rank "Memory after warmup"
+lines report ~24-29 GiB free with 1.74-2.32 GiB initially committed and
+2.09-2.27 GiB explicitly kept for transient activations, then "Extended KV
+cache to 1736 blocks" equalized across all four ranks (17.06-22.74 GiB
+depending on stage role). Pool line 5,182,089 tokens, -2.5% vs the
+estimate-based dev319 boot: the sizing is now honest (free-after-capture
+minus reserved headroom) instead of optimistic, so treat the absolute pool
+number as a different statistic from this boot onward.
+Cold probe salt 155100: TTFT 69.84 s (bg 0, valid), acceptance 3.83 with
+canary match 0.0 (content lottery, sust 175/win avg 160 follow the drift),
+0 preempts. WATCH ITEM ELEVATED: TTFT is now 69.2 and 69.8 on two boots
+against the 66.0-66.3 cert trio, two independent cells at ~+5%; candidates
+are the +227 upstream commits or the extensible path's activation headroom
+changing chunk scheduling. Settled by a trio when the next battery runs or
+by two more single cells on consecutive boots; no dedicated bench.
+Serve still pins util 0.9453; the util-drop experiment (default 1.0 +
+extensible) remains queued behind a clean reading of this watch item.
