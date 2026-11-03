@@ -4618,7 +4618,7 @@ against the RESOLVED config dump in the boot log, not just the process
 args. The CAPS boot itself was otherwise a faithful copy of the confirm
 boot (same pool 5,313,432, clean), so no data was lost, only a no-op.
 
-### Lattice A/B verdict: keep the MTP-5 capture list (2026-11-03)
+### Lattice A/B verdict: keep the 5-multiple capture lattice (MTP-4, k+1 = 5 rows per request) (2026-11-03)
 
 Same base, two boots, only the CAPS knob differs; cold control TTFT 69.36
 vs 69.45 (identical, prefill untouched). Fixed-depth plateau cells (content
