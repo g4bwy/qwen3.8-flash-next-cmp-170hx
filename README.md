@@ -295,15 +295,23 @@ reading any two rows as a comparison.
 | + int8 handoff + fp8 KV | 92.9-93.9 s | 10.1k, divisor unrecorded | no rate recorded | wall 356.5-356.8 s at 100/4, 4/4 resident, pool 5.08M |
 | + int8 heads & dense (patches 7+8) | 85.2-85.6 s | 11.6k | 186-189, no source in results.md | wall 333.7-338.8 s at 100/4, 4/4 resident, pool 4.96M |
 | arms-on posture (patches 8-9), fp8 KV, 2026-10-25, salts 130100-130300 | 85.4-85.5 s | 11.6k | 209-212, win avg 198-199 | 333.7-338.8 s not re-run on this boot |
-| = SHIP (live since 2026-10-30): base 8084f0624d, 11 patches, 9728 chunk budget, Python frontend, pinned PLE, W8A8 arms off | 66.0-66.3 s | 15.0k | win avg 191-195, sust 202-204 | wall 299.3-306.3 s at 100/4, 4/4 resident, pool 5.29M; tool-call battery 27/27 |
+| 9728 cert battery (dev65: base 5c1eb11cb3, 11 patches, estimator, util 0.9453, Rust frontend), 2026-10-27 | 66.0-66.3 s | 15.0k | win avg 191-195, sust 202-204 | wall 299.3-306.3 s at 100/4, 4/4 resident, pool 5.29M; tool-call battery 27/27 |
+| dev319 boot (base 8084f0624d, 11 patches, Python frontend, same estimator config), 2026-10-30, single clean cold cell | 69.2 s | 14.3k | sust 204.3 | not run |
 | same tree, `--kv-cache-dtype auto`, same salts, reference only | 76.3-76.4 s | 12.9k | 212-215, win avg 198-205 | not run, pool 2.58M caps it at 2-3 of 4 |
 | fp8 KV, `--max-num-batched-tokens 9728`, same build, same salts, 2026-10-26 | 62.6-62.9 s | 15.8k | 209-212, win avg 199-201 | not run |
 | same budget, `--kv-cache-dtype auto`, same salts | 63.9-64.1 s | 15.4k | 212-219, win avg 204-207 | not run |
+| = SHIP (live since 2026-11-03): base 28dd9c36b5, 9 patches, Python frontend, 9728, pinned PLE, arms off, estimator + util 0.9453 (extensible OFF: VMM mapping cost ~10% decode), lattice default-on in script (this boot ran without it; expect the n5/n7 plateaus on the next restart) | 69.2-69.5 s, 4 cells | 14.2k | sust 207.7-211.2, win avg 212.6-214.3 | 100/4 not measured on this boot; plateaus: n5 @940k 713-721, n7 @660k 903-970; pool 5,313,432 (5.31x); accept-window 5.000 x3 |
 | same budget, lab int8 per-token-head KV, same salts | 65.5-65.8 s | 15.1k | 212 sust in clean cells, see dips note | not run |
 
 - The sustained figure is a 1.5 s peak that typically lands in the wind-down
   of the run. Compare grids on wall or out tok/s. Full grids, repeat runs and
   the salt law: [benchmark/results.md](benchmark/results.md).
+- Cold TTFT stepped down with successive bases at the same 9728 config:
+  62.6-62.9 s (2026-10-26, base 4bceda5dbf), 66.0-66.3 s (2026-10-27,
+  5c1eb11cb3), 69.2-69.5 s (2026-10-30 on, 8084f0624d and 28dd9c36b5),
+  repeated cells at every step. Chunk budget, util, estimator mode and the
+  tie/arms envs have each been probed and returned; the drift tracks the
+  base. Not chased, recorded so the next reader does not re-derive it.
 - The fp8 pair that read as the lane's central trade (about 10% of cold prefill
   for 1.92x pool) was mostly self-inflicted scheduling. A one-byte KV cache
   halves bytes per token, so the hybrid page planner doubles the attention
