@@ -4617,3 +4617,15 @@ the same config on one command line are not additive here; verify knobs
 against the RESOLVED config dump in the boot log, not just the process
 args. The CAPS boot itself was otherwise a faithful copy of the confirm
 boot (same pool 5,313,432, clean), so no data was lost, only a no-op.
+
+### Lattice A/B verdict: keep the MTP-5 capture list (2026-11-03)
+
+Same base, two boots, only the CAPS knob differs; cold control TTFT 69.36
+vs 69.45 (identical, prefill untouched). Fixed-depth plateau cells (content
+deterministic, so cross-boot comparable): n5 @940k 720.9 vs 713.2 (+1.1%),
+n7 @660k 969.8 vs 902.6 (+7.4%). One cell per arm, and the plateau column
+carries real boot-to-boot variance, so read n7 as direction-strong
+magnitude-soft and n5 as weak-positive; nothing anywhere is negative, cost
+is 12k pool tokens and ~1 s of extra captures. Script flipped: the 23-size
+lattice is now DEFAULT (CAPS=0 opts out). Re-confirm n7 opportunistically
+on the next battery or probe night before quoting the 7.4% as settled.

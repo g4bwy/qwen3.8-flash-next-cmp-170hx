@@ -153,14 +153,16 @@ fi
 # row counts are multiples of 5 (reqs x (1+4)); the engine's auto list misses
 # 15/25/30/35, padding a 5-request step to 32 rows (+28% dead work). CAPS=1
 # passes an explicit list adding 3,6,7 (draft passes) and 15,25,30,35, and
-# keeps the 48-80 tail for decoder-replay mixed windows. Judge on one n4 +
-# one n6 cell; expected 1-3% at concurrency 5-7 only. Default off.
+# keeps the 48-80 tail for decoder-replay mixed windows. MEASURED 2026-11-03
+# (fixed-depth plateau A/B, same base two boots): n5 +1.1%, n7 +7.4%, TTFT
+# unchanged, pool -0.2% from 7 extra captures; cost-free, so ON by default.
+# CAPS=0 opts back out to the engine auto list.
 # WARNING (parser precedence test, 2026-11-03): a dotted -cc.field=value
 # REPLACES the whole --compilation-config JSON dict regardless of argv order,
 # so mode and sizes must travel together in this single JSON; never pass
 # -cc.* dotted flags alongside it.
 CC_JSON='{"cudagraph_mode": "FULL_AND_PIECEWISE"'
-if [ "${CAPS:-0}" = "1" ]; then
+if [ "${CAPS:-1}" != "0" ]; then
     CC_JSON+=', "cudagraph_capture_sizes": [1, 2, 3, 4, 5, 6, 7, 8, 10, 15, 16, 20, 24, 25, 30, 32, 35, 40, 48, 56, 64, 72, 80]'
 fi
 CC_ARGS=(--compilation-config "${CC_JSON}}")
