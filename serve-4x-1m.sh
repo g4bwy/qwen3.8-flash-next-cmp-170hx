@@ -155,10 +155,15 @@ fi
 # passes an explicit list adding 3,6,7 (draft passes) and 15,25,30,35, and
 # keeps the 48-80 tail for decoder-replay mixed windows. Judge on one n4 +
 # one n6 cell; expected 1-3% at concurrency 5-7 only. Default off.
-CAPS_ARGS=()
+# WARNING (parser precedence test, 2026-11-03): a dotted -cc.field=value
+# REPLACES the whole --compilation-config JSON dict regardless of argv order,
+# so mode and sizes must travel together in this single JSON; never pass
+# -cc.* dotted flags alongside it.
+CC_JSON='{"cudagraph_mode": "FULL_AND_PIECEWISE"'
 if [ "${CAPS:-0}" = "1" ]; then
-    CAPS_ARGS=(--compilation-config '{"cudagraph_capture_sizes": [1, 2, 3, 4, 5, 6, 7, 8, 10, 15, 16, 20, 24, 25, 30, 32, 35, 40, 48, 56, 64, 72, 80]}')
+    CC_JSON+=', "cudagraph_capture_sizes": [1, 2, 3, 4, 5, 6, 7, 8, 10, 15, 16, 20, 24, 25, 30, 32, 35, 40, 48, 56, 64, 72, 80]'
 fi
+CC_ARGS=(--compilation-config "${CC_JSON}}")
 
 # The default prefix match granularity is the GCD of the cacheable KV group
 # block sizes, 1600 here, so a hit could not land finer than 1,600 tokens no
@@ -188,7 +193,7 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --hf-overrides '{"text_config":{"max_position_embeddings":1000000,"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":262144}}}' \
     --max-num-seqs 8 \
     --speculative-config '{"method":"mtp","num_speculative_tokens":4}' \
-    -cc.cudagraph_mode=FULL_AND_PIECEWISE \
+    ${CC_ARGS[@]+"${CC_ARGS[@]}"} \
     --no-enable-flashinfer-autotune \
     --enable-auto-tool-choice \
     --tool-call-parser qwen3_xml \
