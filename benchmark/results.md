@@ -4460,3 +4460,32 @@ setting, not content (both clean cells matched). The 10-27 trio is now the
 minority reading; if it persists through one more boot the live throughput
 row gets updated to the 69 s level and the trio is attributed to its day
 (luckier host state or a base-side delta in the +480 commits since dev65).
+
+### QSA top-k tie fix built (lab/qsa-tiefix, 2026-11-03): awaiting its boot
+
+From the givisok 170HX recipe hub review: on sm_80 every QSA selection runs
+`persistent_topk` (cooperative is gated at capability >= 90), and its
+arrival-order tie placement makes the selected block set depend on batch
+shape and timing on exact score ties; the upstream backend menu has no
+canonical option. The vendored repair (Morrowmake ampere kernel, Apache-2.0)
+keeps the fast kernel, canonicalizes only the contested boundary, and can
+sort each row in the same launch. One env-gated import-time switch pair,
+VLLM_QWEN4EXP_QSA_TOPK_CANONICAL / _SORTED, hooking the single `_topk`
+dispatch shared by decode and chunked prefill; off by default; flag-off
+inert by construction (hook returns before touching tensors).
+
+Build checks: CPU suites 408 pass + the same 11 env failures, new gate
+tests 2 pass + 2 GPU skips (probe checks the op exists, not just the
+device), ruff/format clean, replay of experiments/0010-qsa-topk-tiefix.patch
+onto the 9-patch series tip prints the lab tree 1ec90c76ec. Export sha
+cfd34dc2.
+
+Boot gates when the owner runs it (short cells only, no battery): (1) claim
+line "QSA canonical top-k active" on all four ranks; (2) the GPU oracle test
+in the fender container (CUDA build); (3) fixed-salt accept-window vs the
+4.995-4.998 band; (4) two or three cold probes on fresh salts: single-stream
+sustained vs the 199-204 band (claim to test: +6%, treat >=0 as pass, record
+the delta) and tail_match_frac on rotating salts (mechanistic hope: fewer
+lottery cells, no claim staked on it); (5) if green, promote as patch 10.
+Follow-up in the queue after this one: the cudagraph capture-lattice config
+probe (add 3,6,7,15,25,30,35 to the list, keep the 48-80 tail).
