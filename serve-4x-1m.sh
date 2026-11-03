@@ -139,6 +139,16 @@ if [ -n "${IKD:-}" ]; then
     IKD_ARGS=(--attention-config "{\"indexer_kv_dtype\":\"$IKD\"}")
 fi
 
+# Probe 2026-11-03 (results.md): clean-cell decode stepped 204 -> 189 when
+# the extensible KV boot went live. Default now pins the estimator OFF line
+# so the next boot isolates the VMM page mapping; EXT_KV=1 restores auto
+# sizing (extensible on supported stacks). Details and the band table in
+# results.md, 2026-11-03 entries.
+EXKV_ARGS=()
+if [ "${EXT_KV:-0}" != "1" ]; then
+    EXKV_ARGS=(--no-enable-extensible-kv-cache)
+fi
+
 # The default prefix match granularity is the GCD of the cacheable KV group
 # block sizes, 1600 here, so a hit could not land finer than 1,600 tokens no
 # matter how often a prompt repeats. --prefix-match-unit 16 drops the floor
@@ -149,6 +159,7 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     ${PROF_ARGS[@]+"${PROF_ARGS[@]}"} \
     ${LPT_ARGS[@]+"${LPT_ARGS[@]}"} \
     ${IKD_ARGS[@]+"${IKD_ARGS[@]}"} \
+    ${EXKV_ARGS[@]+"${EXKV_ARGS[@]}"} \
     --served-model-name qwen3.8-flash-next-fp8 \
     --port 8000 \
     --pipeline-parallel-size 4 \
