@@ -4521,3 +4521,25 @@ off (-cc '{"enable_extensible_kv_cache": false}'); if sustained returns to
 ~200, the VMM page mapping is costing decode locality and the util-drop was
 the wrong trade; if it stays ~190, the delta is inside the +254 base commits
 and gets bisected by probe, not battery.
+
+### Canonical-only split: the repair's cost is its own, the verdict closes (2026-11-03)
+
+Same dev542 tree, VLLM_QWEN4EXP_QSA_TOPK_CANONICAL=1 only. Claim line
+without the "rows sorted ascending" suffix confirms the mode; pool, hop and
+banner identical to last night's boot, zero errors.
+Clean cell 158200: sustained 184.8 / win avg 184.8 / acc 4.81 / match 1.0 /
+bg 0 - equal to both-switches (184.7) to a tenth. Window 4.968, same as the
+4.973 with sorting on (band 4.995-4.998). TTFT 69.9-70.0. 158100 was a
+lottery cell (match 0.0) again, so the determinism story stays unproven.
+
+Attribution: sorted traversal is neither the gain (no locality prize on our
+attention share) nor the pain (identical numbers without it). What we pay is
+the repair itself: it re-reads the per-step logits to find the contested
+boundary, ~2 MB at 1M depth per step, a real slice of our decode bandwidth
+budget, plus a per-row re-scan; and the canonical set changes what the
+verifier attends to at ties, costing the ~0.5% MTP agreement. Mechanically
+consistent with dev541 189.5 -> 184.8 (-2.5%).
+FINAL: rejected on this stack in both variants; envs off at next restart;
+experiments/0010 stays as the documented negative. Their +6.3% requires
+their attention share, not just their kernel.
+Next boot per queue: extensible-off probe on the plain 9-patch tree.
