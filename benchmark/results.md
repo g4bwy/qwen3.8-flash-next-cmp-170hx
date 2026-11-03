@@ -4601,3 +4601,19 @@ max_tokens=1 pass before the loop; post-fix run reads 5.000 x 3 identically.
 Cause of the cold-window effect not chased, logged as observed. Dropped a
 pre-existing unused import that failed lint.
 TODO: confirm boot done; next single variable = CAPS=1 lattice boot.
+
+### CAPS boot #1 was a no-op: parser precedence, fixed (2026-11-03)
+
+The flag reached the process (--compilation-config JSON with 23 sizes,
+visible in ps) but the resolved engine config still showed the auto list.
+Cause, reproduced against the real parser in-tree: a dotted
+`-cc.cudagraph_mode=...` argument and a JSON `--compilation-config`
+argument do not merge, the dotted form REPLACES the whole dict regardless
+of argv order, so the script's long-standing dotted mode flag wiped the CAPS
+sizes both ways around. The knob is fixed: one JSON now carries mode plus
+optionally the sizes (validated through EngineArgs.add_cli_args: mode set,
+23 sizes); the dotted flag is gone from the script. Lesson: two spellings of
+the same config on one command line are not additive here; verify knobs
+against the RESOLVED config dump in the boot log, not just the process
+args. The CAPS boot itself was otherwise a faithful copy of the confirm
+boot (same pool 5,313,432, clean), so no data was lost, only a no-op.
