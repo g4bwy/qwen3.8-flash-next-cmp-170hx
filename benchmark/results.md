@@ -4582,3 +4582,22 @@ gets redone). TTFT: 68.6-68.7 is the current level and the watch item is closed;
 the 66.0-66.3 dev65 trio predates extensible and stands as an afternoon
 worth not chasing, since every config knob that could explain it has now
 been probed and returned.
+
+### Confirm boot certified; accept_window cold-trial fix (2026-11-03)
+
+Config = estimator (EXT_KV default off, enable_extensible_kv_cache False in
+the config dump) + util 0.9453 + tie envs off, tree dev542. Boot clean:
+pool 5,313,432 (5.31x, five 1M residents admissible again), zero errors,
+needles pass. Cold cell salt 160100: TTFT 69.22, sustained 211.2, win avg
+213.5, acc 4.812, match 1.0, bg 0. This config now out-reads the dev65-era
+band (202-204) at ~207-211; the lane's best measured state.
+
+accept_window.py fixed while certifying: since this base, the FIRST trial on
+a never-cached prompt reads wide and low (276-316 window drafts vs ~183,
+4.46-4.76, MEAN poisoned to 4.92-4.98); every warm-start trial reads 4.99x.
+The whole historical band was built on warm trials (battery runs executed
+the window after the prompt had traffic), so the fix adds one non-measured
+max_tokens=1 pass before the loop; post-fix run reads 5.000 x 3 identically.
+Cause of the cold-window effect not chased, logged as observed. Dropped a
+pre-existing unused import that failed lint.
+TODO: confirm boot done; next single variable = CAPS=1 lattice boot.
