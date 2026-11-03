@@ -4489,3 +4489,35 @@ the delta) and tail_match_frac on rotating salts (mechanistic hope: fewer
 lottery cells, no claim staked on it); (5) if green, promote as patch 10.
 Follow-up in the queue after this one: the cudagraph capture-lattice config
 probe (add 3,6,7,15,25,30,35 to the list, keep the 48-80 tail).
+
+### Tie-fix in vivo: negative on this box; and a bigger correction (2026-11-03)
+
+Boot dev542+g198ee9072 = 9-patch series + experiments/0010 (both switches
+on; three claim lines is correct, info_once is node-scoped to local rank 0).
+Gates: accept-window 4.973 (n=3) against the 4.995-4.998 every-boot band:
+-0.5%, real. Cold cells: 157200 quality-clean (acc 4.82, match 1.0, bg 0)
+reads sustained 184.7 / win avg 185.0 against yesterday's equally clean
+156100 cell at 189.5 / 194.7; TTFT 70.5-70.8 against 69.6. 157100 (match
+0.0) shows the lottery still exists with canonical ties fixed, as the
+upstream port's own notes predicted (other nondeterminism sources remain).
+Round 2 was spoiled by co-tenant traffic (157300 bg=76 void; window repeat
+hit the snap-race tool defect all three times).
+
+Verdict: on OUR stack the repair costs ~2.5% clean-cell decode, ~1.5%
+prefill, ~0.5% acceptance, and buys no demonstrated determinism win; the
++6.3% claim was measured on a different fork's attention plumbing. The
+patch stays in experiments/ as a documented negative result, not promoted;
+this boot's env pair should come off at the next restart.
+
+The correction: lining up every quality-clean, bg=0 cold cell across boots
+(sustained, acc >= 4.8, match 1.0): dev65 202.4/204.1/202.4, dev319 204.3,
+dev541 189.5, dev542 184.7. There was a -7.2% step at dev541 (extensible KV
++ util default + 254 base commits) that yesterday's entry called "a fully
+healthy cell" - wrong: 189.5 was already outside the 199-204 consistency
+band, and the single-salt history across three eras says +-1%. The tie-fix
+step is smaller and on top of that one. Next single-variable boot to
+isolate the big step: run the same tree with the extensible path explicitly
+off (-cc '{"enable_extensible_kv_cache": false}'); if sustained returns to
+~200, the VMM page mapping is costing decode locality and the util-drop was
+the wrong trade; if it stays ~190, the delta is inside the +254 base commits
+and gets bisected by probe, not battery.
