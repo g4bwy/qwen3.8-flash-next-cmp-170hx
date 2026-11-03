@@ -4543,3 +4543,42 @@ FINAL: rejected on this stack in both variants; envs off at next restart;
 experiments/0010 stays as the documented negative. Their +6.3% requires
 their attention share, not just their kernel.
 Next boot per queue: extensible-off probe on the plain 9-patch tree.
+
+### Extensible-off probe: VMM page mapping was the decode step; estimator returns (2026-11-03 11:25 boot)
+
+Tree dev542+g..., same 9-patch series, --no-enable-extensible-kv-cache via
+the EXT_KV gate, tie envs off as decided. Boot clean: no extensible log
+lines, no claim lines, zero errors, needles pass. Pool 4,925,373 (4.93x),
+smaller than the extensible boot's 5,468,656 because util now defaults to
+upstream 0.92, not because of the sizing mode.
+
+| metric (clean cells, match 1.0, bg 0) | extensible ON | extensible OFF |
+|---|---|---|
+| cold sustained | 189.5 (dev541), 184.7-184.8 (tiefix) | 207.7, 210.8 |
+| cold win avg | 185-195 | 212.6, 214.3 |
+| cold TTFT | 69.6-70.8 | 68.6-68.7 |
+| accept-window | 4.995-4.998 band | 5.000 x3 (first reading) |
+| cold acc | 4.81-4.85 | 4.80-4.84 (unchanged) |
+
+Verdict: the -7.2% decode step of the dev541 boot was the extensible KV
+page mapping, not the +254 upstream commits. The mechanism fits the data:
+committed KV physicals land in VMM-mapped chunks that break the locality
+the estimator's contiguous cudaMalloc gave the fp8-KV decode reads. The
+tiefix -2.5% sits on top of that, now irrelevant. One methodology note:
+the window's first pass averaged 4.795 because trial1's window opened
+~27% too wide (316 drafts against ~183, warm-up straddle); trials 2-3 read
+4.92/5.00 and the repeat was a clean 5.000x3. Read trial lines, not just
+MEAN, on single-shot runs.
+
+Config consequence: estimator OFFs capacity at the same time - the 5.29-5.47M
+pools that admitted five 1M residents came from extensible or from
+util 0.9453. Since the decode rate matters more and the 5th resident was
+never certified for quality under load, the lane returns to the dev65-era
+knob: serve re-adds --gpu-memory-utilization 0.9453 (pool ~5.3M, 5.29x,
+decode band expected at or above today's 207-211 on that boot). The
+extensible-OFF default stands in the script (EXT_KV=1 still opts back in
+for future measurement; if upstream fixes the mapping locality this probe
+gets redone). TTFT: 68.6-68.7 is the current level and the watch item is closed;
+the 66.0-66.3 dev65 trio predates extensible and stands as an afternoon
+worth not chasing, since every config knob that could explain it has now
+been probed and returned.

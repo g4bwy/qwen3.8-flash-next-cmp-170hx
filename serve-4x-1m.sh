@@ -139,11 +139,11 @@ if [ -n "${IKD:-}" ]; then
     IKD_ARGS=(--attention-config "{\"indexer_kv_dtype\":\"$IKD\"}")
 fi
 
-# Probe 2026-11-03 (results.md): clean-cell decode stepped 204 -> 189 when
-# the extensible KV boot went live. Default now pins the estimator OFF line
-# so the next boot isolates the VMM page mapping; EXT_KV=1 restores auto
-# sizing (extensible on supported stacks). Details and the band table in
-# results.md, 2026-11-03 entries.
+# Probe RESOLVED 2026-11-03 (results.md): the extensible KV VMM page
+# mapping cost ~10% of decode on this lane; the estimator stays on.
+# EXT_KV=1 opts back in for future measurement only, at the 1.0-util
+# default; with the estimator, util 0.9453 below sizes the pool back to
+# the 5.29x that fits five 1M residents.
 EXKV_ARGS=()
 if [ "${EXT_KV:-0}" != "1" ]; then
     EXKV_ARGS=(--no-enable-extensible-kv-cache)
@@ -162,6 +162,7 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     ${EXKV_ARGS[@]+"${EXKV_ARGS[@]}"} \
     --served-model-name qwen3.8-flash-next-fp8 \
     --port 8000 \
+    --gpu-memory-utilization 0.9453 \
     --pipeline-parallel-size 4 \
     --engram-config '{"cpu_offload": true}' \
     --moe-backend humming \
