@@ -149,6 +149,17 @@ if [ "${EXT_KV:-0}" != "1" ]; then
     EXKV_ARGS=(--no-enable-extensible-kv-cache)
 fi
 
+# Lattice probe (queue, results.md 2026-11-03): under MTP-4 the useful decode
+# row counts are multiples of 5 (reqs x (1+4)); the engine's auto list misses
+# 15/25/30/35, padding a 5-request step to 32 rows (+28% dead work). CAPS=1
+# passes an explicit list adding 3,6,7 (draft passes) and 15,25,30,35, and
+# keeps the 48-80 tail for decoder-replay mixed windows. Judge on one n4 +
+# one n6 cell; expected 1-3% at concurrency 5-7 only. Default off.
+CAPS_ARGS=()
+if [ "${CAPS:-0}" = "1" ]; then
+    CAPS_ARGS=(--compilation-config '{"cudagraph_capture_sizes": [1, 2, 3, 4, 5, 6, 7, 8, 10, 15, 16, 20, 24, 25, 30, 32, 35, 40, 48, 56, 64, 72, 80]}')
+fi
+
 # The default prefix match granularity is the GCD of the cacheable KV group
 # block sizes, 1600 here, so a hit could not land finer than 1,600 tokens no
 # matter how often a prompt repeats. --prefix-match-unit 16 drops the floor
@@ -160,6 +171,7 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     ${LPT_ARGS[@]+"${LPT_ARGS[@]}"} \
     ${IKD_ARGS[@]+"${IKD_ARGS[@]}"} \
     ${EXKV_ARGS[@]+"${EXKV_ARGS[@]}"} \
+    ${CAPS_ARGS[@]+"${CAPS_ARGS[@]}"} \
     --served-model-name qwen3.8-flash-next-fp8 \
     --port 8000 \
     --gpu-memory-utilization 0.9453 \
