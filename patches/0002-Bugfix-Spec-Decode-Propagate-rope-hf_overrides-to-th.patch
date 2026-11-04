@@ -1,4 +1,4 @@
-From d96760b6015ba417146cfd921899fcdcc026bab8 Mon Sep 17 00:00:00 2001
+From cb8f309274b5d9672d99691c4ca73881e0861bbf Mon Sep 17 00:00:00 2001
 From: gokay-ai <60583610+gokay-ai@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 00:31:20 +0200
 Subject: [PATCH 2/9] [Bugfix][Spec Decode] Propagate rope hf_overrides to the
@@ -168,10 +168,10 @@ index 923c3d187b..f57877e62b 100644
  def test_callable_overrides_reach_the_draft_config():
      """A callable override (config-to-config transform) composes with the
 diff --git a/vllm/config/model.py b/vllm/config/model.py
-index 382a41486f..5b4dfb53e9 100644
+index 0434f12913..336b1e04f5 100644
 --- a/vllm/config/model.py
 +++ b/vllm/config/model.py
-@@ -534,8 +534,8 @@ class ModelConfig:
+@@ -536,8 +536,8 @@ class ModelConfig:
              factors["mm_enable_mm_embeds"] = self.multimodal_config.enable_mm_embeds
          return hash_factors(factors)
  
@@ -181,7 +181,7 @@ index 382a41486f..5b4dfb53e9 100644
          target: PreTrainedConfig | dict[str, Any],
          updates: dict[str, Any],
      ) -> None:
-@@ -553,7 +553,7 @@ class ModelConfig:
+@@ -555,7 +555,7 @@ class ModelConfig:
                      isinstance(nested_target, dict)
                      or hasattr(nested_target, "__dict__")
                  ):
@@ -190,7 +190,7 @@ index 382a41486f..5b4dfb53e9 100644
                      continue
  
              # Set the value (base case)
-@@ -562,8 +562,8 @@ class ModelConfig:
+@@ -564,8 +564,8 @@ class ModelConfig:
              else:
                  setattr(target, key, value)
  
@@ -200,7 +200,7 @@ index 382a41486f..5b4dfb53e9 100644
          config: PreTrainedConfig,
          overrides: dict[str, Any],
      ) -> None:
-@@ -574,7 +574,7 @@ class ModelConfig:
+@@ -576,7 +576,7 @@ class ModelConfig:
              attr = getattr(config, key, None)
              if attr is not None and isinstance(attr, PreTrainedConfig):
                  # It's a nested config - recursively update it
@@ -210,7 +210,7 @@ index 382a41486f..5b4dfb53e9 100644
                  # It's a dict-valued parameter - set it directly
                  setattr(config, key, value)
 diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
-index 70ecfd1ccf..8a9d0c3517 100644
+index 0e6348f2ab..de199c3db3 100644
 --- a/vllm/config/speculative.py
 +++ b/vllm/config/speculative.py
 @@ -45,6 +45,30 @@ else:
@@ -244,7 +244,7 @@ index 70ecfd1ccf..8a9d0c3517 100644
  MTPModelTypes = Literal[
      "deepseek_mtp",
      "dots3_note_mtp",
-@@ -1279,10 +1303,44 @@ class SpeculativeConfig:
+@@ -1285,10 +1309,44 @@ class SpeculativeConfig:
          )
          return target_hf_overrides(hf_config)
  
@@ -289,7 +289,7 @@ index 70ecfd1ccf..8a9d0c3517 100644
      ) -> Callable[[PreTrainedConfig], PreTrainedConfig]:
          """Build the ``hf_overrides`` for the draft ``ModelConfig``.
  
-@@ -1290,8 +1348,16 @@ class SpeculativeConfig:
+@@ -1296,8 +1354,16 @@ class SpeculativeConfig:
          (e.g. test harnesses shrinking ``num_hidden_layers``) and must also
          reach the draft config — otherwise a draft belonging to a large
          target is instantiated at full size even when the target is shrunk.
@@ -308,7 +308,7 @@ index 70ecfd1ccf..8a9d0c3517 100644
  
          The composed override must stay picklable: the draft ``ModelConfig``
          is sent to spawned engine-core processes, so a local closure would
-@@ -1299,15 +1365,28 @@ class SpeculativeConfig:
+@@ -1305,15 +1371,28 @@ class SpeculativeConfig:
          target via ``functools.partial`` over a module-referenceable static
          method instead.
          """
@@ -342,7 +342,7 @@ index 70ecfd1ccf..8a9d0c3517 100644
          )
  
 diff --git a/vllm/v1/worker/gpu/spec_decode/speculator_config.py b/vllm/v1/worker/gpu/spec_decode/speculator_config.py
-index 8ae4d0ba41..e312878e6e 100644
+index 6aa646a3b6..cb46fb0359 100644
 --- a/vllm/v1/worker/gpu/spec_decode/speculator_config.py
 +++ b/vllm/v1/worker/gpu/spec_decode/speculator_config.py
 @@ -179,6 +179,7 @@ class DraftModelSpeculatorConfig(SpeculatorConfig):

@@ -4629,3 +4629,28 @@ magnitude-soft and n5 as weak-positive; nothing anywhere is negative, cost
 is 12k pool tokens and ~1 s of extra captures. Script flipped: the 23-size
 lattice is now DEFAULT (CAPS=0 opts out). Re-confirm n7 opportunistically
 on the next battery or probe night before quoting the 7.4% as settled.
+
+### Series rebased onto 4527515cd7 (2026-11-04)
+
++240 upstream commits, wheel 0.33.0rc1.dev772+g4527515cd (live; newer tips
+404). Zero conflicts, chain delta byte-identical (1368 lines both sides),
+nothing absorbed. Tree `0c67082e9cc327f9991b6d774d3be12256852432`, replay
+9/9 verified in wt-pristine-1104, CPU parity by failure name (11 env fails
+both trees, branch 410 pass), ruff/format/import sweep clean - notable
+given the range refactored the AR speculator decode path twice (#60989
+enables CUDA graphs for draft models; #65528 cleans the same file the W8A8
+arms hook), apply-clean did not fool us this time. Banner after reinstall =
+dev781 (772+9). Worktrees: wt-rebase-1104, pristine wt-pristine-1104;
+older wt-rebase-* trees were cleaned by the owner, branches all intact.
+
+Range items relevant to our lane (context, not action): #65619 shares the
+QSA top-k buffer across layers; #62172 lets cooperative_topk read BF16
+indexer logits (capability gate unchanged); #65198 aligns draft KV dtype
+with target for GLM - the same 50%-of-draft-pool idea could apply to our
+draft group someday; DFlash acceptance-of-0 under FULL graphs fixed
+(#64059), more fuel for the parked DFlash decision; extensible KV got two
+follow-ups (#65225 connector rounding, #65413 UMA-corrected sizing) -
+still moot here while we run the estimator.
+
+Fender still runs dev542+g198ee9072 (28dd base). Reinstall whenever; after
+it, one claim/needles/one-cold-probe smoke as usual, nothing more.

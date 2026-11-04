@@ -1,4 +1,4 @@
-From a7f6bc9c5dcd414266a0be51e1c36ed9ed5e4d1e Mon Sep 17 00:00:00 2001
+From 12ae9d83f72ec847a8413075269732d6ece6cdcd Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
 Subject: [PATCH 3/9] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
@@ -71,7 +71,7 @@ index 0000000000..dddb7c8f81
 +    assert _remap_mtp_weight_name("mtp.draft_lm_head.weight") == "draft_lm_head.weight"
 +    assert _remap_mtp_weight_name("mtp.shared_head.head.weight") == "lm_head.weight"
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index 30401ca56d..192332429b 100644
+index d005e67bad..56778fbea8 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -13,6 +13,7 @@ The MTP draft model reuses the Qwen4Exp backbone (PLE/HC/MoE) but:
@@ -90,7 +90,7 @@ index 30401ca56d..192332429b 100644
  from vllm.model_executor.layers.layernorm import GemmaRMSNorm
  from vllm.model_executor.layers.linear import ColumnParallelLinear
  from vllm.model_executor.layers.logits_processor import LogitsProcessor
-@@ -92,6 +94,23 @@ def _remap_quantized_layers(
+@@ -93,6 +95,23 @@ def _remap_quantized_layers(
      }
  
  
@@ -114,7 +114,7 @@ index 30401ca56d..192332429b 100644
  def _remap_mtp_weight_name(name: str) -> str | None:
      """Map Qwen4Exp checkpoint paths into the standalone draft model."""
      for checkpoint_prefix in (
-@@ -106,6 +125,8 @@ def _remap_mtp_weight_name(name: str) -> str | None:
+@@ -107,6 +126,8 @@ def _remap_mtp_weight_name(name: str) -> str | None:
          name = f"model.{name}"
      if name.startswith("model.mtp."):
          name = name.removeprefix("model.")
@@ -123,7 +123,7 @@ index 30401ca56d..192332429b 100644
      if name.startswith("mtp.shared_head.head."):
          return name.replace("mtp.shared_head.head.", "lm_head.", 1)
      if name.startswith("model.shared_head.head."):
-@@ -422,8 +443,48 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+@@ -443,8 +464,48 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
              prefix=maybe_prefix(prefix, "mtp"),
          )
  
@@ -173,7 +173,7 @@ index 30401ca56d..192332429b 100644
                  self.lm_head = self.model.embed_tokens
              else:
                  self.lm_head = ParallelLMHead(
-@@ -465,11 +526,26 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+@@ -486,11 +547,26 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
      def compute_logits(
          self, hidden_states: torch.Tensor, spec_step_idx: int = 0
      ) -> torch.Tensor | None:
@@ -201,10 +201,10 @@ index 30401ca56d..192332429b 100644
                  if remapped_name is not None:
                      yield remapped_name, weight
 diff --git a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
-index f17a820c4f..29b1705b8d 100644
+index 0035ae3e47..ba347dedfc 100644
 --- a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
 +++ b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
-@@ -293,6 +293,13 @@ class TargetDependentARSpeculator(DraftModelSpeculator):
+@@ -225,6 +225,13 @@ class TargetDependentARSpeculator(AutoRegressiveSpeculator):
                  and prefill_batch_desc.cg_mode == CUDAGraphMode.FULL,
              )
  

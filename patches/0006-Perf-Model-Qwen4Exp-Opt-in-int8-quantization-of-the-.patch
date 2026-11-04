@@ -1,4 +1,4 @@
-From 9392c48b4fe126ed9483bdba64290c9711bcee37 Mon Sep 17 00:00:00 2001
+From 987edfdc641facf27dbfb4e1315a59b09ec9541c Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 16 Oct 2026 11:21:02 +0200
 Subject: [PATCH 6/9] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
@@ -92,10 +92,10 @@ index 0000000000..9ea255101b
 +        "and breaks profile_run under VLLM_QWEN4EXP_PP_INT8_HOP"
 +    )
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 00492a66df..94317ee5e0 100755
+index 1e5b1bfb32..73a06e314d 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -126,6 +126,7 @@ if TYPE_CHECKING:
+@@ -127,6 +127,7 @@ if TYPE_CHECKING:
      VLLM_USE_TRITON_AWQ: bool = False
      VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
      VLLM_SAFETENSORS_DROP_CACHE: bool = False
@@ -103,7 +103,7 @@ index 00492a66df..94317ee5e0 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1177,6 +1178,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1193,6 +1194,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_SAFETENSORS_DROP_CACHE": lambda: (
          os.getenv("VLLM_SAFETENSORS_DROP_CACHE", "0").lower() in ("1", "true")
      ),
@@ -114,7 +114,7 @@ index 00492a66df..94317ee5e0 100755
      "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index 08ad38361e..f11f4b1905 100644
+index be16f1f58c..f8572377ab 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
 @@ -13,6 +13,7 @@ from vllm import envs
@@ -142,7 +142,7 @@ index 08ad38361e..f11f4b1905 100644
  # Transformers v5.18 renamed `qwen_sparse_attention` to `indexed_attention`
  # TODO: Delete qwen_... once Transformers 5.18.0 is the minimum required version.
  _QSA_LAYER_TYPES = ("qwen_sparse_attention", "indexed_attention")
-@@ -403,7 +405,34 @@ class Qwen4ExpMixtureOfExperts(MixtureOfExperts):
+@@ -412,7 +414,34 @@ class Qwen4ExpMixtureOfExperts(MixtureOfExperts):
              moe.experts.update_expert_map()
  
  
@@ -177,7 +177,7 @@ index 08ad38361e..f11f4b1905 100644
      hf_to_vllm_mapper = Qwen3_5Model.hf_to_vllm_mapper | _EXTRA_WEIGHTS_MAPPER
  
      def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
-@@ -419,6 +448,13 @@ class Qwen4ExpModel(nn.Module):
+@@ -428,6 +457,13 @@ class Qwen4ExpModel(nn.Module):
              vllm_config.parallel_config.use_sequence_parallel_moe
          )
          self.vocab_size = config.vocab_size
@@ -191,7 +191,7 @@ index 08ad38361e..f11f4b1905 100644
          self._qsa_layer_ids = frozenset(
              layer_idx
              for layer_idx, layer_type in enumerate(config.layer_types)
-@@ -449,10 +485,6 @@ class Qwen4ExpModel(nn.Module):
+@@ -470,10 +506,6 @@ class Qwen4ExpModel(nn.Module):
              Qwen4ExpSparseMoeBlock,
              enable_eplb=vllm_config.parallel_config.enable_eplb,
          )
@@ -202,7 +202,7 @@ index 08ad38361e..f11f4b1905 100644
  
          self.hyper_connection_mixer: GatedResidual | None
          if get_pp_group().is_last_rank:
-@@ -495,6 +527,27 @@ class Qwen4ExpModel(nn.Module):
+@@ -516,6 +548,27 @@ class Qwen4ExpModel(nn.Module):
      def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
          return self.embed_tokens(input_ids)
  
@@ -230,7 +230,7 @@ index 08ad38361e..f11f4b1905 100644
      @staticmethod
      def _start_layer_ple_prefetch(
          layer: nn.Module,
-@@ -543,8 +596,23 @@ class Qwen4ExpModel(nn.Module):
+@@ -564,8 +617,23 @@ class Qwen4ExpModel(nn.Module):
          else:
              if intermediate_tensors is None:
                  raise ValueError("pipeline stage requires intermediate tensors")
@@ -256,7 +256,7 @@ index 08ad38361e..f11f4b1905 100644
          full_num_tokens = positions.shape[-1]
          block_output = None
          injection = None
-@@ -609,7 +677,12 @@ class Qwen4ExpModel(nn.Module):
+@@ -630,7 +698,12 @@ class Qwen4ExpModel(nn.Module):
                  hidden_states = last_layer.mlp_hyper_connection.combine(
                      hidden_states, block_output, injection
                  )
