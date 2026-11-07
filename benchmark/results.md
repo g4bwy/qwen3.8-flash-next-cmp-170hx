@@ -4719,3 +4719,14 @@ Range digest (three background surveys, claims re-verified against diffs):
   #61084 all still open (#61180 alive, rebased, 2x RTX4090 PP2 test
   reported). HyperQwen #424 merged 11-03 (not-applicable verdict stands;
   revisit only if DFlash2 adoption ever happens).
+
+### dev781 boot smoke-certified (2026-11-07, owner boot, ours to judge)
+
+Needles: serial 3/3 + concurrent 4/4, grown turns identical, foreign leaks
+none, verdict line clean. Accept window (warm-pass tool): 4.995/5.000/5.000
+MEAN 4.998, bg 0 - in band. Cold cell salt 165100: TTFT 69.1 (era band
+68.6-69.8), sustained 210.0, win avg 205.5, match 100, preempt 0, bg 0 -
+inside the dev542-era 207-211 clean-cell band. Acc len 4.65 is the cold-
+prompt lottery (different salt, different content), not drift. The +244
+base step of dev781-vs-dev542 changed nothing measurable on this lane.
+Logs: logs/smoke-dev781/.
