@@ -1,4 +1,4 @@
-From 12ae9d83f72ec847a8413075269732d6ece6cdcd Mon Sep 17 00:00:00 2001
+From d85dd268ae579fd4ffb34dba30cee8afc5c43a23 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
 Subject: [PATCH 3/9] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
@@ -201,7 +201,7 @@ index d005e67bad..56778fbea8 100644
                  if remapped_name is not None:
                      yield remapped_name, weight
 diff --git a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
-index 0035ae3e47..ba347dedfc 100644
+index b409f79a0a..c39058531a 100644
 --- a/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
 +++ b/vllm/v1/worker/gpu/spec_decode/target_dependent_ar/speculator.py
 @@ -225,6 +225,13 @@ class TargetDependentARSpeculator(AutoRegressiveSpeculator):

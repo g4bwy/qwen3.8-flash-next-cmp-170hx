@@ -1,4 +1,4 @@
-From b8d4e9349de379b18273e8822296f0331b610b40 Mon Sep 17 00:00:00 2001
+From 92af01ef7408cce5b88a0e2b7d65e80c88fc2efc Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 10:09:31 +0200
 Subject: [PATCH 8/9] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8 on
@@ -342,7 +342,7 @@ index 0000000000..42ee27b2e5
 +        method.apply(_linear(n=n, k=k), x)
 +        assert calls == [("bf16", 2, 1024)]
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 9f7923e476..cef6d7b340 100755
+index b0f79ba26b..ff09046445 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -129,6 +129,7 @@ if TYPE_CHECKING:
@@ -353,7 +353,7 @@ index 9f7923e476..cef6d7b340 100755
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1206,6 +1207,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1213,6 +1214,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_DRAFT_W8A8": lambda: (
          os.getenv("VLLM_QWEN4EXP_DRAFT_W8A8", "0").lower() in ("1", "true")
      ),

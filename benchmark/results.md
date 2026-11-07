@@ -4654,3 +4654,68 @@ still moot here while we run the estimator.
 
 Fender still runs dev542+g198ee9072 (28dd base). Reinstall whenever; after
 it, one claim/needles/one-cold-probe smoke as usual, nothing more.
+
+### Series rebased onto 308a3253c6; owner booted dev781 the same day (2026-11-07)
+
++244 upstream commits (11-04 -> 11-07), wheel 0.33.0rc1.dev1016+g308a3253c
+(x86_64 HEAD 200). Zero conflicts, chain delta byte-identical, tree
+`5899d0742577ed67d05c7598f3093b159ba00c98`, replay 9/9 plain am in
+wt-pristine-1107 (am head df99578e54), CPU parity exact by failure name
+(branch 415 pass + 11 env fails; pristine 362 pass + the same 11; the +53
+are our own added tests), ruff/format/import sweep clean. Banner after
+reinstall = dev1025 (1016+9). Worktrees wt-rebase-1107 / wt-pristine-1107.
+
+Owner booted the PREVIOUS tree (dev781, 4527515cd7 base) today 15:45 with
+the new serve defaults: lattice ON, estimator config, util 0.9453. Boot
+clean, pool 5,340,298 (5.34x). Smoke NOT yet run by us - needles and one
+cold probe owed on an idle moment.
+
+CAPS retarget question CLOSED as no-op: the boot log shows the engine
+deriving from our legacy 23-size list exactly
+prefill_cudagraph_capture_token_sizes = [1,2,3,4,5,6,7,8,10,15,16,20,24,25,30,32,35,40,48,56,64,72,80]
+and decode_cudagraph_capture_request_sizes = [1..8] (= max_num_seqs, all
+request counts already covered). vllm/config/vllm.py:2818-2845 is the
+derivation; no capture-grid commit touched anything in this range. Serve
+JSON stays as is.
+
+Range digest (three background surveys, claims re-verified against diffs):
+- TAKE (already in the base): #66048 rejection-sampler num_warps race fix
+  (silent MTP verify corruption), #65812 QSA scale snapshot at load,
+  #65692 PLE shard copy via copy_weight_, #66064 GDN state
+  gather/scatter Triton kernels + warmup (our 36 linear-attn layers),
+  #65874 fused-GDN MTP threshold 8->9 + small-batch SM usage, #66012
+  offline-mode startup retry stop.
+- ALARM 1, moot: #63231 raises DEFAULT block size 16->64 for unset lines -
+  our serve pins --block-size 1616 (and retention 16160 = 10x) since the
+  depth-ladder era, so the hybrid layout cannot drift silently.
+- ALARM 2, watch: #65652 replaced config compute_hash with compile_factors
+  deny-lists (speculative.py -93 hand-listed lines; num_speculative_tokens,
+  kv_cache_dtype, max_model_len now IGNORED in compile keys). Expect one
+  full torch.compile cache miss on first boot; a stale-graph bug class
+  opens if a knob that matters to us is missing from the factors.
+- ALARM 3, watch: #49459 deleted the MTP tied-weight completeness
+  machinery (disable_mtp_completeness_check gone). Drafter load-order
+  bugs become silent garbage instead of crash. Our chain greps zero for
+  the removed symbols; assumption to pin in a test someday.
+- METRICS CAVEAT: #65229 rewrote the acceptance estimator
+  (catastrophic-cancellation fix). Window-acceptance on dev1025+ may
+  shift by a small constant; re-baseline before flagging band breaks.
+- KV pool churn: #65831 slotted block-hash attrs (our chain does not read
+  _block_hash), #64562 block-stride alignment no longer takes the HiSparse
+  page size - re-diff pool expectations at next boot (dev781 already reads
+  5,340,298 vs 5,313,432 on dev542 with the same flags).
+- Rust frontend STILL not tool-safe: buildkite rust_frontend.yaml still
+  skips test_no_args_tool_call + mistral cases. Python frontend stands.
+- No Marlin/int8/w8a8 commits in range (arms 6-9 unaffected); no rope/
+  YaRN/hf-overrides churn (patches 2-3 safe); no extensible-KV perf work.
+- GitHub watch: NO external report of extensible-KV decode loss on
+  sm80/Ampere exists (issue draft lane confirmed empty; #66193 closest,
+  Blackwell sizing-only). givisok activity confirms their +6.6% tie-fix
+  claim as a LOCALITY observation (their own note: sorted-index KV read
+  locality; nondeterminism motivation; upstream analogue open PR #55122
+  persistent_topk determinism) - consistent with our negative result.
+  #58094 (our patch 2) APPROVED upstream 11-07, merge imminent: on the
+  first base past the merge, patch 2 retires. DFlash trio #56295/#61180/
+  #61084 all still open (#61180 alive, rebased, 2x RTX4090 PP2 test
+  reported). HyperQwen #424 merged 11-03 (not-applicable verdict stands;
+  revisit only if DFlash2 adoption ever happens).
