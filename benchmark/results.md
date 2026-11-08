@@ -4802,3 +4802,27 @@ Addendum, same day: owner usage is multi-stream, so the hop is now ON by
 default in serve-4x-1m.sh (export inside the script, HOP=0 opts out). The
 shell no longer needs the env. Next boot picks it up; the pending-if-ever
 conc-4 ON arm (salt 168100 pair) rides along with it.
+
+### Hop pair completed at conc-4: the decode tax is concurrency-dependent (2026-11-08)
+
+Hop-ON reboot (16:04, serve-armed default, claim line 1, guard 0, pool
+unchanged 5,340,298) ran the owed pair cell: conc-4 @ 938,842/stream,
+decode 1024, salt 168100 identical to the OFF arm, bg 0 both:
+
+| conc-4 cell | hop ON | hop OFF |
+|---|---|---|
+| TTFT mean / p95 s | 171.2 / 267.6 | 197.8 / 307.2 |
+| wall s | 284.8 | 325.2 |
+| agg in tok/s | 13,188 | 11,546 |
+| sust agg tok/s | 597 | 596 |
+| acc len / match | 4.86 / 100 | 4.79 / 95 |
+
+At four streams the hop is a pure win: prefill +14%, TTFT -27 s, wall
+-12%, and steady decode is UNTOUCHED (597 vs 596). The -15% n7 decode
+tax therefore has a threshold between 4 and 7 streams - the fixed
+quantize/dequantize work per step hides under compute in the smaller
+batch shapes and stops hiding at 7. Verdict for the multi-stream lane
+stands stronger than the n7 pair alone suggested: ON wins wall-to-wall
+at n4 with no tax, and wins cell wall at n7 by 46% while paying the tax
+only inside the decode phase. Salt-168100 match 95 vs 100 across arms
+is the usual near-tie drift, not a config effect.
