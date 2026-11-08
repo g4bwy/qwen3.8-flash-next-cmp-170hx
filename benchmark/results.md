@@ -4826,3 +4826,19 @@ stands stronger than the n7 pair alone suggested: ON wins wall-to-wall
 at n4 with no tax, and wins cell wall at n7 by 46% while paying the tax
 only inside the decode phase. Salt-168100 match 95 vs 100 across arms
 is the usual near-tie drift, not a config effect.
+
+### Strata acceptance comparison: answered, retrieval-draft experiment dropped (2026-11-08)
+
+The 80%-vs-50% gap decomposes without config changes: Strata drafts 3 and
+quotes percent of 4 (their 2.4-3.2 tokens/pass top end = 80%); we draft 4
+and quote percent of 5 (live 2.77/pass = 55%). Same absolute acceptance,
+different denominators; the rest is sampling (their quickstart reads are
+greedy; our clients run temp 1.0 and the rejection formula eats entropy -
+our own greedy probes read 93-100% on the same stack). A suffix-decoding
+measurement boot was built and queued (SPEC gate, K=4, PP-safe by design,
+docs 8439702) then dropped by the owner: suffix REPLACES MTP for the
+boot, and the llama.cpp-style combo is per-step choice plus tree
+verification; vLLM v1 has no tree verify and the chooser would be a
+multi-day custom-speculator port. Client temperature is the free lever
+if the live number ever matters again. No boot, no patch; the SPEC gate
+stays in serve inert (default mtp) like the other dormant knobs.
