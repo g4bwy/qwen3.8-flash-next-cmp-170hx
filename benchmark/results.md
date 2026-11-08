@@ -4865,3 +4865,37 @@ LPT=2048 arm: same boot, same salt (cache empty on restart), expect the
 stream's first-token time (the 404 finding: serialization to
 interleaving makes the leader wait for everyone). Log:
 logs/smoke-dev1025/itl-baseline-s169100.log.
+
+### LPT=2048 arm: crawl halved, storm serialized differently (2026-11-08, dev1025 hop-ON)
+
+Same tree/boot posture plus --long-prefill-token-threshold 2048 (verified in
+the RESOLVED config dump, banner dev1025+gdf18b73fa, pool 5,340,298, hop
+claim 1, errors 0, startup complete; boot archived logs/smoke-dev1025/
+boot-lpt2048.log). Identical probe, same salt 169100 (restart empties the
+cache, so the content is cold again), same shape 3 x 995,000, decode 2048.
+Runner report clean: idle gates equal drafts, engine deltas exact
+(6,144 gen / 2.98 M prompt / preempt 0).
+
+| measure | baseline (no LPT) | LPT=2048 |
+|---|---|---|
+| first tokens s | 70.5 / 142.2 / 218.7 | 234.2 / 248.7 / 247.6 |
+| gap while another prefill ran | 2795 ms mean (n=26) | 1244 ms mean (n=11) |
+| all-prefills-done band | p50 26.3, mean 126, p95 32, max 3314, 3.7% >2xp50 | p50 32.7, mean 33.5, p95 33.9, max 828, 0.2% |
+| cell wall s | 234.8 | 264.1 |
+| per-stream tokens after first | 504/401/628 | 506/410/407 |
+
+Read: (1) the knob works, crawl depth 2795 -> 1244 ms (2.25x) and the
+exposure window shrinks (26 -> 11 samples) because prefills interleave and
+finish together; the residual 1244 ms fits the PP cadence law, 4 steps x
+~310 ms mixed-step with 2048-token chunks, against 4 x ~700 ms with full
+chunks. (2) The cost lands ONLY in a simultaneous prefill storm: the leader
+stream pays 70 -> 234 s to first token, cell wall +12%. The 404-era finding
+stands: single-stream and staggered arrivals are untouched (cap forced to 0
+below two eligible prefills). (3) The all-prefills-done p50 difference
+(26.3 vs 32.7 ms) is stream-exit composition, not config: baseline stream 2
+decodes 628 tokens largely alone, the LPT arms streams exit together.
+Sample sizes (one cell per arm, n=11 on the signal band) are thin.
+Caveat noted; the direction is physically explained and matches 404.
+Verdict: for multi-stream interactive use the knob is defensible; owner
+decision whether LPT=2048 becomes the serve default (gate already exists;
+LPT unset today). Logs: itl-baseline-s169100.log, itl-lpt2048-s169100.log.
