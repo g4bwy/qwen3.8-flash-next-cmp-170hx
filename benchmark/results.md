@@ -4904,3 +4904,45 @@ Adopted: serve now defaults LPT=2048 (LPT=0 opts out), owner decision
 2026-11-08, one boot after the A/B. The live boot already carries it
 manually, so nothing changes until the next restart; the change is
 durability, not behavior.
+
+### Draft-vocab head under real traffic: holdout audit + live window (2026-11-09)
+
+Question: can the 40k truncated draft vocabulary (patch 3) cost MTP
+acceptance on real use? Two measurements, both via background runners
+under the no-self-pollution protocol.
+
+(1) LIVE window, your 4-stream session, 29,556 drafts over 300 s,
+counters only: mean accepted length 2.754, per-position survival
+0.690/0.479/0.339/0.246, 43.8% per draft. Matches the historical live
+profile (Oct 21: 0.727/0.530/0.395/0.294 mean 2.93; Nov 8 light load:
+0.66/0.47/0.36/0.28 mean 2.77). No batch-dip signature in the heaviest
+real regime.
+
+(2) HOLDOUT COVERAGE (CPU-only, offline; scripts /tmp/dv/): last 36 h of
+session transcripts (4,474 parts, 1.96 M tokens) scored against 40k id
+lists built from strictly EARLIER corpora. Miss rate 1.09% (36 h),
+0.92% (24 h), 1.31% against the one-month-stale list. Size sweep on the
+same split: 10k 8.19%, 20k 3.79%, 40k 1.09%, 60k 0.81%, 100k 0.81% (the
+0.81% floor is vocabulary that never appeared in earlier traffic at all).
+Unique out-of-set ids 4,599, 8.9% single-occurrence. Top misses are
+topic drift (arca/RAT/vein/Korean-prose/qemu byte names), worst single
+session 2.83%. Builder validated by reconstruction: rebuilding from
+draft_corpus.jsonl with the checkpoint tokenizer reproduces the live .pt
+byte-identical.
+
+Accounting: a miss kills acceptance AT that position only, so the mean
+length loses roughly miss-rate x tail-survival-sum, about 1.1% x 0.48
+positional mass ~ 0.5-1% of accepted length. The +8.7% single-stream win
+from the 2026-10-05 A/B dwarfs it. The 2026-10-07 batch dip (2.2-3.0 at
+conc>=4 fill>=50% WITH the head vs 3.85-3.95 without) does not reproduce
+on this base: yesterday's clean conc-4 95%-fill cells with the head
+engaged read 4.79 and 4.86. Likely explanations: the full_head_window
+routing added later, and/or runner V2 batching changes; unproven, noted.
+
+ARTIFACTS REFRESHED TONIGHT by the owner: new 40,000-id list and PAIRED
+40,000-row head at the checkpoint root (both 11-09 00:33, 204,800,104 B
+head = 40000x2560 bf16), boot at 00:35 claims "40000-token draft
+vocabulary" on dev1025; vocab/ keeps the stale Oct-5 39,532-row head
+(loaded from root only, harmless). Verdict: KEEP the patch; rebuild the
+list every few weeks (decay 0.2 pp/month, currently negligible); 60k is
+the floor-chasing option (+0.28 pp) if ever rebuilt anyway.
