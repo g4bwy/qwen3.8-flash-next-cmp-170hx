@@ -178,6 +178,18 @@ if [ "${CAPS:-1}" != "0" ]; then
 fi
 CC_ARGS=(--compilation-config "${CC_JSON}}")
 
+# Drafter gate (2026-11-08): SPEC=suffix swaps the MTP-4 head for suffix
+# decoding (retrieval drafts from per-request history + a global corpus of
+# finished responses; MRV2 GPU speculator, last PP rank only, no draft KV
+# group). K stays 4 so the decode query length (1+4), the capture lattice,
+# and the max accepted length remain identical to MTP-4 for a clean A/B.
+# This is a measurement boot for the acceptance question, not a promote.
+if [ "${SPEC:-mtp}" = "suffix" ]; then
+    SPEC_CONFIG='{"method":"suffix","num_speculative_tokens":4}'
+else
+    SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":4}'
+fi
+
 # The default prefix match granularity is the GCD of the cacheable KV group
 # block sizes, 1600 here, so a hit could not land finer than 1,600 tokens no
 # matter how often a prompt repeats. --prefix-match-unit 16 drops the floor
@@ -205,7 +217,7 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --max-model-len 1000000 \
     --hf-overrides '{"text_config":{"max_position_embeddings":1000000,"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":262144}}}' \
     --max-num-seqs 8 \
-    --speculative-config '{"method":"mtp","num_speculative_tokens":4}' \
+    --speculative-config "${SPEC_CONFIG}" \
     ${CC_ARGS[@]+"${CC_ARGS[@]}"} \
     --no-enable-flashinfer-autotune \
     --enable-auto-tool-choice \
