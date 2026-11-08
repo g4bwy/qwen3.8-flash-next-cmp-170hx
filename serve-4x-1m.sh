@@ -149,6 +149,17 @@ if [ "${EXT_KV:-0}" != "1" ]; then
     EXKV_ARGS=(--no-enable-extensible-kv-cache)
 fi
 
+# int8 PP hop (patch 6): quantizes the pipeline-stage activation handoff.
+# Same-tree A/B 2026-11-08 (results.md a28017f): at 7 streams it removes
+# the transfer stall (prefill 1.87x, TTFT 2.7x, whole-cell wall -46%) at
+# a ~15% per-stream steady-decode cost; conc-1 is neutral (the hop hides
+# under compute). Owner usage is multi-stream, so the hop is ON here;
+# HOP=0 opts out for single-stream lanes. Exported once: workers inherit
+# the env, satisfying the every-stage requirement.
+if [ "${HOP:-1}" != "0" ]; then
+    export VLLM_QWEN4EXP_PP_INT8_HOP=1
+fi
+
 # Lattice probe (queue, results.md 2026-11-03): under MTP-4 the useful decode
 # row counts are multiples of 5 (reqs x (1+4)); the engine's auto list misses
 # 15/25/30/35, padding a 5-request step to 32 rows (+28% dead work). CAPS=1

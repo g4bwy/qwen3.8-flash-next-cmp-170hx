@@ -4797,3 +4797,8 @@ Reading:
   NOT set the env (OFF = default); arm with
   VLLM_QWEN4EXP_PP_INT8_HOP=1 in the boot shell when several sessions
   will prefill.
+
+Addendum, same day: owner usage is multi-stream, so the hop is now ON by
+default in serve-4x-1m.sh (export inside the script, HOP=0 opts out). The
+shell no longer needs the env. Next boot picks it up; the pending-if-ever
+conc-4 ON arm (salt 168100 pair) rides along with it.
