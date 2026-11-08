@@ -4730,3 +4730,27 @@ inside the dev542-era 207-211 clean-cell band. Acc len 4.65 is the cold-
 prompt lottery (different salt, different content), not drift. The +244
 base step of dev781-vs-dev542 changed nothing measurable on this lane.
 Logs: logs/smoke-dev781/.
+
+### dev1025 boot certified; int8 hop re-armed, invisible at 1M (2026-11-08)
+
+Owner booted the new series tree (banner dev1025+gdf18b73fa, base
+308a3253c6+9) with VLLM_QWEN4EXP_PP_INT8_HOP=1 in the env. Boot: zero
+errors, pool 5,340,298 (5.34x, byte-identical to dev781 - the #64562/
+#65831 KV churn moved nothing here), 23 PIECEWISE + 8 FULL + 2 speculator
+captures, one hop claim line (info_once is node-scoped; the mismatch
+guard printed zero lines), stale VLLM_QWEN4EXP_QSA_TOPK_SORTED warned as
+unknown and ignored (harmless leftover from the tie experiments).
+
+Smoke, all idle-gated: needles serial 3/3 + concurrent 4/4 clean (the
+hop does not corrupt); window 5.000/4.995/5.000 MEAN 4.998 - the #65229
+estimator rewrite shifts NOTHING on our lane, band stands; cold cell
+salt 166100: TTFT 69.0, sustained 210.0, win avg 218.5, acc 4.77, match
+100, preempt 0, bg 0.
+
+TTFT verdict on the hop: 69.0 with it ON vs 69.1 yesterday with it OFF.
+No measurable gain at 1M conc-1 on the current base. The 66.0-66.3
+dev65-era trio predates extensible-KV-era bases and coincided with the
+per-stage budget fix, which was the headline lever then and is absorbed
+upstream now; the hop alone does not recover those seconds today. It
+does not hurt either (needles pass, decode band unchanged). Logs:
+logs/smoke-dev1025/ (boot.log archived, taken at 15:02).
