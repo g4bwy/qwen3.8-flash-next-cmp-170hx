@@ -4754,3 +4754,46 @@ per-stage budget fix, which was the headline lever then and is absorbed
 upstream now; the hop alone does not recover those seconds today. It
 does not hurt either (needles pass, decode band unchanged). Logs:
 logs/smoke-dev1025/ (boot.log archived, taken at 15:02).
+
+### Hop A/B on dev1025: prefill doubles with it, multi-stream decode pays ~14% (2026-11-08)
+
+Same tree (dev1025+gdf18b73fa), two boots, single variable =
+VLLM_QWEN4EXP_PP_INT8_HOP env (unset boot at 15:42; earlier boot had it
+set). Stale QSA_TOPK_SORTED var also gone from the shell. Identical
+conc-7 cell (fills 67 = 662,196 tok/stream, decode 1024, salt 167101),
+both runs bg 0, preempts 0:
+
+| arm | TTFT mean/p95 s | wall s | in tok/s agg | sust agg | per-stream sust | acc len | match |
+|---|---|---|---|---|---|---|---|
+| hop ON  | 82.8 / 194.4  | 220.0 | 21,068 | 767 | 110 | 3.97 | 92 |
+| hop OFF | 221.8 / 373.6 | 410.7 | 11,287 | 903 | 129 | 4.53 | 72 |
+
+conc-4 arm @ 939,207 tok/stream, decode 1024: hop OFF salt 168100 clean
+(TTFT 197.8/307.2, wall 325.2, in 11,546, sust 596 = 149/stream, acc
+4.79, match 95). A clean hop-ON conc-4 never landed today (bg 88/87 from
+this session's own traffic; needs an ON boot to pair salt 168100).
+
+Reading:
+- The earlier "hop buys nothing" (conc-1 69.0 vs 69.1) is corrected: at
+  one stream the chunked-prefill hop transfer already hides under
+  compute. At 7 streams BF16 transfers exceed per-stage compute and the
+  pipeline stalls; int8 removes the stall - aggregate prefill rate 1.87x,
+  TTFT 2.7x, whole-cell wall -46% WITH the decode tax included.
+- Decode tax is real and reproducible: 129 -> 110 tok/s/stream at n7
+  (-15% on this pair; the 3 quantize/dequantize passes per step are
+  overhead when the hop payload is 7 rows). conc-4 per-stream decode
+  reference is 149 (OFF arm).
+- No base regression: hop-OFF per-stream decode on dev1025 (129 n7,
+  149 n4) matches the dev542-era plateaus (139 n7, 144 n5). The
+  suspected 21% base loss was a statistic/contamination artifact.
+- The ON arm's acc len 3.97 and match 92 vs OFF 4.53/72 track
+  contamination-inflated draft counters and the known deep-salt tail
+  lottery (accept estimator healthy both arms); needles 7/7 passed on
+  the ON boot, so the hop itself is output-safe.
+- Config guidance: for multi-stream or shared-box use the hop is
+  strictly better wall-to-wall at n4+ (220 vs 411 s). For pure
+  single-stream steady decode it costs ~14% and should stay off. This
+  is now a usage-shape switch, not a default: the serve script does
+  NOT set the env (OFF = default); arm with
+  VLLM_QWEN4EXP_PP_INT8_HOP=1 in the boot shell when several sessions
+  will prefill.
