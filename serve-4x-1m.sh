@@ -113,9 +113,13 @@ fi
 # Experiment, not a series patch: cap one request's prefill rows per step so an
 # arriving long prefill shares the pipeline with decode. Inert when only one request
 # is eligible (scheduler.py:733-739), so single-stream TTFT is untouched by design.
-# Unset or 0 keeps the engine default. Rollback: drop LPT from the command line.
+# ADOPTED 2026-11-08 after the ITL pair (results.md ead2c01): crawl 2.8 s
+# to 1.24 s per token while another stream prefills; cost confined to
+# simultaneous cold-prefill storms (leader TTFT +164 s, cell wall +12%);
+# staggered arrivals untouched. LPT=0 opts back out.
+LPT="${LPT:-2048}"
 LPT_ARGS=()
-if [ -n "${LPT:-}" ] && [ "${LPT:-0}" != "0" ]; then
+if [ "${LPT}" != "0" ]; then
     case "$LPT" in
         *[!0-9]*) echo "serve-4x-1m.sh: LPT must be a non-negative integer, got '$LPT'" >&2
                   exit 1 ;;

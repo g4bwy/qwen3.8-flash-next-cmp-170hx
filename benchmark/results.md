@@ -4899,3 +4899,8 @@ Caveat noted; the direction is physically explained and matches 404.
 Verdict: for multi-stream interactive use the knob is defensible; owner
 decision whether LPT=2048 becomes the serve default (gate already exists;
 LPT unset today). Logs: itl-baseline-s169100.log, itl-lpt2048-s169100.log.
+
+Adopted: serve now defaults LPT=2048 (LPT=0 opts out), owner decision
+2026-11-08, one boot after the A/B. The live boot already carries it
+manually, so nothing changes until the next restart; the change is
+durability, not behavior.
