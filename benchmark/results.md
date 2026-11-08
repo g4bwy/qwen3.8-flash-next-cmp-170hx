@@ -4842,3 +4842,26 @@ verification; vLLM v1 has no tree verify and the chooser would be a
 multi-day custom-speculator port. Client temperature is the free lever
 if the live number ever matters again. No boot, no patch; the SPEC gate
 stays in serve inert (default mtp) like the other dormant knobs.
+
+### ITL baseline for the LPT=2048 probe (2026-11-08, dev1025 hop-ON, no LPT)
+
+itl_probe.py, 3 streams x 995,000 tok, decode 2048, salt 169100, run by a
+background measurement agent under the no-self-pollution protocol (memory
+orchestrator-no-self-pollution.md): idle gates clean (drafts flat at
+77,134 across 10 s), engine accounting exact (6,144 generated = expected,
+2.98 M prompt, preempt 0), status clean.
+
+| inter-token gap | n | mean | p50 | p95 | max | tails |
+|---|---|---|---|---|---|---|
+| while another prefill ran | 26 | 2795.3 ms | 2804.7 | 3103.2 | 3129.2 | 0% bimodal |
+| all prefills done | 1504 | 126.2 ms | 26.3 | 32.0 | 3313.9 | 3.7% >2xp50 |
+
+First tokens 70.5 / 142.2 / 218.7 s: prefills SERIALIZE without the knob,
+each stream ~71.7 s apart. A stream that already decodes gets ONE token
+per 2.8 s while a later stream prefills - uniform, so slow-but-scheduled
+(October mechanism), not deferred. Post-prefill cadence p50 26.3 ms.
+LPT=2048 arm: same boot, same salt (cache empty on restart), expect the
+2.8 s band to collapse toward the 26 ms regime at the cost of the leading
+stream's first-token time (the 404 finding: serialization to
+interleaving makes the leader wait for everyone). Log:
+logs/smoke-dev1025/itl-baseline-s169100.log.
