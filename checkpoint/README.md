@@ -7,8 +7,9 @@ release into an int8-dense variant.
 
 ## Draft vocabulary head (patch 5)
 
-Patch 8 makes the MTP drafter score a small head instead of the 248k-row
-lm_head per draft step, worth ~9% single-stream. Measured history: 4-stream
+Patch 8 makes the MTP drafter score a small head (49,508 ids in the
+current build) instead of the 248k-row lm_head per draft step, worth ~9%
+single-stream. Measured history: 4-stream
 deep-fill cells read acceptance 2.2-3.0, first blamed on batch size. The
 follow-up (results.md, joining-window section) shows the loss lives in
 mixed prefill+decode windows: same batch 4, long decode tail, acceptance
@@ -41,8 +42,10 @@ checkpoint directory carries the artifacts, and they take two commands:
    ```bash
    ./checkpoint/build_draft_vocab.py \
        --model-path /path/to/Qwen3.8-Flash-Next-FP8 \
-       --corpus draft_corpus.jsonl --size 40000
+       --corpus draft_corpus.jsonl --size 60000
    ```
+
+   (size is a cap; the corpus defines the result)
 
 2026-11-09 09:34 rebuild: --size 60000 produced 49,508 ids. --size is a
 cap (build_draft_vocab.py:101 most_common), so the corpus holds only
@@ -54,7 +57,7 @@ NOTE: vocab/ still contains the stale 2026-10-05 39,532-row head + index
 root index, and vocab ids via symlink. Rollback must remove both dirs'
 artifacts.
 
-Startup proof: `MTP drafter scores a 39532-token draft vocabulary`.
+Startup proof: `MTP drafter scores a 49508-token draft vocabulary`.
 Rollback: delete `mtp_draft_vocab_ids.pt`, `mtp_draft_lm_head.safetensors`,
 and their index entry. Patch 9's page-cache drop logs its own line,
 `Dropped consumed checkpoint pages from the page cache: 132 files, 172.97 GiB`.
