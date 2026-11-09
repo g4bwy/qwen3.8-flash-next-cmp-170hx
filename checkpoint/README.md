@@ -44,6 +44,16 @@ checkpoint directory carries the artifacts, and they take two commands:
        --corpus draft_corpus.jsonl --size 40000
    ```
 
+2026-11-09 09:34 rebuild: --size 60000 produced 49,508 ids. --size is a
+cap (build_draft_vocab.py:101 most_common), so the corpus holds only
+~49,510 distinct ids; a bigger list needs a bigger corpus, and the sweep
+floor is 0.81% miss at >=60k vs ~0.9% at 49.5k. Boot claim line reads
+the raw tensor length: "scores a 49508-token draft vocabulary".
+NOTE: vocab/ still contains the stale 2026-10-05 39,532-row head + index
+(the ids symlink wrote through); the loaded triple is the root head,
+root index, and vocab ids via symlink. Rollback must remove both dirs'
+artifacts.
+
 Startup proof: `MTP drafter scores a 39532-token draft vocabulary`.
 Rollback: delete `mtp_draft_vocab_ids.pt`, `mtp_draft_lm_head.safetensors`,
 and their index entry. Patch 9's page-cache drop logs its own line,

@@ -4946,3 +4946,15 @@ vocabulary" on dev1025; vocab/ keeps the stale Oct-5 39,532-row head
 (loaded from root only, harmless). Verdict: KEEP the patch; rebuild the
 list every few weeks (decay 0.2 pp/month, currently negligible); 60k is
 the floor-chasing option (+0.28 pp) if ever rebuilt anyway.
+
+### --size 60000 boot: corpus-capped at 49,508 (2026-11-09)
+
+Owner rebuilt with --size 60000; live list is 49,508 ids because the
+corpus has only ~49.5k distinct ids (size is a cap, not a quota).
+Artifacts verified byte-exact (head rows, ids length, index total_size
+delta). Live 300 s window, 16,467 drafts, 3 streams: mean accepted
+2.820, survival 0.705/0.497/0.357/0.261, 45.5%/draft - all positions up
+vs the 40k boot (2.754), but within daily content drift; predicted lift
+is ~0.02-0.03 only. Boot gates clean (dev1025+gdf18b73fa, LPT 2048,
+hop 1, errors 0, pool 5,340,298). Stale Oct-5 pair left in vocab/
+pending owner cleanup; README records the build.
