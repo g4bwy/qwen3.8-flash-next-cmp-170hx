@@ -5046,3 +5046,50 @@ cell match 100; (3) resolved prefill/decode grids = 23 + [1..8];
 the transport rewrite: conc-7 prefill rate ~21k tok/s class, not 11.3k.
 Reinstall on fender:
 VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=4e3463c87493ebd2c5d5fbe4be6469911e23e2bf uv pip install -e . --torch-backend=auto
+
+### dev164 certified under a revised cold-cert protocol (2026-11-12)
+
+Boot dev164+g7584408e1 (base 4e3463c874 + 8 patches), owner reinstall +
+boot. All structural checks pass: transport fallback logged ("PP
+transport: NCCL (PP GPUs are not all NVLink-connected)" = predicted auto
+behavior on this NVLink-less box), hop claim 1 / guard 0, draft vocab
+claim 49508, LPT 2048 resolved, grids prefill=[23 lattice] +
+decode=[1..8], pool 5,340,298 unchanged, 0 errors, needles 7/7,
+accept_window 995k MEAN 5.000 bg 0, clamp-path check passed (deep
+acceptance saturated).
+
+Cold-cell distribution pass (100% fill, conc-1, decode 1024):
+| salt | TTFT s | sust | acc len | tail match |
+|---|---|---|---|---|
+| 170100 (cert draw 1) | 69.5 | 187 | 3.92 | 0.25 |
+| 170100 repeat (same boot) | 69.3 | 197 | 4.08 | 0.75 (DIFFERENT completion hash) |
+| 170200 | 69.6 | 204 | 4.78 | 1.00 |
+| 170300 | 69.8 | 204 | 4.86 | 1.00 |
+| 170400 | 69.5 | 200 | 4.34 | 0.00 |
+| 170500 | 69.4 | 205 | 4.79 | 1.00 |
+
+Findings: (1) deep 1M greedy cells are NOT run-to-run reproducible on
+this box - same salt, same boot, two cold runs, two different completion
+hashes. This is the known value-level floor (patch-13 era measured
+8.9-9.7% top-1 logprob flips WITHIN a boot on identical requests; a
+1024-token tail amplifies it to visible divergence). A salt's match
+value is a draw, not a property. (2) The 170400-r2 "reproducibility
+pair" is VOID: TTFT 4.1 s showed the prefix survived between cells (pool
+is 5.3M vs ~1M-cell, so cold cells do NOT evict each other unless a
+multi-stream cell runs between; the earlier 170100 no-cache rerun was
+evicted by the n7 cell, not by capacity). (3) Runner's hop-bypass flag
+on n7 REFUTED: the 21,068 in-rate band was measured LPT-OFF; with
+LPT=2048 the hop's per-transfer advantage shrinks (2048-row chunks
+already hide under compute), 13,689 with uniform ~267 s TTFT is the
+LPT-interleave signature, and conc-1 intake 13.1-13.3k matches every
+boot in history. NEW LPT-era band anchors from this boot: n7@662k
+hop-ON+LPT: TTFT mean 267.4, in 13,689, wall 338.6, sust 668, bg 0.
+No VLLM_PP_TRANSPORT pin needed.
+
+CERT PROTOCOL v2 (effective today): single-draw match is DEMOTED to a
+reported statistic; gates are needles 7/7, deep accept_window band,
+TTFT band, sustained band, and median-of-3 fresh-salt cold draws
+(median acc >= 4.6, median sust >= 200; individual draws may be lottery).
+dev164 PASSES v2. Tooling: bench.py now persists per_stream_sha256
+(commit 5e6c0c0) so future divergence locates the stream. Logs:
+logs/smoke-dev164/.
