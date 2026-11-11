@@ -417,7 +417,7 @@ boot, your first benchmark run, or any change to cache cell layouts.
 
 ```
 patchset-qwen38-pp/
-  patches/0001-*.patch .. 0009-*.patch   the series, git am
+  patches/0001-*.patch .. 0008-*.patch   the series, git am
   serve-4x-1m.sh                         the service lane: 4 gpus, 1M, YaRN 4.0 (PROF=1 arms the profiler)
   archive/                               retired lanes, the 3-card set, the TP=4 trial, and their tables
   benchmark/                             measurement tools, raw results, and the full record, see its README
