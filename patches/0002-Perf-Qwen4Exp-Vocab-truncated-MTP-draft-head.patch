@@ -1,7 +1,7 @@
-From d85dd268ae579fd4ffb34dba30cee8afc5c43a23 Mon Sep 17 00:00:00 2001
+From c8647472c4e23ef7561d65377e448b1d07bf1360 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
-Subject: [PATCH 3/9] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
+Subject: [PATCH 2/8] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
 
 Every draft token of MTP speculation runs compute_logits with the full
 248,320-row lm_head: on sm_80 at the ~1.1 TB/s measured for these cards
@@ -71,7 +71,7 @@ index 0000000000..dddb7c8f81
 +    assert _remap_mtp_weight_name("mtp.draft_lm_head.weight") == "draft_lm_head.weight"
 +    assert _remap_mtp_weight_name("mtp.shared_head.head.weight") == "lm_head.weight"
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index d005e67bad..56778fbea8 100644
+index 45e5763115..ab5dc2a203 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -13,6 +13,7 @@ The MTP draft model reuses the Qwen4Exp backbone (PLE/HC/MoE) but:

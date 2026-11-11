@@ -4958,3 +4958,91 @@ vs the 40k boot (2.754), but within daily content drift; predicted lift
 is ~0.02-0.03 only. Boot gates clean (dev1025+gdf18b73fa, LPT 2048,
 hop 1, errors 0, pool 5,340,298). Stale Oct-5 pair left in vocab/
 pending owner cleanup; README records the build.
+
+### Series rebased onto 4e3463c874; patch 2 retired upstream; 9 -> 8 (2026-11-11)
+
+Base 4e3463c874 (11-10 18:20), wheel 0.34.0rc1.dev156+g4e3463c87 x86_64
+(metadata HEAD 404'd transiently at first probe, 200 on retest - probe
+rule amended: re-HEAD before abandoning a candidate). +186 commits.
+Version prefix moved 0.33.0rc1 -> 0.34.0rc1 inside the range via release
+tags (v0.34.0rc0 = 34b780fe66); no install-handling change, match the
++g<sha> tail. Branch qwen38-pp-4e3463c874, tip 344e1f2747, tree
+d9280af4c4, worktrees wt-rebase-1111 / wt-pristine-1111.
+
+PATCH 2 RETIRED (9->8, renumber 3-9 -> 2-8): #58094 merged as 083fbac021
+plus companion f7adac3220 (#63432, _yarn_cache_positions + draft switches
+to hf_text_config). Line-by-line audit of our adopted copy against the
+pair: zero residue. Two of our choices deliberately SUPERSEDED: dict
+forwarding of max_position_embeddings (upstream keeps it target-only,
+pinned by test_max_position_embeddings_dict_override_stays_target_only;
+draft depth now flows through _maybe_override_draft_max_position_
+embeddings + the rotary-cache clamp) and our MTP-family gate on forwarded
+rope dicts (upstream forwards to all drafts). WATCH: draft YaRN coverage
+at ~1M positions now rides the clamp path - accept_window at 995k is the
+verification probe, not just a perf check.
+
+Verification: conflicts only in patch 1 (import slot, kept upstream amd
+block + our utils line) and the patch-2 drop; chain delta fully
+accounted (194 dropped lines = patch 2, 4 lines = double-backtick to
+single conversions mandated by the new check-docstring-style hook,
+autosquashed into new patches 0003/0007; hook passes). CPU: branch 350
+pass / 0 fail, pristine 302 / 0 fail, failure-name parity empty==empty,
++48 = our tests; upstream tests/models/test_pp_equivalence.py (#66291)
+added to the suite (imports clean, 93 CPU skips). Replay 8/8 plain am,
+tree identical. ruff/format/imports clean. ENV TRAP for all future CPU
+runs: the new vendored FLA import (f905e70070) crashes under
+VLLM_TARGET_DEVICE=cpu while GPUs are VISIBLE (identical on pristine;
+upstream bug, reverted later on main) - run suites with
+CUDA_VISIBLE_DEVICES="". Email trap OBSOLETE: branch From is already
+2580288+g4bwy@users.noreply.github.com, the sed from the gforte era is a
+no-op.
+
+Semantics checklist (all pass): patch 2' - draft-vocab expand_draft_
+logits + artifact load intact under the new unconditional target-
+tokenizer inheritance; capture grid - legacy list still derives prefill
++ decode grids in vllm.py (:2641 passthrough, :2657 cdiv-by-query-len),
+no serve retarget needed, but note aac1b2a4f3 DELETED the automatic
+rounding of legacy sizes to the query length - our lattice was
+hand-aligned, keep it that way; envs - 4 VLLM_QWEN4EXP anchors intact,
+VLLM_USE_V2_MODEL_RUNNER deleted (0 refs in our chain); patch 0005 int8
+hop intercepts inside model.forward outside BOTH new transports -
+#65896's pp_transport auto-gate needs TP=1 (yes) and NVLink (no) so we
+expect the NCCL fallback, transports pass our hidden_scale key verbatim
+and the copy-engine schema includes the int8 buffers via
+make_empty_intermediate_tensors; #66177 aux relay disjoint from ours.
+
+Runner-V1 removal (aac1b2a4f3 #63373, 435 files) now in base: V1
+spec_decode tree + old rejection sampler deleted;
+use_heterogeneous_vocab / disable_padded_drafter_batch / parallel_drafting
+fields gone (our chain: 0 references); preemption re-schedule NOT in the
+V1 path, unchanged. Rust FE still tool-unsafe at tip (same skips).
+vllm.entrypoints.openai.api_server deprecated, removal at v0.37 - we
+exec `vllm serve`, unaffected. One revert in range (Zen5 CI, moot).
+
+Range digest picks beyond the checklist: #66289 drops the FlashInfer
+gemma_rmsnorm dep from the QSA indexer on Ampere (beneficial, recheck
+top-k numerics); 9ad0029883 #63847 is NOT ROCm-only - fixes
+cooperative/persistent_topk row-ends shape under spec decode and
+recompiles csrc/topk.cu we ship (watch acceptance at boot); #66512 QSA
+fp8 Blackwell-only gate (moot, but the old body moved - future QSA
+patches re-home); #66000's draft-config fix landed Step5-only, 3-line
+port candidate for qwen4_exp mtp.py (lab); #60390 SharedHost PLE
+embedding for DP replicas (moot at DP=1, touches our ngram_embedding
+module); #65896 pin VLLM_PP_TRANSPORT=nccl if boot transport detection
+looks unsure. Watchlist: #66387 DFlash thread bisected a garbled-output
+regression to compiled rotary_embedding on sm90 TP2 (workaround forcing
+the op eager; rope-adjacent watch item); givisok shipped ngram default
+then walked it back to NEUTRAL on real traffic (corroborates our 11-08
+suffix drop); AlexBrandes 2x170HX W4A16 at 234 tok/s single / 827
+aggregate 262k (community reference point); Morrowmake dormant since
+11-02; no new Ampere extensible-KV reports, issue draft still
+first-of-kind.
+
+BOOT WATCH dev164 (banner = dev156 + 8): (1) transport fallback line +
+hop claim ACTIVE + guard 0; (2) deep accept_window (995k) = the patch-2
+successor clamp-path verification, expect 4.99+ band, plus one cold
+cell match 100; (3) resolved prefill/decode grids = 23 + [1..8];
+(4) needles 7/7. Optional functional fingerprint that the hop survived
+the transport rewrite: conc-7 prefill rate ~21k tok/s class, not 11.3k.
+Reinstall on fender:
+VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=4e3463c87493ebd2c5d5fbe4be6469911e23e2bf uv pip install -e . --torch-backend=auto

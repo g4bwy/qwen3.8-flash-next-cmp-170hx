@@ -1,7 +1,7 @@
-From 92af01ef7408cce5b88a0e2b7d65e80c88fc2efc Mon Sep 17 00:00:00 2001
+From f7ff2134bd510337fbdcffa57c1d46644bbf80b9 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 10:09:31 +0200
-Subject: [PATCH 8/9] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8 on
+Subject: [PATCH 7/8] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8 on
  sm_80
 
 The shipped FP8 checkpoint quantizes only the routed experts: its
@@ -342,7 +342,7 @@ index 0000000000..42ee27b2e5
 +        method.apply(_linear(n=n, k=k), x)
 +        assert calls == [("bf16", 2, 1024)]
 diff --git a/vllm/envs.py b/vllm/envs.py
-index b0f79ba26b..ff09046445 100644
+index f38d291b63..4b816786fe 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -129,6 +129,7 @@ if TYPE_CHECKING:
@@ -353,7 +353,7 @@ index b0f79ba26b..ff09046445 100644
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1213,6 +1214,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1214,6 +1215,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_DRAFT_W8A8": lambda: (
          os.getenv("VLLM_QWEN4EXP_DRAFT_W8A8", "0").lower() in ("1", "true")
      ),
@@ -370,7 +370,7 @@ index b0f79ba26b..ff09046445 100644
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/models/qwen4_exp/nvidia/dense_w8a8.py b/vllm/models/qwen4_exp/nvidia/dense_w8a8.py
 new file mode 100644
-index 0000000000..0f06eefe07
+index 0000000000..9f8d8b0d4a
 --- /dev/null
 +++ b/vllm/models/qwen4_exp/nvidia/dense_w8a8.py
 @@ -0,0 +1,162 @@
@@ -431,11 +431,11 @@ index 0000000000..0f06eefe07
 +    """Round-to-nearest a bf16 (N, K) weight to per-output-channel int8.
 +
 +    Args:
-+        weight: Dense weight in the ``(N, K)`` layout it was loaded in.
++        weight: Dense weight in the `(N, K)` layout it was loaded in.
 +
 +    Returns:
-+        ``(B, scale_b)`` where ``B`` is a ``(K, N)`` column-major int8 view for
-+        ``cutlass_scaled_mm`` and ``scale_b`` is the ``(1, N)`` output-channel
++        `(B, scale_b)` where `B` is a `(K, N)` column-major int8 view for
++        `cutlass_scaled_mm` and `scale_b` is the `(1, N)` output-channel
 +        scale.
 +
 +    """
@@ -537,18 +537,18 @@ index 0000000000..0f06eefe07
 +        sum(isinstance(c, LinearBase) for c in module.modules()),
 +    )
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index f8572377ab..4c1aadbade 100644
+index c4ecab937a..e429b3f536 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
-@@ -82,6 +82,7 @@ from vllm.v1.attention.backends.registry import MambaAttentionBackendEnum
+@@ -83,6 +83,7 @@ from vllm.v1.attention.backends.registry import MambaAttentionBackendEnum
  from vllm.v1.kv_cache_interface import MambaSpec
  
  from ..common.hyperconnection import is_hc_sequence_parallel_enabled
 +from .dense_w8a8 import enable_qwen4exp_dense_w8a8
  from .hyperconnection import GatedResidual, HyperConnectionConfig
  from .low_latency_gemm import enable_qwen4_exp_low_latency_gemm
- from .ops.cute_dsl.hc_down_silu import request_hc_down_silu_warmup
-@@ -838,6 +839,7 @@ class Qwen4ExpForCausalLM(
+ from .mega_moe import Qwen4ExpMegaMoeBlock
+@@ -844,6 +845,7 @@ class Qwen4ExpForCausalLM(
          )
          self.set_moe_parameters(self.model.layers)
          enable_qwen4_exp_low_latency_gemm(self, self.model_config.dtype)
@@ -557,7 +557,7 @@ index f8572377ab..4c1aadbade 100644
              # Precompile the fused HC down+SiLU kernels for every CUDA-graph
              # capture size in the fused dispatch range, so no CuTe-DSL JIT
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index 602fe5f5e6..b0ce51063c 100644
+index ce45f88197..55b4a85fa5 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -56,6 +56,7 @@ from vllm.models.common.ops.sequence_parallel import (

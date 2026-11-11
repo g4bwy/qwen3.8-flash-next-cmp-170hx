@@ -1,7 +1,7 @@
-From 90ec7bdf2beda65679fc5371a7c8ed0dd3079345 Mon Sep 17 00:00:00 2001
+From 2682d9fe361cae102d43dfa3b24488a7f5350f70 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 12:16:26 +0200
-Subject: [PATCH 4/9] [Model Loader] Drop consumed shard pages from the page
+Subject: [PATCH 3/8] [Model Loader] Drop consumed shard pages from the page
  cache
 
 Set VLLM_SAFETENSORS_DROP_CACHE=1 to posix_fadvise(FADV_DONTNEED) each
@@ -192,7 +192,7 @@ index 0000000000..307143eb4f
 +    for off, length in calls:
 +        assert all(off >= e or off + length <= b for b, e in keep)
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 5678904f34..4b0d058ef0 100644
+index ad047e426c..2b9d73cafb 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -126,6 +126,7 @@ if TYPE_CHECKING:
@@ -203,7 +203,7 @@ index 5678904f34..4b0d058ef0 100644
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1191,6 +1192,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1192,6 +1193,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_FASTSAFETENSORS_QUEUE_SIZE": lambda: int(
          os.getenv("VLLM_FASTSAFETENSORS_QUEUE_SIZE", "0")
      ),
@@ -219,7 +219,7 @@ index 5678904f34..4b0d058ef0 100644
      "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/model_executor/model_loader/weight_utils.py b/vllm/model_executor/model_loader/weight_utils.py
-index c868de57c8..ea7e5834ad 100644
+index 20dbceaa18..261cb9dd8d 100644
 --- a/vllm/model_executor/model_loader/weight_utils.py
 +++ b/vllm/model_executor/model_loader/weight_utils.py
 @@ -1121,6 +1121,91 @@ def _prefetch_all_checkpoints(
@@ -284,7 +284,7 @@ index c868de57c8..ea7e5834ad 100644
 +    Reopening for fadvise is intentional: it targets the inode's page cache
 +    regardless of how (or whether) the reader mapped the file, and
 +    FADV_DONTNEED on clean pages is async per kernel docs but immediate in
-+    practice at these sizes. ``keep_ranges`` (merged, ascending) spares those
++    practice at these sizes. `keep_ranges` (merged, ascending) spares those
 +    byte ranges. Returns the number of bytes actually dropped.
 +    """
 +    try:
