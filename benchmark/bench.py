@@ -273,6 +273,9 @@ def run_cell(base, model, depth, n, cpt, salt, decode, timeout, tag=None):
         "acc_window_len": window_acc(counter_samples, decode_start, decode_end),
         "tail_match_frac": tail_match(texts),
         "completion_sha256": completion_hash(texts),
+        "per_stream_sha256": [
+            hashlib.sha256(t.encode()).hexdigest()[:12] for t in texts
+        ],
         "bg_drafts_pre": bg_drafts_pre,
         "bg_drafts_post": bg_drafts_post,
         "bg_gen_pre": bg_gen_pre,
@@ -372,7 +375,9 @@ def main():
         # salt-1, not salt: cell 1 stream 0 uses seed salt, so seeding the
         # warmup the same way would leave its 8k prefix in the cache and hand
         # cell 1 a warm start.
-        warm = build_prompt(8192, cpt, salt - 1, tail_for("repeat", salt - 1), task="repeat")
+        warm = build_prompt(
+            8192, cpt, salt - 1, tail_for("repeat", salt - 1), task="repeat"
+        )
         stream_run(args.base_url, model, warm, 64, args.timeout)
         time.sleep(3)
         print("warmup done", flush=True)
