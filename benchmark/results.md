@@ -4055,10 +4055,10 @@ Readings.
 1. The scheduler budget is the largest single prefill lever found on this box: bf16 buys
    itself -16% TTFT, both 1-byte dtypes -26%, all by chunk alignment against the 1616/3232
    group blocks. The documented "fp8 costs 10% of prefill for its pool" framing collapses
-   to int8's honest 1.6 s (2.5%) at equal, correct scheduling; fp8's share is probably at
+   to int8's measured 1.6 s (2.5%) at equal, correct scheduling; fp8's share is probably at
    or below parity (its read kernel measured 22% faster per row than bf16's), pending its
    own 9728 cell.
-2. The int8 trade, restated honestly: +2.5% cold prefill, -46% prefill against its own
+2. The int8 trade, restated plainly: +2.5% cold prefill, -46% prefill against its own
    misconfigured boot, pool 1.85x. At 2048 that trade was being priced at 14%.
 3. The acceptance dips are not settled noise: three dips across two int8@9728 boots
    (cells 2-3 pattern, recoverable on fresh salt), zero across three bf16@9728 cells on
@@ -4097,7 +4097,7 @@ The tax decomposition ended up: ~100% scheduling, 0% dtype, plus one genuine int
 (the 520-byte stride) that ran around unnoticed precisely because every arm shared the
 scheduling penalty and it muddied the water.
 
-int8's honest position after all this: native dtype, fused writer, IMMA headroom - but at
+int8's true position after all this: native dtype, fused writer, IMMA headroom - but at
 parity-or-worse speed and pool on this silicon today. It stays a lab branch. Its durable
 outputs are the stride lesson (recorded in bench-protocol-traps memory), the trace tooling,
 the 9728 finding, and the int8-dip lead: dips appeared on int8 boots only (4 cells across
@@ -4428,7 +4428,7 @@ lines report ~24-29 GiB free with 1.74-2.32 GiB initially committed and
 2.09-2.27 GiB explicitly kept for transient activations, then "Extended KV
 cache to 1736 blocks" equalized across all four ranks (17.06-22.74 GiB
 depending on stage role). Pool line 5,182,089 tokens, -2.5% vs the
-estimate-based dev319 boot: the sizing is now honest (free-after-capture
+estimate-based dev319 boot: the sizing is now accurate (free-after-capture
 minus reserved headroom) instead of optimistic, so treat the absolute pool
 number as a different statistic from this boot onward.
 Cold probe salt 155100: TTFT 69.84 s (bg 0, valid), acceptance 3.83 with
@@ -4446,7 +4446,7 @@ extensible) remains queued behind a clean reading of this watch item.
 Same dev541 tree, single change: the flag removed, extensible KV resolves
 its default (1.0 ceiling, runtime headroom instead of a static cap). Pool
 5,468,656 tokens, +286k (+5.5%) over the 0.9453 boot, the largest the lane
-has had, with the honest accounting visible in the log (per-rank "fit
+has had, with the accurate accounting visible in the log (per-rank "fit
 within the requested" 1832-2081 blocks, equalized at 1832, "Extended KV
 cache to 1832 blocks (24.00 GiB)" on the binding rank). Zero errors,
 needles pass. Cold probe salt 156100: TTFT 69.56 s, acceptance 4.844,
@@ -5121,7 +5121,7 @@ accounting). Adopted deltas, now binding:
    cmpbench.py stages 1+3 ONCE on the current boot, spec-ON and spec-OFF,
    as a static bridge row. Bridge rows map our lane to theirs and are NOT
    cert gates; cert stays 1M-fill v2. The spec-OFF bridge doubles as the
-   honest anchor for our known repetition-prompt acceptance inflation.
+   true anchor for our known repetition-prompt acceptance inflation.
 Not adopted, with cause: shallow fixed-prompt headline metrics (off-target;
 they relegate deep numbers to Notes, we vice versa); their ~3% repeated-run
 tolerance (consistent with our rate-level spread, but our text-hash lottery
