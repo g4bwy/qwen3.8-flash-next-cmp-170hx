@@ -44,6 +44,11 @@
 #                    after it); nonzero means other traffic polluted acc and
 #                    the rate columns
 #
+# Under each row prints "tel=<gen>x<lanes>/<peak W>": the lowest PCIe link state
+# and the highest power draw any GPU reached while that cell ran. Idle 170HX
+# links renegotiate down, so the sampler runs in a separate process during the
+# cell only; it is fail-soft and never changes a measured number.
+#
 # /metrics is global: run the box idle or the acceptance column is polluted.
 # The KV pool caps concurrency (262k pool measured 4.39 single contexts);
 # watch the preempt column before believing a big wall s.
@@ -51,10 +56,15 @@
 #   ./benchmark/bench.py --base-url http://<host>:8000 --ctx 262144 \
 #       --fills 25,50,75,100 --concurrency 1,2,4
 import argparse
+import contextlib
 import hashlib
 import json
 import math
 import os
+import re
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -207,6 +217,180 @@ def fmt2(v):
     return "-" if v is None else f"{v:.2f}"
 
 
+# --- In-cell environment telemetry (cmp.wiki Benchmark_protocol rev 1456) ---
+# An idle 170HX link renegotiates down to Gen1, so link state only means
+# anything when sampled while the cell runs. The sampler is a separate process
+# appending to a temp CSV: a stalled probe then costs the measured window
+# nothing. Everything here is fail-soft, telemetry never fails a cell.
+TEL_INTERVAL = 2.0
+TEL_KEYS = ("cap", "draw", "gen", "lanes")
+TEL_INTS = ("gen", "lanes")
+TEL_GEN_BY_GTS = ((2.5, 1), (5.0, 2), (8.0, 3), (16.0, 4), (32.0, 5), (64.0, 6))
+
+
+def _tel_sh(cmd):
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    if out.returncode != 0:
+        raise RuntimeError((out.stderr or out.stdout).strip()[:100] or f"rc {out}")
+    return out.stdout
+
+
+def _tel_num(text):
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _tel_gen(gts):
+    if gts is None:
+        return None
+    return min(TEL_GEN_BY_GTS, key=lambda g: abs(g[0] - gts))[1]
+
+
+def _tel_sysfs_bdf(nv_bdf):
+    """'00000000:01:00.0' (nvidia-smi) to '0000:01:00.0' (lspci, sysfs)."""
+    parts = nv_bdf.strip().lower().split(":")
+    if len(parts) == 3 and len(parts[0]) > 4:
+        parts[0] = parts[0][-4:]
+    return ":".join(parts)
+
+
+def _tel_query(*fields):
+    """nvidia-smi index -> [field values], for one or more fields per call."""
+    text = _tel_sh(
+        [
+            "nvidia-smi",
+            "--query-gpu=index," + ",".join(fields),
+            "--format=csv,noheader,nounits",
+        ]
+    )
+    out = {}
+    for line in text.splitlines():
+        cols = [c.strip() for c in line.split(",")]
+        if len(cols) == len(fields) + 1:
+            out[cols[0]] = cols[1:]
+    return out
+
+
+def _tel_link(bdf):
+    """(gen, lanes) from the LnkSta line; sysfs exposes the same registers
+    when pciutils is not installed."""
+    try:
+        sta = re.search(r"LnkSta:[^\n]*", _tel_sh(["lspci", "-vv", "-s", bdf]))
+        if sta:
+            speed = re.search(r"Speed\s+([\d.]+)", sta.group(0))
+            width = re.search(r"Width\s+x(\d+)", sta.group(0))
+            if speed and width:
+                return _tel_gen(_tel_num(speed.group(1))), int(width.group(1))
+    except Exception:
+        pass
+    node = f"/sys/bus/pci/devices/{bdf}/"
+    with open(node + "current_link_speed") as fh:
+        gen = _tel_gen(_tel_num(fh.read().split()[0]))
+    with open(node + "current_link_width") as fh:
+        return gen, int(fh.read().strip())
+
+
+def telemetry_loop(path):
+    """Child entry point: one CSV line per GPU per 2 s until the parent stops it."""
+    try:
+        head = _tel_query("pci.bus_id", "power.limit", "power.draw")
+    except Exception:
+        return
+    bdfs = {k: _tel_sysfs_bdf(v[0]) for k, v in head.items()}
+    with open(path, "w") as fh:
+        while True:
+            try:
+                power = _tel_query("power.limit", "power.draw")
+            except Exception:
+                power = {}
+            # One stamp per pass, so the parent counts passes, not GPU rows.
+            stamp = time.time()
+            for idx, bdf in sorted(bdfs.items()):
+                cols = power.get(idx) or ["", ""]
+                try:
+                    gen, lanes = _tel_link(bdf)
+                except Exception:
+                    gen = lanes = None
+                vals = (_tel_num(cols[0]), _tel_num(cols[1]), gen, lanes)
+                body = ",".join("" if v is None else str(v) for v in vals)
+                fh.write(f"{stamp:.1f},{idx},{body}\n")
+                fh.flush()
+            time.sleep(TEL_INTERVAL)
+
+
+def telemetry_start():
+    try:
+        fd, path = tempfile.mkstemp(prefix="bench-tel-", suffix=".csv")
+        os.close(fd)
+        proc = subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__), "--tel-loop", path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        return None, None, f"spawn: {exc}"
+    return proc, path, None
+
+
+def telemetry_stop(proc, path):
+    if proc is not None:
+        proc.terminate()
+        try:
+            proc.wait(5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(2)
+    reason, lines = None, []
+    try:
+        with open(path) as fh:
+            lines = [ln.strip().split(",") for ln in fh if ln.strip()]
+    except (OSError, TypeError) as exc:
+        reason = f"read: {exc}"
+    with contextlib.suppress(OSError):
+        os.unlink(path)
+    rows = [ln for ln in lines if len(ln) == 6]
+    if not rows:
+        return {"unavailable": reason or "no samples (nvidia-smi unreachable?)"}
+    gpus, passes = {}, set()
+    for ts, idx, limit, draw, gen, lanes in rows:
+        passes.add(ts)
+        acc = gpus.setdefault(idx, {})
+        for key, raw in zip(TEL_KEYS, (limit, draw, gen, lanes), strict=True):
+            num = _tel_num(raw)
+            if num is None:
+                continue
+            acc.setdefault(key, []).append(int(num) if key in TEL_INTS else num)
+    order = sorted(gpus, key=lambda i: _tel_num(i) or 0)
+
+    def _pick(idx, key, reduce):
+        vals = gpus[idx].get(key) or []
+        return reduce(vals) if vals else None
+
+    out = {
+        "power_cap_w": [_pick(i, "cap", max) for i in order],
+        "power_peak_w": [_pick(i, "draw", max) for i in order],
+        "power_last_w": [_pick(i, "draw", lambda v: v[-1]) for i in order],
+        "pcie_speed_min_gen_seen": [_pick(i, "gen", min) for i in order],
+        "pcie_width_min_lanes_seen": [_pick(i, "lanes", min) for i in order],
+        "samples": len(passes),
+    }
+    if any(v is None for v in out["power_peak_w"] + out["pcie_width_min_lanes_seen"]):
+        out["note"] = "power or link probe failed on some GPU"
+    return out
+
+
+def fmt_tel(tel):
+    if not tel or "unavailable" in tel:
+        return "n/a"
+    gens = [v for v in tel["pcie_speed_min_gen_seen"] if v]
+    lanes = [v for v in tel["pcie_width_min_lanes_seen"] if v]
+    peaks = [v for v in tel["power_peak_w"] if v]
+    link = f"{int(min(gens))}x{int(min(lanes))}" if gens and lanes else "n/a"
+    return f"{link}/{max(peaks):.0f}W" if peaks else f"{link}/n/a"
+
+
 def run_cell(base, model, depth, n, cpt, salt, decode, timeout, tag=None):
     prompts = [
         build_prompt(depth, cpt, salt + i, tail_for("repeat", salt + i), task="repeat")
@@ -218,6 +402,7 @@ def run_cell(base, model, depth, n, cpt, salt, decode, timeout, tag=None):
     stop = threading.Event()
     samples = []
     counter_samples = []
+    tel_proc, tel_path, tel_err = telemetry_start()
     sampler = threading.Thread(
         target=gen_sampler,
         args=(base, t0, stop, samples, timeout, tag, counter_samples),
@@ -229,7 +414,10 @@ def run_cell(base, model, depth, n, cpt, salt, decode, timeout, tag=None):
             pool.map(lambda p: stream_run(base, model, p, decode, timeout), prompts)
         )
     stop.set()
-    sampler.join(5)
+    sampler.join()
+    telemetry = telemetry_stop(tel_proc, tel_path)
+    if tel_err:
+        telemetry = {"unavailable": tel_err}
     # vLLM flushes step stats on a ~5 s interval; reading the counters
     # 2 s after the last chunk misses the cell's own tail, which then
     # shows up as background drafts in the post-probe (observed 2026-10-22).
@@ -281,6 +469,7 @@ def run_cell(base, model, depth, n, cpt, salt, decode, timeout, tag=None):
         "bg_gen_pre": bg_gen_pre,
         "bg_gen_post": bg_gen_post,
         "preemptions": after["preemptions"] - before["preemptions"],
+        "telemetry": telemetry,
         "total_prompt_tokens": ptoks,
         "total_completion_tokens": ctoks,
         "ttfts_s": ttfts,
@@ -301,6 +490,11 @@ def dump_json(args, label, rows):
 
 
 def main():
+    # Sampler child mode, ahead of argparse: a cell run needs --ctx, while the
+    # sampler never touches the server and must not be bound by its CLI.
+    if "--tel-loop" in sys.argv:
+        telemetry_loop(sys.argv[sys.argv.index("--tel-loop") + 1])
+        return
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-url", default="http://127.0.0.1:8000")
     ap.add_argument("--model", default=None)
@@ -406,6 +600,7 @@ def main():
                 f"| {row['bg_drafts_pre'] + row['bg_drafts_post']:.0f} |",
                 flush=True,
             )
+            print(f"  tel={fmt_tel(row['telemetry'])}", flush=True)
             if row["bg_drafts_pre"] or row["bg_drafts_post"]:
                 print(
                     f"  WARNING: background traffic during cell ({tag}): "

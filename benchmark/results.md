@@ -5093,3 +5093,40 @@ TTFT band, sustained band, and median-of-3 fresh-salt cold draws
 dev164 PASSES v2. Tooling: bench.py now persists per_stream_sha256
 (commit 5e6c0c0) so future divergence locates the stream. Logs:
 logs/smoke-dev164/.
+
+### CERT PROTOCOL v2.1: cmp.wiki Benchmark_protocol examined and merged (2026-11-13)
+
+Source: https://cmp.wiki/wiki/Benchmark_protocol rev 1456 (11-10, community
+Protocol 1.0 / cmpbench.py). Compared rule-by-rule against cert v2. Their
+lane: shallow fixed prompts (140-180 tok), near-empty context, cross-user
+comparability. Ours: 1M-fill single-box lane. Most rules already matched
+(temp 0, cold prefill by cache defeat, client-timed windows, idle boxes,
+discard capture-era runs, spec labeled on numbers, engine-usage token
+accounting). Adopted deltas, now binding:
+
+1. TELEMETRY (implemented in bench.py same day, or deferred): per-cell,
+   sampled DURING the run at 2 s cadence, never header-only: per-GPU power
+   cap/peak and PCIe gen+width minimum seen during the cell. Rationale on
+   this box: NVLink-less PP over PCIe, the NCCL transport and the int8 hop
+   economics both ride link state, and idle cards renegotiate to Gen1.
+   A cell whose telemetry shows a downshift mid-cell is a reported band
+   outlier, not a mystery.
+2. ACCEPTANCE PROVENANCE, formalized: decode-window acceptance
+   (accept_window, bench acc win) and server-wide /metrics aggregates are
+   DIFFERENT statistics; every quoted acceptance number names its source;
+   comparisons never mix sources or eras. (The wiki itself reads whole-
+   server /metrics for per-recipe acceptance - fine for their no-other-
+   traffic rule, not for a box that serves live sessions.)
+3. BRIDGE-RUN POLICY: to publish or verify community recipes, run their
+   cmpbench.py stages 1+3 ONCE on the current boot, spec-ON and spec-OFF,
+   as a static bridge row. Bridge rows map our lane to theirs and are NOT
+   cert gates; cert stays 1M-fill v2. The spec-OFF bridge doubles as the
+   honest anchor for our known repetition-prompt acceptance inflation.
+Not adopted, with cause: shallow fixed-prompt headline metrics (off-target;
+they relegate deep numbers to Notes, we vice versa); their ~3% repeated-run
+tolerance (consistent with our rate-level spread, but our text-hash lottery
+finding at depth means median-of-3 stays); fixed cross-user prompts (breaks
+our salt law; bridge runs cover comparability); their CUDA-microbench
+traps section (correct, absorbed as knowledge; we publish no device
+microbenchmarks). Conflicts logged, none blocking. Bridge run queued in
+TODO (needs a ~20 min quiet window; not cert-gating).
