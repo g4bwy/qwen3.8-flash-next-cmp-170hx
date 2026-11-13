@@ -1,8 +1,10 @@
 # Benchmark results, full tables
 
-Append-only record from 2026-09-15 to 2026-10-25. The configuration changed
+Append-only record from 2026-09-15 onward. The configuration changed
 several times over that window, so each section states its own setup, and a
 section preamble overrides this header wherever the two disagree.
+
+Protocol: current is CERT PROTOCOL v2.1 (2026-11-13, entries "dev164 certified under a revised cold-cert protocol" and "CERT PROTOCOL v2.1"); median-of-3 fresh-salt cold draws, in-cell power/PCIe telemetry, acceptance numbers always name their source, idle gates and salt law per v1/v2.
 
 Current lane, which is what the October sections use. 4x CMP 170HX, GA100
 unlocked to 64 GB and 74 SM per card, one NUMA node, 200 W per-card cap, PP=4

@@ -177,7 +177,7 @@ def stream_ceiling(mib: float, reps: int) -> float:
     """GB/s this card delivers for a pure read of this footprint, right now.
 
     Utilization percent is a bad contention probe on a pipeline-parallel lane,
-    because those idle by design. Achieved bandwidth is the honest probe: if
+    because those idle by design. Achieved bandwidth is the direct probe: if
     this reads near the production 895 GB/s the card is effectively ours, and
     if it collapses then a neighbour is eating DRAM and no timing here means
     anything. Their bench/sol_copy.cu is the same idea, per access pattern.
