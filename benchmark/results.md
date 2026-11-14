@@ -5209,3 +5209,37 @@ all open - patch 2 stays ours; givisok went 80 GiB host RAM / 48 GiB PLE
 fully resident (eviction dips gone over there - cheap idea for our
 pinned-PLE lane someday; #67401 compiled-rotary non-unit-stride bug
 open (rope-adjacent watch).
+
+### dev506 certified; first v2.1 pass and two instrument lessons (2026-11-14)
+
+Boot dev506+gc3e10e5b1 (e72e9cb18 + 8), all gates green: PP transport
+line NCCL, hop claim 1 / guard 0, vocab claim 49508, LPT 2048, grids
+23 + [1..8], pool 5,340,298 IDENTICAL to dev164 despite the KV-spec
+rewrite + hybrid page-math changes, 0 errors. Weight load matches dev164
+fact-for-fact: 132/132 shards, per-rank GiB 30.46/30.46/33.41/35.07
+identical, 4 PLE ngram init lines identical.
+
+Smoke (idle-gated, bg 0 throughout): needles 7/7 (also clears the
+3f4fbd6fc9 stale-padded-row worry for the hop: pairing verified under
+cache-hit/grown turns). Window MEAN 5.000 x3, drafts 183/183/184 - the
+157e42a762 acceptance-counter redefinition did NOT shift our band:
+accept_window diffs raw counter deltas itself, and the new
+vllm:spec_decode_num_verified_tokens* counters exist as a parallel
+source for future cross-checks. Cold median-of-3: sust 190/204/204
+(median 204), acc 4.12/4.88/4.66 (median 4.66), match 0/100/100 -
+PASSES v2.1 gates; salt 172100 is a lottery draw of the known kind, its
+three metrics move together exactly as the content-drift pattern
+predicts. Intake uniform 13.2-13.4k, TTFT 68.9-69.3. n7 hop fingerprint:
+in-rate 13,727 at the top of the LPT-era class, TTFT 266/310 =
+interleave pattern, hop alive through the transport + padding changes.
+
+INSTRUMENT LESSONS (adopted): (1) the weight-load boot gate must count
+the TERMINAL '132/132' (or '100%') shard line + per-rank 'Model loading
+took' GiB values, not raw 'Loading safetensors' line counts (tqdm
+cadence made 104 vs 105 false-alarm). (2) Telemetry first real numbers:
+links x4 Gen2 stable; power.draw READINGS 317-355 W during deep-prefill
+cells against the 200 W power.limit on every draw, cold and n7. Peak
+over-cap draw on these unlocked mining cards is either sensor scaling
+or an ignored cap - unknown, logged; telemetry stays a REPORTED
+statistic, not a gate, until understood.
+Logs: logs/smoke-dev506/.
