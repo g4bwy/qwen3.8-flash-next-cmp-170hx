@@ -1,4 +1,4 @@
-From ec95dca364b0fe5d32700decaf69301dbd09d195 Mon Sep 17 00:00:00 2001
+From 41dc6e4aae5ecf641f31d285380088c0ac093a0f Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 16 Oct 2026 11:21:02 +0200
 Subject: [PATCH 5/8] [Perf][Model][Qwen4Exp] Opt-in int8 quantization of the
@@ -92,7 +92,7 @@ index 0000000000..9ea255101b
 +        "and breaks profile_run under VLLM_QWEN4EXP_PP_INT8_HOP"
 +    )
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 2b9d73cafb..41fbb27d1b 100644
+index 559c7991c2..8640bea603 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -127,6 +127,7 @@ if TYPE_CHECKING:
@@ -103,7 +103,7 @@ index 2b9d73cafb..41fbb27d1b 100644
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1201,6 +1202,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1211,6 +1212,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_SAFETENSORS_DROP_CACHE": lambda: (
          os.getenv("VLLM_SAFETENSORS_DROP_CACHE", "0").lower() in ("1", "true")
      ),

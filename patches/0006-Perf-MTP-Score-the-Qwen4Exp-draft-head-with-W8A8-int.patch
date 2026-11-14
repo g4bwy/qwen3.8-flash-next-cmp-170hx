@@ -1,4 +1,4 @@
-From 5a752806394d41a402bd6c04a5416ec0eb8f0dae Mon Sep 17 00:00:00 2001
+From b419fc0145f47f80855bdff40048733f1d3163e2 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 23:52:14 +0200
 Subject: [PATCH 6/8] [Perf][MTP] Score the Qwen4Exp draft head with W8A8 int8
@@ -34,7 +34,7 @@ replace.
  3 files changed, 70 insertions(+)
 
 diff --git a/tests/models/qwen4_exp/test_ple.py b/tests/models/qwen4_exp/test_ple.py
-index dba85334e3..0c9bf34a7d 100644
+index 8dcc5d033e..740f08ef1d 100644
 --- a/tests/models/qwen4_exp/test_ple.py
 +++ b/tests/models/qwen4_exp/test_ple.py
 @@ -7,6 +7,7 @@ from dataclasses import dataclass
@@ -74,7 +74,7 @@ index dba85334e3..0c9bf34a7d 100644
 +    assert seen == [(torch.float32, False), (torch.bfloat16, True)]
 +    assert not hasattr(fp32_layer, "_draft_w8a8")
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 41fbb27d1b..f38d291b63 100644
+index 8640bea603..f9b6fcaf8d 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -128,6 +128,7 @@ if TYPE_CHECKING:
@@ -85,7 +85,7 @@ index 41fbb27d1b..f38d291b63 100644
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1205,6 +1206,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1215,6 +1216,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_PP_INT8_HOP": lambda: (
          os.getenv("VLLM_QWEN4EXP_PP_INT8_HOP", "0").lower() in ("1", "true")
      ),
@@ -101,7 +101,7 @@ index 41fbb27d1b..f38d291b63 100644
      "VLLM_HTTP_TIMEOUT_KEEP_ALIVE": lambda: int(
          os.environ.get("VLLM_HTTP_TIMEOUT_KEEP_ALIVE", "5")
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index ab5dc2a203..ce45f88197 100644
+index 1c58acdf64..7190f2c19f 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -21,6 +21,7 @@ import torch
@@ -111,8 +111,8 @@ index ab5dc2a203..ce45f88197 100644
 +from vllm import _custom_ops as ops
  from vllm import envs
  from vllm.config import VllmConfig, replace, set_current_vllm_config
- from vllm.distributed import get_pp_group
-@@ -31,6 +32,7 @@ from vllm.model_executor.layers.linear import ColumnParallelLinear
+ from vllm.forward_context import get_forward_context, is_forward_context_available
+@@ -30,6 +31,7 @@ from vllm.model_executor.layers.linear import ColumnParallelLinear
  from vllm.model_executor.layers.logits_processor import LogitsProcessor
  from vllm.model_executor.layers.vocab_parallel_embedding import (
      ParallelLMHead,
@@ -120,7 +120,7 @@ index ab5dc2a203..ce45f88197 100644
      VocabParallelEmbedding,
  )
  from vllm.model_executor.model_loader.utils import configure_quant_config
-@@ -98,6 +100,37 @@ def _remap_quantized_layers(
+@@ -96,6 +98,37 @@ def _remap_quantized_layers(
  logger = init_logger(__name__)
  
  
@@ -158,16 +158,16 @@ index ab5dc2a203..ce45f88197 100644
  def expand_draft_logits(
      sub_logits: torch.Tensor, draft_vocab_ids: torch.Tensor, vocab_size: int
  ) -> torch.Tensor:
-@@ -490,6 +523,9 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
-                     prefix=maybe_prefix(prefix, "draft_lm_head"),
-                 )
-                 self.draft_logits_processor = LogitsProcessor(int(ids.numel()))
-+                if envs.VLLM_QWEN4EXP_DRAFT_W8A8:
-+                    self.draft_lm_head.quant_method = Qwen4ExpDraftW8A8EmbeddingMethod()
-+                    logger.info("MTP draft head scores as W8A8 int8 via CUTLASS")
-                 # Full head stays resident: mixed prefill windows draft
-                 # eagerly and score the whole vocabulary there, while
-                 # graphed decode rounds replay the small head.
+@@ -471,6 +504,9 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+                 prefix=maybe_prefix(prefix, "draft_lm_head"),
+             )
+             self.draft_logits_processor = LogitsProcessor(int(ids.numel()))
++            if envs.VLLM_QWEN4EXP_DRAFT_W8A8:
++                self.draft_lm_head.quant_method = Qwen4ExpDraftW8A8EmbeddingMethod()
++                logger.info("MTP draft head scores as W8A8 int8 via CUTLASS")
+             logger.info(
+                 "MTP drafter scores a %d-token draft vocabulary",
+                 int(ids.numel()),
 -- 
 2.55.0
 

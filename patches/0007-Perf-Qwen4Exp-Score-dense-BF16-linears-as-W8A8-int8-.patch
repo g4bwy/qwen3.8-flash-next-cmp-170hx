@@ -1,4 +1,4 @@
-From f7ff2134bd510337fbdcffa57c1d46644bbf80b9 Mon Sep 17 00:00:00 2001
+From a0667e98519f4db3882cee2bb29d8261f86a696a Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 10:09:31 +0200
 Subject: [PATCH 7/8] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8 on
@@ -342,7 +342,7 @@ index 0000000000..42ee27b2e5
 +        method.apply(_linear(n=n, k=k), x)
 +        assert calls == [("bf16", 2, 1024)]
 diff --git a/vllm/envs.py b/vllm/envs.py
-index f38d291b63..4b816786fe 100644
+index f9b6fcaf8d..79ba54ea34 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -129,6 +129,7 @@ if TYPE_CHECKING:
@@ -353,7 +353,7 @@ index f38d291b63..4b816786fe 100644
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1214,6 +1215,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1224,6 +1225,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_DRAFT_W8A8": lambda: (
          os.getenv("VLLM_QWEN4EXP_DRAFT_W8A8", "0").lower() in ("1", "true")
      ),
@@ -557,10 +557,10 @@ index c4ecab937a..e429b3f536 100644
              # Precompile the fused HC down+SiLU kernels for every CUDA-graph
              # capture size in the fused dispatch range, so no CuTe-DSL JIT
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index ce45f88197..55b4a85fa5 100644
+index 7190f2c19f..7884f717cb 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
-@@ -56,6 +56,7 @@ from vllm.models.common.ops.sequence_parallel import (
+@@ -54,6 +54,7 @@ from vllm.models.common.ops.sequence_parallel import (
  from vllm.sequence import IntermediateTensors
  
  from ..common.hyperconnection import is_hc_sequence_parallel_enabled
@@ -568,7 +568,7 @@ index ce45f88197..55b4a85fa5 100644
  from .hyperconnection import GatedResidual, HyperConnectionConfig
  from .low_latency_gemm import enable_qwen4_exp_low_latency_gemm
  from .model import (
-@@ -558,6 +559,7 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+@@ -530,6 +531,7 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
          )
          self.set_moe_parameters(self.model.layers)
          enable_qwen4_exp_low_latency_gemm(self, vllm_config.model_config.dtype)

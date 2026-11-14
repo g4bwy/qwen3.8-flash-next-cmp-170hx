@@ -5132,3 +5132,80 @@ our salt law; bridge runs cover comparability); their CUDA-microbench
 traps section (correct, absorbed as knowledge; we publish no device
 microbenchmarks). Conflicts logged, none blocking. Bridge run queued in
 TODO (needs a ~20 min quiet window; not cert-gating).
+
+### Series rebased onto e72e9cb18; cu132 era begins (2026-11-14)
+
+Base e72e9cb18 (11-14, wheel dev498; banner dev506 after reinstall), +342
+commits from 4e3463c874. Tree cc820822fb1d5ac10bbca3c0640f6d5d09a0d68a,
+branch qwen38-pp-e72e9cb18 tip 802e5bacd8, wts wt-rebase-1114/
+wt-pristine-1114. 8 patches, none absorbed (pickaxe-verified). CPU:
+branch 352/0 fail, pristine 304/0, delta = our tests; ruff/docstring-hook/
+imports clean; replay 8/8 plain am, tree exact; range-diff all 8 equal.
+
+Wheel scheme (verified at base setup.py): probed path
+https://wheels.vllm.ai/<sha40>/cu132/vllm/metadata.json ; 3996083d37
+(#55387, 11-10) moved the default CUDA build 13.0->13.2 - nightly/cu130
+is FROZEN at dev156 (= our previous base, which is why it looked like a
+3-day stall); per-commit builds never stopped, they just publish cu132
+only from that day; no root fallback (setup.py raises by design);
+auto-detect keys on CUDA MAJOR, so a cu130-driver-labeled box still
+selects cu132; explicit VLLM_PRECOMPILED_WHEEL_VARIANT=cu132 is the
+rule. Driver floor unchanged (CUDA 13 = R580+); owner confirmed 13.2
+support. sm80 arch list unchanged; zero CUDA kernel changes in csrc/
+across 342 commits.
+
+Conflicts: two, both in qwen4_exp/nvidia/mtp.py, both from 663daccfb9
+(#66063 drafts-as-single-pipeline-stage): our draft-vocab patch's rank
+gate dropped (now provably redundant, speculative.py forces PP=1 for the
+draft config) and its duplicated full-lm_head build removed (upstream
+builds it unconditionally). One test fixup: patch 1's
+test_qwen4_exp_mtp_drafts_on_last_pipeline_rank mocked get_pp_group,
+deleted by #66063; rewritten to assert the same embedding-from-input-ids
+contract unconditionally (folded via autosquash; the one edit outside a
+conflict hunk). Owner-decision noted: #66063 arguably absorbs part of
+patch 1's contract coverage; we keep the guard, it is one test.
+
+BOOT WATCH dev506 - three band-breaking candidates, all metric-side or
+new-interaction, do not panic-cert on:
+(1) 157e42a762 REDEFINES the acceptance counters: num_draft_tokens now
+includes grammar-invalidated + adaptive-skipped drafts; new
+vllm:spec_decode_num_verified_tokens* metrics exist. accept_window reads
+the OLD ratio off /metrics and we run qwen3_xml tool parsing: the
+4.995-5.000 band may shift DOWN with nothing wrong. If it moves, do NOT
+re-baseline blindly: cross-check (accepted)/(verified_draft) using the
+new counters first, then update the band definition and possibly the
+tool (accept_window could switch numerators/denominators - one-line
+edit, decide after first reading).
+(2) 3f4fbd6fc9 sends UNPADDED rows between stages (fewer wire bytes,
+hop-friendly) but persistent-buffer padded rows go stale: needles +
+deep accept_window are the pairing check for hidden_states/hidden_scale
+staleness. If a deep cell misbehaves only with hop armed, this is the
+prime suspect.
+(3) 1e88e384a2 (#67093) exact intermediate-tensor match on BOTH
+transports now hard-fails half-armed pipelines before our own guard -
+redundant insurance, keep. auto->NCCL gating byte-identical (verified).
+(4) weight-load re-verify per digest: b543fffe69 (stacked mapper rules
+now applied LAST) + f745eec5e2 (real padding_size on
+MergedColumnParallelLinear, touches our HC paths): diff loaded-shard/
+PLE-mapping lines vs logs/smoke-dev164/boot.log; strict missing-shard
+reporting on if available. Pool may shift from 43c1db8c9f (KV spec API
+rewrite, get_kv_cache_config) + e9281bd939 (hybrid padded-page math):
+record, do not compare to old bands until one boot of data.
+(5) Usual: needles 7/7, hop claim/guard, grid 23+[1..8], vocab 49508
+claim, LPT 2048, cold median-of-3 (sust 200+; c07d58dc82 per-request
+draft-copy events + 449576cd73 GC freeze may move rates UP - new era,
+new anchors).
+
+Digest one-liners beyond the above: Rust FE tool-use CI gaps shrank to
+mistral-only (38483263f4) - Python FE stands but Rust is converging;
+VLLM_STRICT_QUANT_SCHEME (9f2aee118e) would REFUSE patches 6-8 combos
+(Marlin reports activation None) - never set it while testing W8A8 arms;
+a858aa3164 online per-channel FP8 lm_head = upstream alternative worth a
+lab look for patch 6; ce72586f8a dataclass slots=True - our stamping
+lands on method instances, unaffected (chain applied clean);
+VLLM_PRECOMPILED_WHEEL_COMMIT semantics unchanged (still skips the
+20-commit walk); draft-vocab upstream program #67220/#67222/#67223 still
+all open - patch 2 stays ours; givisok went 80 GiB host RAM / 48 GiB PLE
+fully resident (eviction dips gone over there - cheap idea for our
+pinned-PLE lane someday; #67401 compiled-rotary non-unit-stride bug
+open (rope-adjacent watch).

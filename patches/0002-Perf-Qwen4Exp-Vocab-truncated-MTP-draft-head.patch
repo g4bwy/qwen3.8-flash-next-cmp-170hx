@@ -1,4 +1,4 @@
-From c8647472c4e23ef7561d65377e448b1d07bf1360 Mon Sep 17 00:00:00 2001
+From 3830adb0bb9720e1a0dc8225837b738f15f3750f Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
 Subject: [PATCH 2/8] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
@@ -29,10 +29,10 @@ Mechanism and the coverage lesson (a generic list covering 92% costs
 syv-ai/HyperQwen's qwen3_5-mtp-draft-vocab patch, adapted to the
 qwen4_exp MTP module. Opt out by deleting the two files.
 ---
- .../models/qwen4_exp/test_mtp_draft_vocab.py  | 29 +++++++
- vllm/models/qwen4_exp/nvidia/mtp.py           | 78 ++++++++++++++++++-
+ .../models/qwen4_exp/test_mtp_draft_vocab.py  | 29 ++++++++
+ vllm/models/qwen4_exp/nvidia/mtp.py           | 69 +++++++++++++++++++
  .../target_dependent_ar/speculator.py         |  7 ++
- 3 files changed, 113 insertions(+), 1 deletion(-)
+ 3 files changed, 105 insertions(+)
  create mode 100644 tests/models/qwen4_exp/test_mtp_draft_vocab.py
 
 diff --git a/tests/models/qwen4_exp/test_mtp_draft_vocab.py b/tests/models/qwen4_exp/test_mtp_draft_vocab.py
@@ -71,7 +71,7 @@ index 0000000000..dddb7c8f81
 +    assert _remap_mtp_weight_name("mtp.draft_lm_head.weight") == "draft_lm_head.weight"
 +    assert _remap_mtp_weight_name("mtp.shared_head.head.weight") == "lm_head.weight"
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index 45e5763115..ab5dc2a203 100644
+index e83771e434..1c58acdf64 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -13,6 +13,7 @@ The MTP draft model reuses the Qwen4Exp backbone (PLE/HC/MoE) but:
@@ -82,15 +82,15 @@ index 45e5763115..ab5dc2a203 100644
  from collections.abc import Iterable
  
  import regex as re
-@@ -24,6 +25,7 @@ from vllm import envs
+@@ -23,6 +24,7 @@ from transformers import Qwen4ExpTextConfig
+ from vllm import envs
  from vllm.config import VllmConfig, replace, set_current_vllm_config
- from vllm.distributed import get_pp_group
  from vllm.forward_context import get_forward_context, is_forward_context_available
 +from vllm.logger import init_logger
  from vllm.model_executor.layers.layernorm import GemmaRMSNorm
  from vllm.model_executor.layers.linear import ColumnParallelLinear
  from vllm.model_executor.layers.logits_processor import LogitsProcessor
-@@ -93,6 +95,23 @@ def _remap_quantized_layers(
+@@ -91,6 +93,23 @@ def _remap_quantized_layers(
      }
  
  
@@ -114,7 +114,7 @@ index 45e5763115..ab5dc2a203 100644
  def _remap_mtp_weight_name(name: str) -> str | None:
      """Map Qwen4Exp checkpoint paths into the standalone draft model."""
      for checkpoint_prefix in (
-@@ -107,6 +126,8 @@ def _remap_mtp_weight_name(name: str) -> str | None:
+@@ -105,6 +124,8 @@ def _remap_mtp_weight_name(name: str) -> str | None:
          name = f"model.{name}"
      if name.startswith("model.mtp."):
          name = name.removeprefix("model.")
@@ -123,57 +123,47 @@ index 45e5763115..ab5dc2a203 100644
      if name.startswith("mtp.shared_head.head."):
          return name.replace("mtp.shared_head.head.", "lm_head.", 1)
      if name.startswith("model.shared_head.head."):
-@@ -443,8 +464,48 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+@@ -425,6 +446,39 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
              prefix=maybe_prefix(prefix, "mtp"),
          )
  
 +        self.draft_lm_head = None
 +        self.draft_logits_processor = None
 +        self.full_head_window = False
-         if get_pp_group().is_last_rank:
--            if config.tie_word_embeddings:
-+            draft_ids_path = os.path.join(
-+                str(vllm_config.model_config.model), "mtp_draft_vocab_ids.pt"
++        draft_ids_path = os.path.join(
++            str(vllm_config.model_config.model), "mtp_draft_vocab_ids.pt"
++        )
++        if os.path.exists(draft_ids_path):
++            # Vocab-truncated draft head: score only the ids the model
++            # actually produces instead of the full-vocabulary lm_head
++            # once per draft step (build_draft_vocab.py writes both
++            # artifacts). Verification still runs the target head, so
++            # output quality is unchanged; only proposal coverage can
++            # shift acceptance.
++            ids = torch.load(draft_ids_path, map_location="cpu").to(torch.long)
++            if torch.cuda.is_available():
++                # register_buffer ignores the loader device context, and a
++                # CPU->GPU copy is illegal inside CUDA graph capture.
++                ids = ids.to(torch.device(f"cuda:{torch.cuda.current_device()}"))
++            self.register_buffer("draft_vocab_ids", ids, persistent=False)
++            self.draft_lm_head = ParallelLMHead(
++                int(ids.numel()),
++                config.hidden_size,
++                prefix=maybe_prefix(prefix, "draft_lm_head"),
 +            )
-+            if os.path.exists(draft_ids_path):
-+                # Vocab-truncated draft head: score only the ids the model
-+                # actually produces instead of the full-vocabulary lm_head
-+                # once per draft step (build_draft_vocab.py writes both
-+                # artifacts). Verification still runs the target head, so
-+                # output quality is unchanged; only proposal coverage can
-+                # shift acceptance.
-+                ids = torch.load(draft_ids_path, map_location="cpu").to(torch.long)
-+                if torch.cuda.is_available():
-+                    # register_buffer ignores the loader device context, and a
-+                    # CPU->GPU copy is illegal inside CUDA graph capture.
-+                    ids = ids.to(torch.device(f"cuda:{torch.cuda.current_device()}"))
-+                self.register_buffer("draft_vocab_ids", ids, persistent=False)
-+                self.draft_lm_head = ParallelLMHead(
-+                    int(ids.numel()),
-+                    config.hidden_size,
-+                    prefix=maybe_prefix(prefix, "draft_lm_head"),
-+                )
-+                self.draft_logits_processor = LogitsProcessor(int(ids.numel()))
-+                # Full head stays resident: mixed prefill windows draft
-+                # eagerly and score the whole vocabulary there, while
-+                # graphed decode rounds replay the small head.
-+                if config.tie_word_embeddings:
-+                    self.lm_head = self.model.embed_tokens
-+                else:
-+                    self.lm_head = ParallelLMHead(
-+                        config.vocab_size,
-+                        config.hidden_size,
-+                        prefix=maybe_prefix(prefix, "lm_head"),
-+                    )
-+                logger.info(
-+                    "MTP drafter scores a %d-token draft vocabulary",
-+                    int(ids.numel()),
-+                )
-+            elif config.tie_word_embeddings:
-                 self.lm_head = self.model.embed_tokens
-             else:
-                 self.lm_head = ParallelLMHead(
-@@ -486,11 +547,26 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
++            self.draft_logits_processor = LogitsProcessor(int(ids.numel()))
++            logger.info(
++                "MTP drafter scores a %d-token draft vocabulary",
++                int(ids.numel()),
++            )
++
++        # The full head stays resident either way: mixed prefill windows draft
++        # eagerly and score the whole vocabulary there, while graphed decode
++        # rounds replay the small head.
+         if config.tie_word_embeddings:
+             self.lm_head = self.model.embed_tokens
+         else:
+@@ -465,11 +519,26 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
      def compute_logits(
          self, hidden_states: torch.Tensor, spec_step_idx: int = 0
      ) -> torch.Tensor | None:

@@ -1,4 +1,4 @@
-From 344e1f274775ab1b03bab643f26fd4710f3811dd Mon Sep 17 00:00:00 2001
+From 802e5bacd8fc96259af76cfe4946a2991430bbb0 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 23:44:56 +0200
 Subject: [PATCH 8/8] [Perf][Qwen4Exp] Let the dense W8A8 arm serve decode
@@ -155,7 +155,7 @@ index 42ee27b2e5..a58c294dce 100644
 +    assert type(layer.quant_method) is UnquantizedLinearMethod
 +    assert not hasattr(layer.quant_method, "_qwen4exp_dense_w8a8_min_m")
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 4b816786fe..2f3bdeb199 100644
+index 79ba54ea34..003f743234 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -130,6 +130,7 @@ if TYPE_CHECKING:
@@ -166,7 +166,7 @@ index 4b816786fe..2f3bdeb199 100644
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1223,6 +1224,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1233,6 +1234,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_DENSE_W8A8": lambda: (
          os.getenv("VLLM_QWEN4EXP_DENSE_W8A8", "0").lower() in ("1", "true")
      ),

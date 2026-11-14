@@ -30,14 +30,14 @@ prefill measured on this box; that setting awaits its cert battery.
   TTFT and 7.7 % of prefill rate, and buys 4.3 % more KV pool that the
   five-resident cell showed does not convert. The old +6 % and +20 % pair mixed
   depth with quantization, at the same depth the 2026-10-12 edge was +2 to +6 %.
-- Base commit: `4e3463c87493ebd2c5d5fbe4be6469911e23e2bf` (vllm-project/vllm main, 2026-11-10; newest main with a published cu130 wheel, `0.34.0rc1.dev156+g4e3463c87`).
+- Base commit: `e72e9cb18b4253e2c5d5fbe4be6469911e23e2bf` (vllm-project/vllm main, 2026-11-14; newest main with a published cu130 wheel, `0.34.0rc1.dev498+ge72e9cb18`).
 - 8 patches, all ours. The adopted rope fix retired here: #58094 merged upstream 2026-11-09 (083fbac021) with companion #63432, and the base contains both; old patches 3-9 renumbered 2-8.
   #59958 merged upstream a native `disk_offload` PLE file-serving option that
   replaces this series' former patches 7-8 (host_file_gather port + mmap
   backend); the mmap row-read speedup can be re-homed onto it if the file
   path is ever revived. After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `d9280af4c4affcc9f7f4078f74c5d06c806e753a`. If it does not, you applied
+  `cc820822fb1d5ac10bbca3c0640f6d5d09a0d68a`. If it does not, you applied
   something else or onto something else.
 - The base pins `humming-kernels[cu13]` to 0.1.19 (0.1.12 fails the
   `vllm/utils/humming.py` imports). The editable precompiled install
@@ -53,13 +53,13 @@ prefill measured on this box; that setting awaits its cert battery.
 ```bash
 git clone https://github.com/vllm-project/vllm
 cd vllm
-git checkout 4e3463c87493ebd2c5d5fbe4be6469911e23e2bf
+git checkout e72e9cb18b4253e2c5d5fbe4be6469911e23e2bf
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # d9280af4c4affcc9f7f4078f74c5d06c806e753a
+git rev-parse 'HEAD^{tree}'   # cc820822fb1d5ac10bbca3c0640f6d5d09a0d68a
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
-4e3463c87493ebd2c5d5fbe4be6469911e23e2bf`), then re-run the `git am`.
+e72e9cb18b4253e2c5d5fbe4be6469911e23e2bf`), then re-run the `git am`.
 
 ## Build
 
@@ -68,7 +68,9 @@ Python 3.12, `uv` on PATH ([install](https://docs.astral.sh/uv/)).
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=4e3463c87493ebd2c5d5fbe4be6469911e23e2bf \
+VLLM_USE_PRECOMPILED=1 \
+VLLM_PRECOMPILED_WHEEL_COMMIT=e72e9cb18b4253e2c36dedb48d644c0627baffeb \
+VLLM_PRECOMPILED_WHEEL_VARIANT=cu132 \
   uv pip install -e . --torch-backend=auto
 ```
 
@@ -80,10 +82,11 @@ that commit must satisfy two rules:
    `https://wheels.vllm.ai/<sha>/cu130/vllm/metadata.json` and stops on 404.
    Wheel CI lags main by hours, so walk down from the tip and take the newest
    commit that answers 200. The wheel for this base:
-   `0.34.0rc1.dev156+g4e3463c87`, cp38-abi3, x86_64 and aarch64. Match the
+   `0.34.0rc1.dev498+ge72e9cb18`, cp38-abi3, x86_64 and aarch64. Match the
    `+g<sha>` tail to your base. Ignore the leading number, which only tracks
    upstream packaging.
-2. Pass that 40-hex sha in `VLLM_PRECOMPILED_WHEEL_COMMIT`. Without it, a
+- Since 2026-11-10 (upstream 3996083d37, #55387) the default CUDA variant moved cu130 -> cu132: per-commit wheels >= that day publish only {variant}/ paths for cu132, nightly/cu130 is FROZEN at dev156 forever, and setup.py has no root-variant fallback. Set VLLM_PRECOMPILED_WHEEL_VARIANT explicitly. In wheel FILE urls encode the + as %2B.
+ 2. Pass that 40-hex sha in `VLLM_PRECOMPILED_WHEEL_COMMIT`. Without it, a
    detached checkout falls back to the moving `nightly` alias, and the compiled
    code comes from a commit you did not choose.
 
