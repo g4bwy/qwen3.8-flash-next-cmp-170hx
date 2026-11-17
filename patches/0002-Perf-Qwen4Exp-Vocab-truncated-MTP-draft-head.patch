@@ -1,4 +1,4 @@
-From 3830adb0bb9720e1a0dc8225837b738f15f3750f Mon Sep 17 00:00:00 2001
+From 2c81ccb0d82850abda44ab0c9db3efe188ce313f Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
 Subject: [PATCH 2/8] [Perf][Qwen4Exp] Vocab-truncated MTP draft head
@@ -71,7 +71,7 @@ index 0000000000..dddb7c8f81
 +    assert _remap_mtp_weight_name("mtp.draft_lm_head.weight") == "draft_lm_head.weight"
 +    assert _remap_mtp_weight_name("mtp.shared_head.head.weight") == "lm_head.weight"
 diff --git a/vllm/models/qwen4_exp/nvidia/mtp.py b/vllm/models/qwen4_exp/nvidia/mtp.py
-index e83771e434..1c58acdf64 100644
+index 6c5026b0ae..e7b78202b1 100644
 --- a/vllm/models/qwen4_exp/nvidia/mtp.py
 +++ b/vllm/models/qwen4_exp/nvidia/mtp.py
 @@ -13,6 +13,7 @@ The MTP draft model reuses the Qwen4Exp backbone (PLE/HC/MoE) but:
@@ -82,15 +82,15 @@ index e83771e434..1c58acdf64 100644
  from collections.abc import Iterable
  
  import regex as re
-@@ -23,6 +24,7 @@ from transformers import Qwen4ExpTextConfig
- from vllm import envs
+@@ -24,6 +25,7 @@ from vllm import envs
  from vllm.config import VllmConfig, replace, set_current_vllm_config
  from vllm.forward_context import get_forward_context, is_forward_context_available
+ from vllm.kernels.triton.fused_pre_fc_norms import fused_pre_fc_norms_split
 +from vllm.logger import init_logger
  from vllm.model_executor.layers.layernorm import GemmaRMSNorm
  from vllm.model_executor.layers.linear import ColumnParallelLinear
  from vllm.model_executor.layers.logits_processor import LogitsProcessor
-@@ -91,6 +93,23 @@ def _remap_quantized_layers(
+@@ -92,6 +94,23 @@ def _remap_quantized_layers(
      }
  
  
@@ -114,7 +114,7 @@ index e83771e434..1c58acdf64 100644
  def _remap_mtp_weight_name(name: str) -> str | None:
      """Map Qwen4Exp checkpoint paths into the standalone draft model."""
      for checkpoint_prefix in (
-@@ -105,6 +124,8 @@ def _remap_mtp_weight_name(name: str) -> str | None:
+@@ -106,6 +125,8 @@ def _remap_mtp_weight_name(name: str) -> str | None:
          name = f"model.{name}"
      if name.startswith("model.mtp."):
          name = name.removeprefix("model.")
@@ -123,7 +123,7 @@ index e83771e434..1c58acdf64 100644
      if name.startswith("mtp.shared_head.head."):
          return name.replace("mtp.shared_head.head.", "lm_head.", 1)
      if name.startswith("model.shared_head.head."):
-@@ -425,6 +446,39 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+@@ -431,6 +452,39 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
              prefix=maybe_prefix(prefix, "mtp"),
          )
  
@@ -163,7 +163,7 @@ index e83771e434..1c58acdf64 100644
          if config.tie_word_embeddings:
              self.lm_head = self.model.embed_tokens
          else:
-@@ -465,11 +519,26 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
+@@ -471,11 +525,26 @@ class Qwen4ExpMTP(nn.Module, SupportsHCSP, SupportsPP, Qwen4ExpMixtureOfExperts)
      def compute_logits(
          self, hidden_states: torch.Tensor, spec_step_idx: int = 0
      ) -> torch.Tensor | None:

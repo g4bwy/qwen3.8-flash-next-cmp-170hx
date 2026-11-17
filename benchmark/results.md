@@ -5243,3 +5243,72 @@ over-cap draw on these unlocked mining cards is either sensor scaling
 or an ignored cap - unknown, logged; telemetry stays a REPORTED
 statistic, not a gate, until understood.
 Logs: logs/smoke-dev506/.
+
+### Series rebased onto db8e4658ed; the range itself touches MTP numerics (2026-11-17)
+
+Base db8e4658ed (11-17 18:45, wheel dev732 cu132; expected banner dev740),
++234 commits from e72e9cb18. Branch qwen38-pp-db8e4658ed tip 31fde59966,
+tree 3bd820467754e101098bedc5e7ce5a0608b1b917, wts wt-rebase-1117 /
+wt-pristine-1114 kept / wt-pristine-1117. 8 patches, none absorbed
+(pickaxe: no fadvise, no VLLM_QWEN4EXP_*, no expand_draft_logits upstream;
+the whole #67220 draft-vocab program is STILL unmerged - patch 2 stays
+ours). CPU: branch 355/0 fail, pristine 307/0 (upstream suites grew +3 -
+old totals obsolete), delta = our 48 tests, 0 upstream tests lost; replay
+8/8 plain am tree-exact; range-diff 6 '=' + 2 explained.
+
+One conflict (mtp.py import block, fused-norms helper vs our logger
+import, kept both) and one real breakage fixed inside patch 1:
+b733542059 (Fuse MTP drafter pre-FC Gemma RMSNorms, UNGATED, no config
+switch) rewrote Qwen4ExpMTP.forward to call fused_pre_fc_norms_split,
+which made patch 1's nn.Identity() norm stubs go RED. Rewritten stubs:
+SimpleNamespace(weight=ones, variance_epsilon) + monkeypatched fused
+launch that still asserts the shape contract (21 added lines, the ONLY
+content divergence vs the old chain; chain otherwise byte-identical).
+
+THEME: apply-clean is not certify-clean this cycle. b733542059 shifts
+draft hidden states at last-bit level -> acceptance bands AND the int8
+hop's hidden_scale calibration need fresh measurement on this base.
+d92a765211 made the copy-engine probe collective AND ALLOCATES IPC MEMORY
+BEFORE DECLINING: on a patched 170HX driver 'auto' can now reach copy
+engines and silently bypass the hop's economics with no error anywhere.
+NEW HARD BOOT GATE: log must contain literally 'PP transport: NCCL'; any
+'copy engines' reading => pin VLLM_PP_TRANSPORT=nccl before comparing
+anything to bands. 7a558a7865 dropped output.zero_() from the QSA sparse
+path (fp8-KV poisoned-buffer test passes upstream, NOT arch-gated):
+unwritten sm80 rows would now surface NaN - needles + one
+test_qsa_reference run on hardware when the box is free. 2440ffc387
+(block-size negotiation returns shared backend preference) + 732bafd23f
+(dummy-run request count) can move resolved block size and pool: compare
+1616 / 5,340,298 in the boot log, record, re-anchor if shifted.
+
+Checklist all pass otherwise: capture-grid code byte-identical (hand-
+aligned multiples of 5 still REQUIRED, auto-rounding still deleted);
+draft-vocab four sites live (expand_draft_logits :100, artifact build
+:459-473, compute_logits intercept :532-536, tokenizer inherit byte-
+identical); hop class-method delegation intact + hidden_scale rides the
+now-proven key-generic relay (pp_positions precedent); 5 env anchors
+paired; rope clamp path untouched in range; LPT sites untouched; no
+further acceptance-counter redefinition after 157e42a762; single_pp_stage
+machinery unchanged; indexer_tp_shard_min_rows zero refs; BaseSpeculator
+add_request/shutdown signature change not overridden by our chain.
+
+Watch/adjacent: humming-kernels 0.1.20 rides this base (#68007 nvcc-skew
+fix, relevant, we run --moe-backend humming); transformers cap -> <5.24;
+cvcuda optional extra appeared; v0.34.0 RELEASED in range (96b0d1466d).
+Extensible-KV: still zero sm80/Ampere decode reports in 234 commits -
+issue draft lane verified empty a third time. DFlash #66387 reopened in
+substance on the v0.34.0 image (TP>1 flavor, not ours). #67401 compiled
+rotary stride bug + fix #67422 still open. givisok: PLE fully
+page-cache-resident at 48 GiB on 64 GiB hot pool (no rate claim) +
+GA100 fuse-scan claims 80 GiB/110-112 SM unlocks (hardware claim, owner
+domain). New issues to keep eyes on: #68209 (extensible OFF + MRV2 graph
+profiling = 1 block/request, OOM - our lane, does not bind at 8 seqs),
+#67763 (cross-worker flag disagreement deadlock - single-node, n/a).
+
+BOOT WATCH dev740 (order): (1) 'PP transport: NCCL' literal gate;
+(2) needles 7/7 + optional qsa-reference GPU test; (3) hop claim 1 /
+guard 0; (4) resolved block size + pool vs 1616/5,340,298; (5) grids
+23+[1..8], vocab 49508, LPT 2048; (6) FRESH banding: window + cold
+median-of-3 + n7, treat prior bands as hypotheses (fused-norms shift),
+re-fit hidden_scale judgement accordingly; (7) telemetry rows (power
+draw sensor question still open).
