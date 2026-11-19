@@ -185,7 +185,7 @@ on. Both defaults suit other models, not this one.
 
 The interval defaults to `0`, which keeps almost nothing. A
 growing session then re-prefills most of its history each turn. The serve
-script sets 16,160, a multiple of the MTP-4 block. The grid below ran on
+script sets 12,928, a multiple of the 6,464 scheduler LCM. The grid below ran on
 16,000 with the MTP-3 block of 1,600, before the match unit existed, sending
 a 120,000-token prompt and then the same prompt plus two characters on the
 4-card 1M lane:
@@ -354,8 +354,9 @@ reading any two rows as a comparison.
   silicon. The step anatomy (results.md, 2026-10-13) puts 66% of step time in
   GEMM traffic at the measured 580-790 GB/s solo band and the rest in
   per-layer state machinery and glue. The visible NCCL time is structural PP
-  bubble that only concurrency reclaims. What remains: batch residency (2-3
-  full streams fit at 1M), fewer bytes, or a different checkpoint.
+  bubble that only concurrency reclaims. What remains: batch residency (four
+  full streams fit at 1M on the dev740 pool, 4,858,695 = 4.86x), fewer bytes,
+  or a different checkpoint.
 - MTP acceptance: 4.75-4.9 mean length at MTP-4 on pinned salt, 3.7-4.0 at
   MTP-3, stable to full 1M depth. Acceptance that decays with depth means
   patch 2 is missing. Cell-to-cell scatter on rotating prompts is the content
