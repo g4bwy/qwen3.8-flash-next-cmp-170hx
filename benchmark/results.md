@@ -5312,3 +5312,29 @@ guard 0; (4) resolved block size + pool vs 1616/5,340,298; (5) grids
 median-of-3 + n7, treat prior bands as hypotheses (fused-norms shift),
 re-fit hidden_scale judgement accordingly; (7) telemetry rows (power
 draw sensor question still open).
+
+### dev740 boot fail #1: scheduler LCM doubled under us (2026-11-19)
+
+db8e4658ed boot died in engine-core init, single validator: retention
+16160 not a multiple of scheduler_block_size 6464 (log
+boot-4x-1m-db8e4658e.log). Root cause: 2440ffc387 changed block-size
+negotiation to take a UNANIMOUS backend kernel-block preference; our
+group set (QSA + GDN-align + full-attn + draft) now resolves
+(6464,6464,6464,6464,8,6464) vs (3232,...,8,...) on dev506; scheduler
+LCM = 3232 -> 6464; 16160 was 5x3232 = 10x1616, 2.5x6464 - rejected.
+Fix: retention 12928 = 2x6464 = 8x1616 (multiple of cache block
+preserved; tighter than 16160, so worst-case boundary-resume replay
+LOSS improves 16160->12928; cost 25% more retained mamba snapshots,
+small tensors). Chosen over 19392 (3x6464) which would coarsen the
+worst case against the original design intent. NOT pinned the block
+size back to 3232: the shared preference is upstream's direction and
+reverting needs a platform patch; block-size geometry doubling is now
+a CERT VARIABLE - pool token capacity expected unchanged (bytes scale
+with block), but num_gpu_blocks in block units halves and hit
+granularity/prefetch economics may shift: boot-watch adds
+'kv cache group sizes (6464,...)' line capture + pool re-anchor +
+prefix-hit sanity in needles. This was the predicted 2440ffc387 risk
+item #4 of the 11-17 cycle - boot watch earned its keep.
+Next boot = attempt 2 on dev740; if init passes, full v2.1 cert with
+bands as hypotheses (fused-norms numerics + block doubling both
+unmeasured on this geometry).

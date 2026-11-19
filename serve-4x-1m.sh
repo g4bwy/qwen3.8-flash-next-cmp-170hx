@@ -214,7 +214,7 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --moe-backend humming \
     --enable-prefix-caching \
     --mamba-cache-mode align \
-    --prefix-cache-retention-interval 16160 \
+    --prefix-cache-retention-interval 12928 \
     --block-size 1616 \
     --prefix-match-unit 16 \
     --kv-cache-dtype fp8 \

@@ -126,7 +126,8 @@ The script sets:
   `--engram-config '{"cpu_offload": true, "disk_offload": true}'` (#59958);
   the series' own gather pair was retired for it on 2026-11-02.
 - Prefix caching with `--mamba-cache-mode align`,
-  `--prefix-cache-retention-interval 16160` and `--prefix-match-unit 16`.
+  `--prefix-cache-retention-interval 12928` and `--prefix-match-unit 16`
+  (re-anchored 11-19: scheduler LCM 6464 since db8e4658ed).
   MTP-4 forces a 1616 scheduler block (1600 + 16 per extra draft row) and the
   retention interval is a multiple of it. The match unit drops the hit floor
   from 1,600 to 32 tokens. See Prefix caching.
