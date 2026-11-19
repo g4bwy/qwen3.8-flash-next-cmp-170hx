@@ -5387,3 +5387,38 @@ median sust >=200/acc >=4.6 unchanged, pool 4,858,695, n7 in-rate
 ~14.0k new anchor, match statistic as usual). Telemetry stable: links
 Gen2 x4 all cells, draw 320-353 W peaks vs 200 W nominal cap (sensor
 question still open, reported not gated). Logs: logs/smoke-dev740/.
+
+### Series rebased onto bc93224f7c; zero conflicts; the 6464 mystery deepens (2026-11-19)
+
+Base bc93224f7c (11-19 20:49, wheel dev970 cu132), +238 commits, banner
+dev978. Branch qwen38-pp-bc93224f7c tip 2a4df0065c, tree
+2d633df8f2905b3de4de6001ffa65d588cc4cac0, wts wt-rebase-1119/
+wt-pristine-1119. Conflicts ZERO; all 8 patch-ids stable-identical to
+the db8 chain (pure index/@@ drift); CPU branch 358P/0F vs pristine
+310P/0F, delta = our 48; ruff clean under BOTH venv 0.14.0 and the
+base's new 0.17.2 pin; docstring hook 0; replay 8/8 exact, range-diff
+all '='. Absorption pickaxe: still nothing.
+STEP-5 evidence: extensible_kv_cache.py BYTE-IDENTICAL between bases
+(re-test pool plan proceeds on unchanged code); retention validator +
+LCM sites unchanged; pp_transport zero diff (gate strings stand);
+732bafd23f dummy-run site untouched; new capture-grid platform knobs
+(cf2e8d036a) = explicit max_prefill_cudagraph_capture_tokens /
+max_decode_cudagraph_capture_requests/tokens available config-side,
+cheapest lever for the pool mission.
+MYSTERY: NO backend in our stack overrides get_preferred_block_size
+(QSA/indexer/GDN inherit base default; flash_attn's 64 is SM90+fp8+
+head512 only). So the 3232->6464 group doubling is NOT a unanimous
+preference - it is computed in kernel-block resolution (MultipleOf(16)
+resolved against page/pool arithmetic; 5e921de215 rewired
+_largest_exact_kernel_block_size with indexer_specs this very range;
+b067b6f6fa shows the 6464-class index-pool pattern upstream). Pin
+mission re-targeted: mechanism-first lab (evidence from the
+5bde00bb19 backend log + a CPU resolution trace), then fix the
+RESOLUTION, not a preference.
+Watch for the boot: b209d984d8 (FLA GDN rounding reorder) +
+6bc4849aa4 (fused_qk_norm_rope int32/partial-rotary fix, our QSA file
+calls it) + 6cd35edf3a (SM80 topk_softmax redux.sync tie-breaks) are
+bit-movers: window/match/acceptance are hypotheses again; re-anchor,
+do not compare blind. Packaging note: [Do Not Merge] flash-attn CI pin
+d9162cc8fc live at tip - only matters for source builds, precompiled
+install unaffected directly.

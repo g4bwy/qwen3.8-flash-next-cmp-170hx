@@ -1,4 +1,4 @@
-From 36f2b0fdbb84dac890e03c64f0a7ba496ffabea5 Mon Sep 17 00:00:00 2001
+From 8b82562b0b8998a36645c2a8029e5925ebfeaa1b Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 23:52:14 +0200
 Subject: [PATCH 6/8] [Perf][MTP] Score the Qwen4Exp draft head with W8A8 int8
@@ -34,7 +34,7 @@ replace.
  3 files changed, 70 insertions(+)
 
 diff --git a/tests/models/qwen4_exp/test_ple.py b/tests/models/qwen4_exp/test_ple.py
-index 8dcc5d033e..740f08ef1d 100644
+index df359ec4be..163fce2d72 100644
 --- a/tests/models/qwen4_exp/test_ple.py
 +++ b/tests/models/qwen4_exp/test_ple.py
 @@ -7,6 +7,7 @@ from dataclasses import dataclass
@@ -45,7 +45,7 @@ index 8dcc5d033e..740f08ef1d 100644
  
  import pytest
  import torch
-@@ -2832,3 +2833,27 @@ def test_amd_ngram_embedding_matches_reference_under_compile(
+@@ -2839,3 +2840,27 @@ def test_amd_ngram_embedding_matches_reference_under_compile(
      )
      expected = loaded_weight[ngram_ids.cpu()].flatten(-2).to(device)
      torch.testing.assert_close(output.float(), expected.float(), rtol=0, atol=0)
@@ -74,10 +74,10 @@ index 8dcc5d033e..740f08ef1d 100644
 +    assert seen == [(torch.float32, False), (torch.bfloat16, True)]
 +    assert not hasattr(fp32_layer, "_draft_w8a8")
 diff --git a/vllm/envs.py b/vllm/envs.py
-index ec8ae6b736..5b0b4aca64 100644
+index 40cd48fd34..da911c198b 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -128,6 +128,7 @@ if TYPE_CHECKING:
+@@ -129,6 +129,7 @@ if TYPE_CHECKING:
      VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
      VLLM_SAFETENSORS_DROP_CACHE: bool = False
      VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
@@ -85,7 +85,7 @@ index ec8ae6b736..5b0b4aca64 100644
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1218,6 +1219,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1220,6 +1221,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_PP_INT8_HOP": lambda: (
          os.getenv("VLLM_QWEN4EXP_PP_INT8_HOP", "0").lower() in ("1", "true")
      ),

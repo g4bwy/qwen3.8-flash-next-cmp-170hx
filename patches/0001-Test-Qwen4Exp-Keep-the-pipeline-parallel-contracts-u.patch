@@ -1,4 +1,4 @@
-From 3ab458f352b2e9eeb452f6b72929cbee2d3991b6 Mon Sep 17 00:00:00 2001
+From 4c0cf3e158f048f037d9d0095df823501f599ac6 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Tue, 27 Oct 2026 10:37:50 +0100
 Subject: [PATCH 1/8] [Test][Qwen4Exp] Keep the pipeline-parallel contracts
