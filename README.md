@@ -30,7 +30,7 @@ prefill measured on this box; that setting awaits its cert battery.
   TTFT and 7.7 % of prefill rate, and buys 4.3 % more KV pool that the
   five-resident cell showed does not convert. The old +6 % and +20 % pair mixed
   depth with quantization, at the same depth the 2026-10-12 edge was +2 to +6 %.
-- Base commit: `bc93224f7c03e629c67cb2ac97baf16d9f18f478` (vllm-project/vllm main, 2026-11-19; newest main with a published cu130 wheel, `0.34.0rc1.dev970+gbc93224f7`).
+- Base commit: `bc93224f7c03e629c67cb2ac97baf16d9f18f478` (vllm-project/vllm main, 2026-11-19; newest main with a published cu132 wheel, `0.34.0rc1.dev970+gbc93224f7`).
 - 8 patches, all ours. The adopted rope fix retired here: #58094 merged upstream 2026-11-09 (083fbac021) with companion #63432, and the base contains both; old patches 3-9 renumbered 2-8.
   #59958 merged upstream a native `disk_offload` PLE file-serving option that
   replaces this series' former patches 7-8 (host_file_gather port + mmap
@@ -79,12 +79,14 @@ needs no rebuild. A new base does, because the wheel is pinned to a commit, and
 that commit must satisfy two rules:
 
 1. The base must have a published wheel. The install fetches
-   `https://wheels.vllm.ai/<sha>/cu130/vllm/metadata.json` and stops on 404.
+   `https://wheels.vllm.ai/<sha>/cu132/vllm/metadata.json` and stops on 404.
    Wheel CI lags main by hours, so walk down from the tip and take the newest
    commit that answers 200. The wheel for this base:
    `0.34.0rc1.dev970+gbc93224f7`, cp38-abi3, x86_64 and aarch64. Match the
    `+g<sha>` tail to your base. Ignore the leading number, which only tracks
-   upstream packaging.
+   upstream packaging. Commits before 2026-11-10 have only cu130 and later
+   ones only cu132, there is no root-variant fallback, and the variant
+   segment must match the era. In wheel file URLs encode the + as %2B.
 - Since 2026-11-10 (upstream 3996083d37, #55387) the default CUDA variant moved cu130 -> cu132: per-commit wheels >= that day publish only {variant}/ paths for cu132, nightly/cu130 is FROZEN at dev156 forever, and setup.py has no root-variant fallback. Set VLLM_PRECOMPILED_WHEEL_VARIANT explicitly. In wheel FILE urls encode the + as %2B.
  2. Pass that 40-hex sha in `VLLM_PRECOMPILED_WHEEL_COMMIT`. Without it, a
    detached checkout falls back to the moving `nightly` alias, and the compiled
@@ -92,7 +94,7 @@ that commit must satisfy two rules:
 
 The boot banner proves neither, because the install writes `vllm/_version.py`
 from your local tree. To see which wheel supplied the `.so` files, read the
-install line `Using precompiled wheel commit <sha> with variant cu130`, or look
+install line `Using precompiled wheel commit <sha> with variant cu132`, or look
 in the cache:
 
 ```bash
