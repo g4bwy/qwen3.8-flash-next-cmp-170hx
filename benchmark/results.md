@@ -5338,3 +5338,52 @@ item #4 of the 11-17 cycle - boot watch earned its keep.
 Next boot = attempt 2 on dev740; if init passes, full v2.1 cert with
 bands as hypotheses (fused-norms numerics + block doubling both
 unmeasured on this geometry).
+
+### dev740 certified; two bands re-anchored, one capacity lost (2026-11-19)
+
+Attempt 2 boot dev740+g4763c991d (db8e4658ed + 8, retention 12928 live).
+HARD GATE PASS: "PP transport: NCCL" literal, groups (6464x5, 8), hop
+claim 1 / guard 0, vocab 49508, LPT 2048, grids 23 + [1..8], 0 errors.
+
+RAW vs CERT:
+- Needles: 9/9 + shallow pass, zero NaN anywhere (the 7a558a7865
+  zero_-removal risk did not materialize on sm80 at 6464 geometry).
+- Cold median-of-3 (173100/173200/173300): sust 206.9 (206.90/208.18/
+  204.28), acc 4.817 (4.82/4.72/4.84), MATCH 100 on all three - the
+  fused-MTP-norms shift (b733542059) did NOT degrade novel-content
+  acceptance; dev506 median was 204/4.66, this is equal-or-better.
+- WINDOW RE-ANCHOR: MEAN 4.943 (4.909/5.000/4.920), drafts 187 vs the
+  historic 183-184. After ~15 boots at 4.995-5.000 this is a real band
+  move, attributed to b733542059 last-bit draft-norm differences
+  flipping saturated near-ties (cold acc unchanged confirms: novel
+  content is dominated by real mismatches, not near-ties). NEW BAND:
+  window >= 4.90; accept_window trial lines with drafts ~187 are normal
+  now. Do not hunt the lost 0.05.
+- n7 (salt 167101): in-rate 14,014 = best deep-prefill rate this lane
+  has recorded (hop ON + LPT + 6464 blocks), sust 783, TTFT 265/310,
+  match 78 = lottery, preempts 0. Hop + transport + geometry stack
+  verified end-to-end.
+- CAPACITY LOSS (accepted): pool 4,858,695 = 4.86x, down 9.0% from
+  5,340,298. Cause per boot log: CUDA-graph memory profiling now
+  charges the pool (per-rank hints 21.81-26.62 GiB; Available KV
+  22.06 GiB), driven by 732bafd23f dummy-run count + 6464 block tails
+  + capture growth. Consequence: five 1M residents no longer fit;
+  lane capacity is FOUR full-context + partial. Reclaim path exists
+  (explicit --kv-cache-memory per the log's own hint) - NOT taken:
+  the util knob is tuned for capture-era OOM margin; trading safety
+  margin for a fractional 5th resident is not worth a re-cert.
+  README operational row updated to 4.86x.
+- GROWN-TURN GRID COST (documented, not fought): appended turns resume
+  on the 6464 scheduler-block grid - three shallow probes at ~64.4k all
+  reused exactly 58176 (=9x6464), recomputing 6230-6244 tokens where
+  the 3232 grid averaged ~1600. Mean extra per appended turn ~3.2k
+  tokens ~0.25 s at 13.3k/s; worst case 6463 tokens. Accepted as the
+  price of taking upstream's kernel-block preference; if it ever
+  stings, the fix is a platform patch pinning the negotiation back to
+  3232, which also restores retention 16160 eligibility.
+
+CERT: dev740 PASSES v2.1 with re-anchored bands (window >=4.90, cold
+median sust >=200/acc >=4.6 unchanged, pool 4,858,695, n7 in-rate
+~14.0k new anchor, match statistic as usual). Telemetry stable: links
+Gen2 x4 all cells, draw 320-353 W peaks vs 200 W nominal cap (sensor
+question still open, reported not gated). Logs: logs/smoke-dev740/.
