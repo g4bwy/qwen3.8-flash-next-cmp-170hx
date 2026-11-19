@@ -133,8 +133,12 @@ The script sets:
   (re-anchored 11-19: scheduler LCM 6464 since db8e4658ed).
   The scheduler block is the LCM of the KV-group kernel block sizes (6464
   since base db8e4658ed, 3232 on earlier bases), and the retention interval
-  must be a multiple of it. The match unit drops the hit floor from 1,600 to
-  32 tokens. See Prefix caching.
+  must be a multiple of it. The 6464 comes from the GDN prefill checkpoint
+  grid that #65186 (29c6cfc457) gave the Triton GDN path. That grid is
+  LCM'd with the mamba page floor (3232) in align mode with the block size
+  pinned. It is not the 2440ffc387 backend-preference negotiation. That
+  phase does not run when `--block-size` is set. The match unit drops the
+  hit floor from 1,600 to 32 tokens. See Prefix caching.
 - NCCL IB off (single node, no fabric). NCCL P2P stays off: peer DMA cost 2
   to 3% of prefill with decode unchanged, so the shipped path is host-staged.
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, which stops allocator-OOM
@@ -307,7 +311,7 @@ reading any two rows as a comparison.
 | same tree, `--kv-cache-dtype auto`, same salts, reference only | 76.3-76.4 s | 12.9k | 212-215, win avg 198-205 | not run, pool 2.58M caps it at 2-3 of 4 |
 | fp8 KV, `--max-num-batched-tokens 9728`, same build, same salts, 2026-10-26 | 62.6-62.9 s | 15.8k | 209-212, win avg 199-201 | not run |
 | same budget, `--kv-cache-dtype auto`, same salts | 63.9-64.1 s | 15.4k | 212-219, win avg 204-207 | not run |
-| = SHIP (live since 2026-11-19): dev740 certified: base db8e4658ed, 8 patches, Python frontend, 9728, retention 12928 on the 6464 scheduler grid, pinned PLE, arms off, estimator + util 0.9453 (extensible OFF: VMM mapping cost ~10% decode), lattice default-on | 69.6-69.9 s, 3 cold cells | 13.3k cold, 14.0k n7 in-rate (best deep-prefill this lane has recorded, new anchor) | cold sust median 206.9 (204-208), acc 4.817, MATCH 100 x3 | 100/4 not measured on this boot; n7 @660k: sust 783, TTFT 265/310 s, match 78, preempts 0; pool 4,858,695 (4.86x, four full 1M residents + partial); accept-window >=4.90 (re-anchored 11-19: fused MTP norms shift near-ties; historic band was 4.995-5.000; mean 4.943, drafts ~187) |
+| = SHIP (live since 2026-11-19): dev740 certified: base db8e4658ed, 8 patches, Python frontend, 9728, retention 12928 on the 6464 scheduler grid (the 6464 is the GDN prefill checkpoint grid of #65186/29c6cfc457 LCM'd over the mamba page floor in align mode with `--block-size` pinned, not the 2440ffc387 block-preference negotiation, which never runs with `--block-size`), pinned PLE, arms off, estimator + util 0.9453 (extensible OFF: VMM mapping cost ~10% decode), lattice default-on | 69.6-69.9 s, 3 cold cells | 13.3k cold, 14.0k n7 in-rate (best deep-prefill this lane has recorded, new anchor) | cold sust median 206.9 (204-208), acc 4.817, MATCH 100 x3 | 100/4 not measured on this boot; n7 @660k: sust 783, TTFT 265/310 s, match 78, preempts 0; pool 4,858,695 (4.86x, four full 1M residents + partial); accept-window >=4.90 (re-anchored 11-19: fused MTP norms shift near-ties; historic band was 4.995-5.000; mean 4.943, drafts ~187) |
 | same budget, lab int8 per-token-head KV, same salts | 65.5-65.8 s | 15.1k | 212 sust in clean cells, see dips note | not run |
 
 - The sustained figure is a 1.5 s peak that typically lands in the wind-down

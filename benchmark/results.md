@@ -5422,3 +5422,57 @@ bit-movers: window/match/acceptance are hypotheses again; re-anchor,
 do not compare blind. Packaging note: [Do Not Merge] flash-attn CI pin
 d9162cc8fc live at tip - only matters for source builds, precompiled
 install unaffected directly.
+
+### Grown-turn mechanism solved; pin built; the real culprit was #65186 (2026-11-19)
+
+Mechanism (CPU-reproducible, evidence wt-rebase-1119 + probe matrix):
+with --block-size pinned, update_block_size_for_backend SKIPS the
+preference phase (cache_config.user_specified_block_size gate,
+interface.py:800) - so 2440ffc387, blamed in the 11-19 diagnosis and in
+earlier entries, is NOT our doubling's cause (its phase never runs for
+us). The value comes from _align_hybrid_block_size: mamba page floor
+gives 2x1616=3232 (fp8 halves bytes/token), then LCM with the GDN
+prefill checkpoint GRID: None/16/32 -> 3232; 64 -> 6464; 128 -> 12928.
+The grid 64 = FLA_CHUNK_SIZE assigned to the TRITON/FLA GDN prefill by
+29c6cfc457 (#65186, 11-17, INSIDE the e72->db8 range that first showed
+6464). The 11-17 digest NAMED it and marked it neutral because the
+default mamba_cache_mode is 'none' - OUR LANE RUNS ALIGN since October.
+LESSON (protocol): a flag's risk class is defined by OUR serve flags,
+never by upstream defaults; 'only live in align mode' was a live-flag
+for us on sight.
+
+Pin: lab/block-pin-3232 commit a9b0bf30c6, export
+experiments/0011-block-size-pin-3232.patch (reverse-apply verified).
+Design: new Platform hook get_mamba_checkpoint_grid (interface.py:969),
+routed through by get_mamba_prefill_checkpoint_alignment (abstract.py
+:157,159) so block math and layer capability AGREE: declined grid ->
+QwenGatedDeltaNetAttention._exports_checkpoints False -> manager grid
+None -> block stays 3232 -> scheduler resumes prefill splitting =
+pre-#65186 state = the dev506 behavior whose grown probes reused to
+prompt-16/33 tokens. Opt-in env VLLM_MAMBA_CHECKPOINT_BLOCK_PIN=1,
+default OFF (a first version keyed on user_specified_block_size alone
+and broke two upstream tests that assert the grid SHOULD win when the
+size is small - the env preserves upstream behavior for everyone else).
+Untouched: 8-token indexer ring (sized by compress_ratio+spec rows,
+qsa_indexer.py:854-863), capture grids, retention legality
+(lcm(3232,8)=3232; 12928=4x3232 stays legal), exact-match PP validation.
+No HiSparse/offload dependency on 6464 (verified).
+Tests: tests/models/qwen4_exp/test_kv_block_size_pin.py, 12 tests
+(page-floor, grid-honored vs pinned, policy table, ring/retention
+legality). Suite counts: 416->428 pass, 196 skip, 0 fail on the wider
+15-file CPU list; removing the pin flips exactly one test. 5
+pre-existing CPU failures in excluded GPU files identical with/without.
+ruff/format/docstring clean.
+
+TRADE TO WATCH at the A/B boot: the pin declines #65186's feature
+(GDN checkpoint export on the Triton path). What that feature buys is
+mid-prompt-resume granularity during huge PREFILLs; what it costs us is
+the 2x block geometry and ~2x grown-turn recompute. The cert A/B:
+boot A = dev978 chain, no pin; boot B = same boot + am 0011 +
+VLLM_MAMBA_CHECKPOINT_BLOCK_PIN=1. Judge: shallow + deep grown probes
+(reuse depth), cold median-of-3 bands (window >=4.90 hypothesis,
+sust >=200), TTFT (prefill-split resume may move), pool (3232 pages
+vs 6464 tails). If B wins the lane, 0011 promotes to series patch 9
+and retention discussion reopens (16160 = 5x3232 legal again).
+Attribution fixes: README:133/:310 corrected to name 29c6cfc457 +
+align-mode interaction, not the negotiation commit.
