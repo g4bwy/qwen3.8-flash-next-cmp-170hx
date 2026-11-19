@@ -128,9 +128,10 @@ The script sets:
 - Prefix caching with `--mamba-cache-mode align`,
   `--prefix-cache-retention-interval 12928` and `--prefix-match-unit 16`
   (re-anchored 11-19: scheduler LCM 6464 since db8e4658ed).
-  MTP-4 forces a 1616 scheduler block (1600 + 16 per extra draft row) and the
-  retention interval is a multiple of it. The match unit drops the hit floor
-  from 1,600 to 32 tokens. See Prefix caching.
+  The scheduler block is the LCM of the KV-group kernel block sizes (6464
+  since base db8e4658ed, 3232 on earlier bases), and the retention interval
+  must be a multiple of it. The match unit drops the hit floor from 1,600 to
+  32 tokens. See Prefix caching.
 - NCCL IB off (single node, no fabric). NCCL P2P stays off: peer DMA cost 2
   to 3% of prefill with decode unchanged, so the shipped path is host-staged.
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, which stops allocator-OOM
