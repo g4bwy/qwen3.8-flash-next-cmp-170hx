@@ -1,0 +1,553 @@
+From a9b0bf30c600fdec14d5d36ced81e132e91de5fe Mon Sep 17 00:00:00 2001
+From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
+Date: Thu, 19 Nov 2026 23:44:56 +0100
+Subject: [PATCH] [Bugfix][KV Cache] Decline a Mamba checkpoint grid that grows
+ the block
+
+Serving geometry PP=4 TP=1 sm80, qwen4_exp, fp8 KV, --block-size 1616,
+--mamba-cache-mode align, --prefix-match-unit 16, MTP-4 resolved its KV
+groups to (3232, 3232, 3232, 3232, 8, 3232) on bases up to e72e9cb18 and
+to (6464, ...) from db8e4658ed on. The doubling is computed, not
+preferred. Phase 1 of Platform.update_block_size_for_backend (the code
+2440ffc387 changed, which the bisect blamed) never runs for this geometry:
+an explicit --block-size sets user_specified_block_size and skips it.
+
+Two inputs inside Platform._align_hybrid_block_size decide the number.
+
+1. Page floor. A one-byte fp8 KV page holds half the bytes per token of
+   the bf16 page 1616 was sized against, so the block rounds up to the
+   Mamba state page: 1616 * ceil(mamba_page / (1616 * attn_page)) = 3232.
+   That is where 3232 comes from: twice the pinned block, a multiple of
+   the QSA kernel's MultipleOf(16) (models/qwen4_exp/nvidia/qsa.py) and of
+   the 8-token QSA indexer ring, round_up(compress_ratio 4 + 4 speculative
+   rows, 4) (models/qwen4_exp/common/qsa_indexer.py). The group LCM stays
+   3232, so a retention interval of 12928 tokens is a whole number of
+   scheduler steps.
+2. Checkpoint grid. 29c6cfc457 gave the Triton/FLA GDN prefill a prefill
+   checkpoint alignment of FLA_CHUNK_SIZE = 64, where previously only the
+   FlashInfer prefill declared one, and the same function LCMs that grid
+   into the block: lcm(1616, 64) = 6464. The grid has to divide the block,
+   otherwise a block boundary sits off the stride the kernel emits states
+   on and an exported state cannot be resumed from.
+
+CPU reproduction of that function (real Qwen4Exp model class, real QSA
+backend, stub Mamba layer): grid None -> 3232, 64 -> 6464, 128 -> 12928.
+The resolved block tracks lcm(pinned block, grid), which also covers the
+1616 -> 3232 -> 6464 history across bases.
+
+6464 costs the lane: retention and the grown-turn grid coarsen 2x, and
+prefill chunk ends stop landing on the block (9728 gives 9696-row chunks,
+a multiple of 3232 and not of 6464). The grid is an optimization, so make
+it declineable.
+
+Add Platform.get_mamba_checkpoint_grid, the single place where the
+platform decides whether the layers' grid may grow the KV block, and route
+get_mamba_prefill_checkpoint_alignment through it. With
+VLLM_MAMBA_CHECKPOINT_BLOCK_PIN=1 the platform declines a grid the block is
+not on. The layers read the same function, so they stop exporting internal
+checkpoints, the scheduler resumes splitting prefills as it did before
+29c6cfc457, and the block stays at the page floor. Off by default, which
+leaves every other configuration untouched, including the upstream tests
+that guard the grid. A platform wanting a different policy overrides the
+method.
+
+CPU suites (tests/models/qwen4_exp, tests/v1/core KV cache and mamba align,
+tests/v1/attention block size and backend selection, tests/models/step5):
+416 -> 428 passed, 196 skipped, 0 failed. The new
+tests/models/qwen4_exp/test_kv_block_size_pin.py covers the mechanism, the
+veto table, and the group and retention arithmetic.
+---
+ .../qwen4_exp/test_kv_block_size_pin.py       | 367 ++++++++++++++++++
+ vllm/envs.py                                  |   9 +
+ vllm/model_executor/layers/mamba/abstract.py  |  10 +-
+ vllm/platforms/interface.py                   |  43 ++
+ 4 files changed, 426 insertions(+), 3 deletions(-)
+ create mode 100644 tests/models/qwen4_exp/test_kv_block_size_pin.py
+
+diff --git a/tests/models/qwen4_exp/test_kv_block_size_pin.py b/tests/models/qwen4_exp/test_kv_block_size_pin.py
+new file mode 100644
+index 0000000000..259d5d2b41
+--- /dev/null
++++ b/tests/models/qwen4_exp/test_kv_block_size_pin.py
+@@ -0,0 +1,367 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Qwen4Exp keeps its KV block size on the grid the operator pinned.
++
++Serving Qwen4Exp with fp8 KV and `--block-size 1616` resolves the attention
++groups to 3232 tokens: the one-byte KV page needs twice the block to reach the
++Mamba state page (`Platform._align_hybrid_block_size`). Since 29c6cfc457 the
++Triton/FLA GDN prefill declares a 64-token prefill checkpoint grid, and the same
++function LCMs that grid into the block, which doubles the answer to 6464. The
++grid is an optimization, so with VLLM_MAMBA_CHECKPOINT_BLOCK_PIN=1
++`Platform.get_mamba_checkpoint_grid` declines a grid the block is not on: blocks
++stay at the page floor, and the scheduler takes Mamba checkpoints between
++prefills instead of inside them.
++"""
++
++from types import SimpleNamespace
++from unittest.mock import patch
++
++import pytest
++import torch
++from transformers import Qwen4ExpConfig, Qwen4ExpTextConfig
++
++from vllm.config import CacheConfig, set_current_vllm_config
++from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
++from vllm.model_executor.layers.mamba.abstract import (
++    MambaBase,
++    get_mamba_prefill_checkpoint_alignment,
++)
++from vllm.models.qwen4_exp.nvidia.model import Qwen4ExpForCausalLM
++from vllm.models.qwen4_exp.nvidia.qsa import Qwen4ExpQSABackend
++from vllm.platforms.interface import Platform
++from vllm.v1.attention.backends.registry import MambaAttentionBackendEnum
++from vllm.v1.core.kv_cache_utils import resolve_kv_cache_block_sizes
++from vllm.v1.core.single_type_kv_cache_manager import (
++    CircularBufferManager,
++    FullAttentionManager,
++)
++from vllm.v1.kv_cache_interface import (
++    AttentionSpec,
++    KVCacheConfig,
++    get_kv_quant_mode,
++)
++from vllm.v1.worker.utils import select_common_block_size
++
++from ...v1.core.utils import new_kv_cache_group, new_kv_cache_spec, new_mamba_layer
++
++pytestmark = pytest.mark.cpu_test
++
++# Serving geometry: fp8 KV, an explicit --block-size, Mamba align mode, and
++# prefix-cache hits on a 16-token unit.
++PINNED_BLOCK_SIZE = 1616
++# The block the Mamba page floor requires: twice the pinned size.
++MAMBA_PAGE_FLOOR = 2 * PINNED_BLOCK_SIZE
++# What the 64-token GDN checkpoint grid grows the block to when honored.
++GROWN_BY_CHECKPOINT_GRID = 4 * PINNED_BLOCK_SIZE
++# The Triton/FLA GDN prefill emits states every 64 tokens.
++GDN_CHECKPOINT_GRID = 64
++# The QSA indexer ring: compress_ratio 4 plus MTP-4 speculative rows.
++INDEXER_RING_BLOCK_SIZE = 8
++# Retention interval to keep legal: a multiple of the scheduler block size.
++RETENTION_INTERVAL = 4 * MAMBA_PAGE_FLOOR
++NUM_SPECULATIVE_TOKENS = 4
++HEAD_SIZE = 256
++NUM_KV_HEADS = 1
++
++
++def _text_config() -> Qwen4ExpTextConfig:
++    """Tiny Qwen4Exp text config whose GDN state page is 1.3x one fp8 block."""
++    return Qwen4ExpTextConfig(
++        vocab_size=64,
++        hidden_size=16,
++        intermediate_size=32,
++        num_hidden_layers=4,
++        num_attention_heads=2,
++        num_key_value_heads=NUM_KV_HEADS,
++        head_dim=HEAD_SIZE,
++        layer_types=[
++            "linear_attention",
++            "full_attention",
++            "linear_attention",
++            "full_attention",
++        ],
++        linear_num_key_heads=32,
++        linear_num_value_heads=32,
++        linear_key_head_dim=128,
++        linear_value_head_dim=128,
++        num_experts=4,
++        num_experts_per_tok=2,
++        eos_token_id=1,
++        hc_count=2,
++        hc_lowrank=4,
++        ple_layer_ids=[3],
++        mtp_num_hidden_layers=1,
++        mtp={"hybrid": True},
++    )
++
++
++class _GdnLayer(MambaBase):
++    """Mamba stand-in that reports the grid its prefill kernel emits states on."""
++
++    def __init__(self, checkpoint_grid: int | None) -> None:
++        self.checkpoint_grid = checkpoint_grid
++
++    def get_state_shape(self):
++        return ((1, 1),)
++
++    @property
++    def mamba_type(self) -> MambaAttentionBackendEnum:
++        return MambaAttentionBackendEnum.GDN_ATTN
++
++    def get_state_dtype(self):
++        return (torch.float32,)
++
++    def get_prefill_checkpoint_alignment(self) -> int | None:
++        return self.checkpoint_grid
++
++
++class _AttentionLayer(AttentionLayerBase):
++    """Non-SSM layer stand-in: only its backend choice is read."""
++
++    def get_attn_backend(self) -> type[Qwen4ExpQSABackend]:
++        return Qwen4ExpQSABackend
++
++    def get_kv_cache_config(self, vllm_config):
++        return FullAttentionManager.layer_config(
++            AttentionSpec(
++                block_size=vllm_config.cache_config.block_size,
++                num_kv_heads=NUM_KV_HEADS,
++                head_size=HEAD_SIZE,
++                dtype=torch.uint8,
++                kv_quant_mode=get_kv_quant_mode(vllm_config.cache_config.cache_dtype),
++            )
++        )
++
++
++class _DraftConfig:
++    """The MTP draft head, which shares the target's KV geometry."""
++
++    use_mla = False
++
++    def __init__(self, text_config) -> None:
++        self._text_config = text_config
++
++    def get_num_kv_heads(self, parallel_config) -> int:
++        return self._text_config.num_key_value_heads
++
++    def get_head_size(self) -> int:
++        return self._text_config.head_dim
++
++
++def _vllm_config(
++    checkpoint_grid: int | None,
++    block_size: int = PINNED_BLOCK_SIZE,
++):
++    """Config carrying the layer set the platform reads to size the block."""
++    text_config = _text_config()
++    hf_config = Qwen4ExpConfig(
++        architectures=["Qwen4ExpForCausalLM"], text_config=text_config
++    )
++    static_forward_context: dict = {
++        "layers.1.self_attn.attn": _AttentionLayer(),
++        "layers.3.self_attn.attn": _AttentionLayer(),
++        "layers.2.ple_short_conv": _GdnLayer(1),  # PLE conv checkpoints at 1
++    }
++    static_forward_context["layers.0.linear_attn"] = _GdnLayer(checkpoint_grid)
++    cache_config = CacheConfig(
++        block_size=block_size,
++        cache_dtype="fp8",
++        mamba_cache_mode="align",
++        prefix_match_unit=16,
++        enable_prefix_caching=True,
++    )
++    model_config = SimpleNamespace(
++        dtype=torch.bfloat16,
++        use_mla=False,
++        is_hybrid=True,
++        architecture="Qwen4ExpForCausalLM",
++        max_model_len=1_000_000,
++        hf_config=hf_config,
++        hf_text_config=text_config,
++        get_head_size=lambda: HEAD_SIZE,
++        get_num_kv_heads=lambda parallel_config: NUM_KV_HEADS,
++    )
++    return SimpleNamespace(
++        cache_config=cache_config,
++        model_config=model_config,
++        parallel_config=SimpleNamespace(
++            pipeline_parallel_size=4,
++            tensor_parallel_size=1,
++            decode_context_parallel_size=1,
++        ),
++        speculative_config=SimpleNamespace(
++            num_speculative_tokens=NUM_SPECULATIVE_TOKENS,
++            draft_model_config=_DraftConfig(text_config),
++            draft_parallel_config=None,
++        ),
++        kv_transfer_config=None,
++        compilation_config=SimpleNamespace(
++            static_forward_context=static_forward_context
++        ),
++        scheduler_config=SimpleNamespace(max_num_batched_tokens=9728, max_num_seqs=8),
++    )
++
++
++def _resolve_block_size(vllm_config, full_path: bool = False) -> int:
++    """Run the platform's block-size resolution for `vllm_config`.
++
++    `full_path` runs the whole phase (backend preferences included).
++    """
++    resolve = (
++        Platform.update_block_size_for_backend
++        if full_path
++        else Platform._align_hybrid_block_size
++    )
++    with (
++        set_current_vllm_config(vllm_config),
++        patch(
++            "vllm.model_executor.models.ModelRegistry.resolve_model_cls",
++            return_value=(Qwen4ExpForCausalLM, None),
++        ),
++    ):
++        if full_path:
++            resolve(vllm_config)
++        else:
++            resolve(vllm_config, Qwen4ExpQSABackend)
++    return vllm_config.cache_config.block_size
++
++
++def _pin(monkeypatch, enabled: bool) -> None:
++    monkeypatch.setenv("VLLM_MAMBA_CHECKPOINT_BLOCK_PIN", "1" if enabled else "0")
++
++
++def test_mamba_page_floor_needs_two_pinned_blocks():
++    """Without a checkpoint grid the block is the page floor, 3232 tokens."""
++    vllm_config = _vllm_config(checkpoint_grid=None)
++    assert _resolve_block_size(vllm_config) == MAMBA_PAGE_FLOOR
++
++
++def test_checkpoint_grid_doubles_the_block_when_honored(monkeypatch):
++    """The mechanism the pin suppresses: lcm(1616, 64) = 6464 grows the block."""
++    _pin(monkeypatch, enabled=False)
++    vllm_config = _vllm_config(checkpoint_grid=GDN_CHECKPOINT_GRID)
++    assert get_mamba_prefill_checkpoint_alignment(vllm_config) == GDN_CHECKPOINT_GRID, (
++        "without the pin the layers keep exporting internal checkpoints"
++    )
++    assert _resolve_block_size(vllm_config) == GROWN_BY_CHECKPOINT_GRID
++
++
++def test_pinned_block_size_keeps_the_page_floor(monkeypatch):
++    """The pin: a grid that misses the block size is declined, not paid for."""
++    _pin(monkeypatch, enabled=True)
++    vllm_config = _vllm_config(checkpoint_grid=GDN_CHECKPOINT_GRID)
++    assert _resolve_block_size(vllm_config, full_path=True) == MAMBA_PAGE_FLOOR
++    assert vllm_config.cache_config.mamba_block_size == MAMBA_PAGE_FLOOR
++    assert get_mamba_prefill_checkpoint_alignment(vllm_config) is None, (
++        "the layers must stop exporting checkpoints the blocks cannot hold"
++    )
++
++
++def test_grid_aligned_block_size_keeps_checkpoints(monkeypatch):
++    """A block size already on the grid loses nothing under the pin."""
++    _pin(monkeypatch, enabled=True)
++    vllm_config = _vllm_config(
++        checkpoint_grid=GDN_CHECKPOINT_GRID, block_size=GROWN_BY_CHECKPOINT_GRID
++    )
++    assert get_mamba_prefill_checkpoint_alignment(vllm_config) == GDN_CHECKPOINT_GRID
++    assert _resolve_block_size(vllm_config) == GROWN_BY_CHECKPOINT_GRID
++
++
++@pytest.mark.parametrize(
++    ("pin", "block_size", "layer_grid", "expected"),
++    [
++        pytest.param(True, PINNED_BLOCK_SIZE, GDN_CHECKPOINT_GRID, None, id="off-grid"),
++        pytest.param(
++            True, MAMBA_PAGE_FLOOR, GDN_CHECKPOINT_GRID, None, id="off-grid-2x"
++        ),
++        pytest.param(
++            True,
++            GROWN_BY_CHECKPOINT_GRID,
++            GDN_CHECKPOINT_GRID,
++            64,
++            id="on-grid",
++        ),
++        pytest.param(False, PINNED_BLOCK_SIZE, GDN_CHECKPOINT_GRID, 64, id="pin-off"),
++        pytest.param(True, PINNED_BLOCK_SIZE, None, None, id="no-checkpoints"),
++        pytest.param(True, PINNED_BLOCK_SIZE, 16, 16, id="grid-divides-block"),
++    ],
++)
++def test_checkpoint_grid_policy(pin, block_size, layer_grid, expected, monkeypatch):
++    """The veto fires only for a block size the grid misses, and only if pinned."""
++    _pin(monkeypatch, enabled=pin)
++    vllm_config = _vllm_config(checkpoint_grid=layer_grid, block_size=block_size)
++    assert Platform.get_mamba_checkpoint_grid(vllm_config, layer_grid) == expected, (
++        f"block_size={block_size}"
++    )
++
++
++def test_pinned_groups_keep_their_kernel_and_ring_block_sizes():
++    """Groups split to 3232 for kernels; the indexer ring group keeps 8."""
++    attention_spec = new_kv_cache_spec(
++        block_size=MAMBA_PAGE_FLOOR,
++        num_kv_heads=NUM_KV_HEADS,
++        head_size=HEAD_SIZE,
++        dtype=torch.uint8,
++    )
++    # The kernel block per attention group is the group block: fp8 1616-size
++    # pages are accepted unchanged by the MultipleOf(16) QSA kernel.
++    assert (
++        select_common_block_size(
++            MAMBA_PAGE_FLOOR, [Qwen4ExpQSABackend], [attention_spec]
++        )
++        == MAMBA_PAGE_FLOOR
++    )
++    # The ring holds the open group plus speculative rows, and asserts that the
++    # attention block size divides it.
++    assert MAMBA_PAGE_FLOOR % INDEXER_RING_BLOCK_SIZE == 0
++
++
++def test_pinned_group_sizes_keep_retention_legal():
++    """The scheduler block stays 3232, so 12928 of retention is a whole step."""
++    vllm_config = _vllm_config(checkpoint_grid=GDN_CHECKPOINT_GRID)
++    attention = new_kv_cache_spec(
++        block_size=MAMBA_PAGE_FLOOR,
++        num_kv_heads=NUM_KV_HEADS,
++        head_size=HEAD_SIZE,
++        dtype=torch.uint8,
++    )
++    align_mamba = new_mamba_layer(
++        mamba_cache_mode="align",
++        block_size=MAMBA_PAGE_FLOOR,
++        shapes=((1, 1),),
++        dtypes=(torch.float32,),
++    )
++    # The indexer ring: one block of capacity 8 per request, never prefix
++    # cached, so its narrow block size stays out of the hash-unit check.
++    ring = new_kv_cache_spec(
++        block_size=INDEXER_RING_BLOCK_SIZE,
++        num_kv_heads=1,
++        head_size=HEAD_SIZE,
++        dtype=torch.uint8,
++    )
++    ring_layer = CircularBufferManager.layer_config(ring)
++    groups = [
++        new_kv_cache_group([f"layers.{i}.self_attn.attn"], attention) for i in (1, 3)
++    ] + [
++        new_kv_cache_group(["layers.0.linear_attn"], align_mamba),
++        new_kv_cache_group(["layers.2.ple_short_conv"], align_mamba),
++        new_kv_cache_group(["layers.1.indexer.ring"], ring_layer),
++        new_kv_cache_group(["layers.1.indexer.compressed_keys"], attention),
++    ]
++    assert [g.block_size for g in groups] == [
++        3232,
++        3232,
++        3232,
++        3232,
++        INDEXER_RING_BLOCK_SIZE,
++        3232,
++    ]
++    kv_cache_config = KVCacheConfig(
++        num_blocks=1024, kv_cache_tensors=[], kv_cache_groups=groups
++    )
++    scheduler_block_size, hash_block_size = resolve_kv_cache_block_sizes(
++        kv_cache_config, vllm_config
++    )
++    assert scheduler_block_size == MAMBA_PAGE_FLOOR
++    assert hash_block_size == 16
++    assert RETENTION_INTERVAL % scheduler_block_size == 0
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 9b813cff09..39ab022562 100644
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -132,6 +132,7 @@ if TYPE_CHECKING:
+     VLLM_QWEN4EXP_DRAFT_W8A8: bool = False
+     VLLM_QWEN4EXP_DENSE_W8A8: bool = False
+     VLLM_QWEN4EXP_DENSE_W8A8_MIN_M: int = 512
++    VLLM_MAMBA_CHECKPOINT_BLOCK_PIN: bool = False
+     VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
+     VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
+     VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
+@@ -1223,6 +1224,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_QWEN4EXP_PP_INT8_HOP": lambda: (
+         os.getenv("VLLM_QWEN4EXP_PP_INT8_HOP", "0").lower() in ("1", "true")
+     ),
++    # Hold the KV block size the platform resolved from the KV and Mamba page
++    # sizes. A Mamba prefill checkpoint grid that does not divide that block is
++    # declined instead of LCM'd into it, which would grow the block (1616-class
++    # pages on a 64-token grid double 3232 to 6464). Checkpoints are then taken
++    # between prefills, as before the kernels exported them from inside one.
++    "VLLM_MAMBA_CHECKPOINT_BLOCK_PIN": lambda: (
++        os.getenv("VLLM_MAMBA_CHECKPOINT_BLOCK_PIN", "0").lower() in ("1", "true")
++    ),
+     # Score the vocab-truncated MTP draft head with W8A8 int8 (per-channel
+     # weights, dynamic per-token activations) through CUTLASS instead of the
+     # bf16 GEMV. Measured 1.39-1.67x on CMP 170HX at every decode batch;
+diff --git a/vllm/model_executor/layers/mamba/abstract.py b/vllm/model_executor/layers/mamba/abstract.py
+index 3d8e3478a1..9ff9d403d4 100644
+--- a/vllm/model_executor/layers/mamba/abstract.py
++++ b/vllm/model_executor/layers/mamba/abstract.py
+@@ -141,8 +141,12 @@ def get_mamba_prefill_checkpoint_alignment(vllm_config: VllmConfig) -> int | Non
+     """LCM of the Mamba layers' prefill checkpoint alignments.
+ 
+     None unless every Mamba layer declares one: the scheduler takes internal
+-    checkpoints only when every Mamba group can export them.
++    checkpoints only when every Mamba group can export them. The platform gets
++    the last word, because the same grid grows the KV block size when it does
++    not divide it (see Platform.get_mamba_checkpoint_grid).
+     """
++    from vllm.platforms import current_platform
++
+     alignment = 1
+     for layer in get_layers_from_vllm_config(
+         vllm_config,
+@@ -150,9 +154,9 @@ def get_mamba_prefill_checkpoint_alignment(vllm_config: VllmConfig) -> int | Non
+     ).values():
+         layer_alignment = layer.get_prefill_checkpoint_alignment()
+         if layer_alignment is None:
+-            return None
++            return current_platform.get_mamba_checkpoint_grid(vllm_config, None)
+         alignment = lcm(alignment, layer_alignment)
+-    return alignment
++    return current_platform.get_mamba_checkpoint_grid(vllm_config, alignment)
+ 
+ 
+ def get_mamba_prefill_checkpoint_grid(vllm_config: VllmConfig) -> int:
+diff --git a/vllm/platforms/interface.py b/vllm/platforms/interface.py
+index 3a165f1e4d..b373bb9333 100644
+--- a/vllm/platforms/interface.py
++++ b/vllm/platforms/interface.py
+@@ -965,6 +965,49 @@ class Platform:
+         if cache_config.mamba_page_size_padded is not None:
+             cache_config.mamba_page_size_padded = shared_page
+ 
++    @classmethod
++    def get_mamba_checkpoint_grid(
++        cls, vllm_config: "VllmConfig", layer_grid: int | None
++    ) -> int | None:
++        """Checkpoint grid the Mamba layers may impose on the KV block size.
++
++        The hybrid alignment LCMs this grid into the block size, so a grid that
++        does not divide the block grows the block. With
++        `VLLM_MAMBA_CHECKPOINT_BLOCK_PIN=1` the block keeps its page-driven
++        size and the grid is declined: returning None turns off internal
++        prefill checkpoints, so the scheduler resumes splitting prefills, as it
++        did before the layers exported them. Override this method to pick a
++        different policy for a platform.
++
++        Args:
++            vllm_config: Config being resolved; reads `cache_config`.
++            layer_grid: LCM of the Mamba layers' declared checkpoint alignments,
++                or None when a layer exports no checkpoints.
++
++        Returns:
++            The grid to align blocks to, or None for no internal checkpoints.
++
++        """
++        from vllm import envs
++
++        if layer_grid is None:
++            return None
++        cache_config = vllm_config.cache_config
++        pinned = envs.VLLM_MAMBA_CHECKPOINT_BLOCK_PIN
++        if pinned and cache_config.block_size % layer_grid:
++            logger.info_once(
++                "Keeping the KV block size %d off the Mamba prefill checkpoint "
++                "grid %d (VLLM_MAMBA_CHECKPOINT_BLOCK_PIN): checkpoints are "
++                "taken between prefills instead of inside them. Unset it, or "
++                "resolve a block size that divides %d, to export checkpoints "
++                "from inside a prefill.",
++                cache_config.block_size,
++                layer_grid,
++                layer_grid,
++            )
++            return None
++        return layer_grid
++
+     @classmethod
+     def _align_hybrid_block_size(
+         cls,
+-- 
+2.55.0
+

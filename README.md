@@ -31,13 +31,16 @@ prefill measured on this box; that setting awaits its cert battery.
   five-resident cell showed does not convert. The old +6 % and +20 % pair mixed
   depth with quantization, at the same depth the 2026-10-12 edge was +2 to +6 %.
 - Base commit: `bc93224f7c03e629c67cb2ac97baf16d9f18f478` (vllm-project/vllm main, 2026-11-19; newest main with a published cu132 wheel, `0.34.0rc1.dev970+gbc93224f7`).
-- 8 patches, all ours. The adopted rope fix retired here: #58094 merged upstream 2026-11-09 (083fbac021) with companion #63432, and the base contains both; old patches 3-9 renumbered 2-8.
+- 9 patches, all ours. The ninth is the mamba checkpoint-grid block pin
+  (`VLLM_MAMBA_CHECKPOINT_BLOCK_PIN=1`, default via serve): it declines
+  #65186's 64-token GDN grid so the scheduler LCM stays 3232 and grown
+  turns resume fine-grained. The adopted rope fix retired here: #58094 merged upstream 2026-11-09 (083fbac021) with companion #63432, and the base contains both; old patches 3-9 renumbered 2-8.
   #59958 merged upstream a native `disk_offload` PLE file-serving option that
   replaces this series' former patches 7-8 (host_file_gather port + mmap
   backend); the mmap row-read speedup can be re-homed onto it if the file
   path is ever revived. After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `2d633df8f2905b3de4de6001ffa65d588cc4cac0`. If it does not, you applied
+  `0ffcebbfcdaf52892bfe03a2dbe0d3c6820a35d8`. If it does not, you applied
   something else or onto something else.
 - The base pins `humming-kernels[cu13]` to 0.1.19 (0.1.12 fails the
   `vllm/utils/humming.py` imports). The editable precompiled install
@@ -55,7 +58,7 @@ git clone https://github.com/vllm-project/vllm
 cd vllm
 git checkout bc93224f7c03e629c67cb2ac97baf16d9f18f478
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # 2d633df8f2905b3de4de6001ffa65d588cc4cac0
+git rev-parse 'HEAD^{tree}'   # 0ffcebbfcdaf52892bfe03a2dbe0d3c6820a35d8
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
@@ -130,15 +133,18 @@ The script sets:
   the series' own gather pair was retired for it on 2026-11-02.
 - Prefix caching with `--mamba-cache-mode align`,
   `--prefix-cache-retention-interval 12928` and `--prefix-match-unit 16`
-  (re-anchored 11-19: scheduler LCM 6464 since db8e4658ed).
-  The scheduler block is the LCM of the KV-group kernel block sizes (6464
-  since base db8e4658ed, 3232 on earlier bases), and the retention interval
-  must be a multiple of it. The 6464 comes from the GDN prefill checkpoint
-  grid that #65186 (29c6cfc457) gave the Triton GDN path. That grid is
-  LCM'd with the mamba page floor (3232) in align mode with the block size
-  pinned. It is not the 2440ffc387 backend-preference negotiation. That
-  phase does not run when `--block-size` is set. The match unit drops the
-  hit floor from 1,600 to 32 tokens. See Prefix caching.
+  (re-anchored 11-19 for the 6464 grid; patch 9's pin restores 3232 from
+  11-20). The scheduler block is the LCM of the KV-group kernel block
+  sizes: with the pin armed (default) the scheduler block is 3232, without
+  it #65186's grid LCMs it to 6464 (6464 since base db8e4658ed, 3232 on
+  earlier bases), and the retention interval must be a multiple of it.
+  Retention stays 12928, legal on both grids. The 6464 comes from the GDN
+  prefill checkpoint grid that #65186 (29c6cfc457) gave the Triton GDN
+  path. That grid is LCM'd with the mamba page floor (3232) in align mode
+  with the block size pinned; the pin declines it. It is not the
+  2440ffc387 backend-preference negotiation. That phase does not run when
+  `--block-size` is set. The match unit drops the hit floor from 1,600 to
+  32 tokens. See Prefix caching.
 - NCCL IB off (single node, no fabric). NCCL P2P stays off: peer DMA cost 2
   to 3% of prefill with decode unchanged, so the shipped path is host-staged.
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, which stops allocator-OOM
@@ -191,7 +197,8 @@ on. Both defaults suit other models, not this one.
 
 The interval defaults to `0`, which keeps almost nothing. A
 growing session then re-prefills most of its history each turn. The serve
-script sets 12,928, a multiple of the 6,464 scheduler LCM. The grid below ran on
+script sets 12,928, a multiple of the scheduler LCM (3,232 with the pin
+armed, 6,464 without). The grid below ran on
 16,000 with the MTP-3 block of 1,600, before the match unit existed, sending
 a 120,000-token prompt and then the same prompt plus two characters on the
 4-card 1M lane:
@@ -311,7 +318,7 @@ reading any two rows as a comparison.
 | same tree, `--kv-cache-dtype auto`, same salts, reference only | 76.3-76.4 s | 12.9k | 212-215, win avg 198-205 | not run, pool 2.58M caps it at 2-3 of 4 |
 | fp8 KV, `--max-num-batched-tokens 9728`, same build, same salts, 2026-10-26 | 62.6-62.9 s | 15.8k | 209-212, win avg 199-201 | not run |
 | same budget, `--kv-cache-dtype auto`, same salts | 63.9-64.1 s | 15.4k | 212-219, win avg 204-207 | not run |
-| = SHIP (live since 2026-11-19): dev740 certified: base db8e4658ed, 8 patches, Python frontend, 9728, retention 12928 on the 6464 scheduler grid (the 6464 is the GDN prefill checkpoint grid of #65186/29c6cfc457 LCM'd over the mamba page floor in align mode with `--block-size` pinned, not the 2440ffc387 block-preference negotiation, which never runs with `--block-size`), pinned PLE, arms off, estimator + util 0.9453 (extensible OFF: VMM mapping cost ~10% decode), lattice default-on | 69.6-69.9 s, 3 cold cells | 13.3k cold, 14.0k n7 in-rate (best deep-prefill this lane has recorded, new anchor) | cold sust median 206.9 (204-208), acc 4.817, MATCH 100 x3 | 100/4 not measured on this boot; n7 @660k: sust 783, TTFT 265/310 s, match 78, preempts 0; pool 4,858,695 (4.86x, four full 1M residents + partial); accept-window >=4.90 (re-anchored 11-19: fused MTP norms shift near-ties; historic band was 4.995-5.000; mean 4.943, drafts ~187) |
+| = SHIP (live since 2026-11-20): dev979+g9dd26eaf9 certified: base bc93224f7c, 9 patches, block pin armed (patch 9, `VLLM_MAMBA_CHECKPOINT_BLOCK_PIN=1` via serve, BLOCKPIN=0 opts out), Python frontend, 9728, retention 12928 on the 3232 scheduler grid (12928 is legal on both grids: with the pin the block is 3232, without it #65186's GDN prefill checkpoint grid LCMs the mamba page floor to 6464 in align mode with `--block-size` pinned, not the 2440ffc387 block-preference negotiation, which never runs with `--block-size`), pinned PLE, arms off, estimator + util 0.9453 (extensible OFF: VMM mapping cost ~10% decode), lattice default-on | 69.6-69.9 s, 3 cold cells | 13.3k cold, 14.0k n7 in-rate (best deep-prefill this lane has recorded, new anchor) | cold sust median 206.9 (204-208), acc 4.817, MATCH 100 x3 | 100/4 not measured on this boot; n7 @660k: sust 783, TTFT 265/310 s, match 78, preempts 0; pool 5,340,298 (5.34x, four full 1M residents + partial); accept-window >=4.90 (observed 4.991-4.995 on dev979) |
 | same budget, lab int8 per-token-head KV, same salts | 65.5-65.8 s | 15.1k | 212 sust in clean cells, see dips note | not run |
 
 - The sustained figure is a 1.5 s peak that typically lands in the wind-down
@@ -430,7 +437,7 @@ boot, your first benchmark run, or any change to cache cell layouts.
 
 ```
 patchset-qwen38-pp/
-  patches/0001-*.patch .. 0008-*.patch   the series, git am
+  patches/0001-*.patch .. 0009-*.patch   the series, git am
   serve-4x-1m.sh                         the service lane: 4 gpus, 1M, YaRN 4.0 (PROF=1 arms the profiler)
   archive/                               retired lanes, the 3-card set, the TP=4 trial, and their tables
   benchmark/                             measurement tools, raw results, and the full record, see its README

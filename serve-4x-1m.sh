@@ -164,6 +164,17 @@ if [ "${HOP:-1}" != "0" ]; then
     export VLLM_QWEN4EXP_PP_INT8_HOP=1
 fi
 
+# Block-size pin (patch 9, experiments/0011): declines the FLA 64-token
+# GDN checkpoint grid so the scheduler LCM stays 3232. A/B 2026-11-20
+# (logs/smoke-dev978A/B): grown-turn recompute 1330->15 tokens at 20k,
+# 6140->2944 at 64k; POOL 4,858,695 -> 5,340,298 (the 11-19 pool loss
+# was block-tail geometry, NOT graph-memory accounting - attribution
+# corrected); cold median 207.1/4.84 match 100x3, window 4.991, n7
+# sust 857 = lane best. BLOCKPIN=0 opts out.
+if [ "${BLOCKPIN:-1}" != "0" ]; then
+    export VLLM_MAMBA_CHECKPOINT_BLOCK_PIN=1
+fi
+
 # Lattice probe (queue, results.md 2026-11-03): under MTP-4 the useful decode
 # row counts are multiples of 5 (reqs x (1+4)); the engine's auto list misses
 # 15/25/30/35, padding a 5-request step to 32 rows (+28% dead work). CAPS=1

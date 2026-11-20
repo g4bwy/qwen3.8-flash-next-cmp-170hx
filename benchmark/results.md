@@ -5476,3 +5476,39 @@ vs 6464 tails). If B wins the lane, 0011 promotes to series patch 9
 and retention discussion reopens (16160 = 5x3232 legal again).
 Attribution fixes: README:133/:310 corrected to name 29c6cfc457 +
 align-mode interaction, not the negotiation commit.
+
+### Pin A/B complete: patch 9 promoted, and the pool loss was geometry all along (2026-11-20)
+
+Same tree both boots (bc93224f7c + 8 + a9b0bf30c6), single variable
+VLLM_MAMBA_CHECKPOINT_BLOCK_PIN. Transport NCCL both; pin-armed boot
+shows groups (3232,3232,3232,3232,8,3232) LCM 3232, startup completes
+(retention 12928 legal on both grids).
+
+| metric | A (no pin, 6464) | B (pin, 3232) |
+|---|---|---|
+| grown recomp 20k probes | 1321 / 1334 | 15 / 15 |
+| grown recomp 64k probes | 6196 / 6086 | 2971 / 2917 |
+| GPU KV pool | 4,858,695 (4.86x) | 5,340,298 (5.34x) |
+| window MEAN | 4.995 | 4.991 |
+| cold median sust / acc | 204.96 / 4.830 (one lottery draw 174/3.56/56%) | 207.12 / 4.840 (no bad draw, match 100 x3) |
+| cold TTFT median | 69.4 | 68.35 |
+| n7 (salt 167101) | sust 704, in 13,547 | sust 857, in 13,911, acc 4.77, match 96 |
+| bg / preempts | 0 / 0 | 0 / 0 |
+
+ATTRIBUTION CORRECTION (the dev740 entry said the 9% pool loss was
+CUDA-graph memory profiling charge - WRONG): the two boots prove pool
+is a pure function of block geometry; 6464 pages waste more tail,
+481,603 tokens of it. Same graph accounting, different grid. The
+dev740 'Available KV cache memory 22.06 GiB' + hint lines were
+informational. Phase-3 pool hunt CLOSED by phase-2 success: no
+--kv-cache-memory surgery needed, no extensible-KV re-test needed for
+capacity (draft stays parked, unprioritized; sm80 lane still empty of
+upstream claims). At 20k depth the pin restores the dev506-era
+fine-grained resume (15 tokens); at 64k it lands on the 3232 grid
+(~2.9k) - retention differs (12928 vs dev506's 16160) and no 64k dev506
+baseline exists, so 'restore' at 64k is claimed as halved, not matched.
+PROMOTION: a9b0bf30c6 -> patches/0009-block-pin-3232.patch, series now
+9 patches, tree 0ffcebbfcdaf52892bfe03a2dbe0d3c6820a35d8; serve arms the
+pin by default (BLOCKPIN=0 opts out). Boot C (chain-in, no external env)
+is paperwork: same numbers expected; next owner reboot takes them
+silently.
