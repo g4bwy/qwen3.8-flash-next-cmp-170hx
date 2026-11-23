@@ -5565,3 +5565,37 @@ Packaging: [Do Not Merge] flash-attn pin 1b32c5ca STILL live at tip
 remains our default era; no extensible-KV or Ampere movement, still
 zero sm80 claims upstream; draft-vocab program still unmerged -
 patch 2 stays ours.
+
+### dev1156 certified: pin survives the cross-stage resolver, lane bests everywhere (2026-11-23)
+
+Boot dev1156+g80eae44bc (ef687f6179 + 9). BOTH literal gates PASS: 'PP
+transport: NCCL'; groups (3232, 3232, 3232, 3232, 8, 3232) with LCM
+3232 - the block pin won its first round-trip against aefea5c8e0's
+cross-stage resolver, and the pool HOLDS at 5,340,298 (5.34x) across
+the rebase. hop claim 1 / guard 0, vocab 49508, retention 12928 legal,
+LPT 2048, 0 errors, startup 1.
+Needles 9/9 no NaN - the new fused 16-bit GDN MTP decode kernel
+(78f20a5a34, capability(80) gate, our bf16 state) passes correctness.
+Window: first run raced 'snap missing' on all three trials (no numbers,
+bg was 0); retry clean MEAN 4.995 (4.989-5.000, drafts 183-184) -
+treated as transient, recheck on next boot; if it races twice in a
+row, audit accept_window's snapshot keys against the #66234-era metric
+plumbing.
+GROWN PROBES, mechanism-shifting result: depth dependence SWAPPED vs
+boot B - 20k now lands on the 3232 grid (recomp 1352/1403) while 64k
+resumes FINE-GRAINED (15/18 tokens, was 2917-2971). Mean across the two
+probe depths 1479 -> ~697 tokens, near-halved net; per-depth
+attribution unexplained (#66234 lookahead-hash interaction with
+retention grid suspected), logged as measured, not chased.
+Cold median-of-3 (176100-01-02): sust 207.50, acc 4.848, TTFT 68.32,
+MATCH 100 x3 (clean draws), in-rate 13.44-13.45k. n7 (167101): sust
+880 LANE BEST, in-rate 14,149 LANE BEST, acc 4.69, match 86 (lottery
+band), preempts 0. bg 0 everywhere.
+Telemetry: links Gen2 stable, one GPU seen at x16 min-lanes (slot
+asymmetry noted before; not a regression); peaks 306-364 W vs 200 W
+cap (sensor/cap question still open, reported not gated).
+BANDS for the next cycle: window >=4.90 (expect ~4.99); cold median
+sust >=200 (obs 207.5), acc >=4.6 (obs 4.85); pool 5,340,298; n7
+anchors 880 sust / 14.1k in-rate; grown: judge by MEAN across the two
+probe depths (~700), the per-depth split swaps under resume-math
+changes and is not a gate.
