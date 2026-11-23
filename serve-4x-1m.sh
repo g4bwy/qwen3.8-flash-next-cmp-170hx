@@ -211,6 +211,10 @@ fi
 # to 32 tokens with the MTP block drop: repeats and appends hit 99.8%+, the
 # one-shot shallow anomaly is gone, pool and decode unchanged. Retention
 # controls how often states are stored; this controls where hits land.
+#
+# 2026-11-23: the Mamba align cache flag was removed upstream
+# (9a4930a797 #63830); align semantics now equal enable_prefix_caching,
+# which we set. Passing the old flag would fail to parse.
 exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     ${PROF_ARGS[@]+"${PROF_ARGS[@]}"} \
     ${LPT_ARGS[@]+"${LPT_ARGS[@]}"} \
@@ -224,7 +228,6 @@ exec vllm serve "${MODEL:-Qwen/Qwen3.8-Flash-Next-FP8}" \
     --engram-config '{"cpu_offload": true}' \
     --moe-backend humming \
     --enable-prefix-caching \
-    --mamba-cache-mode align \
     --prefix-cache-retention-interval 12928 \
     --block-size 1616 \
     --prefix-match-unit 16 \

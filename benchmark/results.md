@@ -5512,3 +5512,56 @@ PROMOTION: a9b0bf30c6 -> patches/0009-block-pin-3232.patch, series now
 pin by default (BLOCKPIN=0 opts out). Boot C (chain-in, no external env)
 is paperwork: same numbers expected; next owner reboot takes them
 silently.
+
+### Series rebased onto ef687f6179; flag graveyards visited again (2026-11-23)
+
+Base ef687f6179 (11-22, wheel dev1147 cu132, banner dev1156), +177
+commits, branch qwen38-pp-ef687f6179 tip cc5059081c, tree
+060534be1038c045e437feb18c5cc3a77a87095d, wts wt-rebase-1123/
+wt-pristine-1123. 9/9 zero conflicts; patch-ids 8/9 stable-identical.
+One forced patch-9 edit (2 lines, REPORTED): 9a4930a797 (#63830) deleted
+mamba_cache_mode from strict pydantic CacheConfig, so the pin test
+fixture drops the kwarg and the helper call switches
+mamba_cache_mode=align -> enable_prefix_caching=True (same meaning).
+CPU branch 406/0 vs pristine 346/0 (upstream shared suite +36), delta
+60 = ours, 0 lost names; two AMD test files need --ignore on CPU
+(collection-time CUDA requirement, both trees identical); ruff under
+the base's 0.17.2 pin clean; replay 9/9 tree-equal, range-diff 8 '=' +
+patch 9 '!' by design.
+
+PATCH 9 VERDICT: still required, and the threat widened. Grid 64 and
+the LCM rule byte-identical (interface.py:1160-1168,:1204-1211); the
+gate that triggers it is now plain enable_prefix_caching, so MORE
+configs pay the doubling; no config-only escape (engine overwrites
+user mamba_block_size at :1198). Re-proven by
+test_checkpoint_grid_doubles_the_block_when_honored at the new base.
+Upstream also landed the #67994 follow-up aefea5c8e0: a cross-PP
+resolver that GCD-overrides mamba_block_size on stage disagreement -
+NEW HARD BOOT GATE: with the pin armed the log MUST read 'kv cache
+group sizes (3232, 3232, 3232, 3232, 8, 3232)'; anything else = the
+resolver or the env fought the pin, stop and re-diagnose (pool 9%
+swing rides on that line).
+
+SERVE CHANGE: --mamba-cache-mode align deleted from the launch line
+(flag removed upstream, parsing would die before startup);
+--enable-prefix-caching now carries align semantics.
+
+BOOT WATCH dev1156 (pin armed, order): (1) group-sizes 3232 literal
+gate + 'PP transport: NCCL' literal gate; (2) needles 9/9 - and note
+78f20a5a34 gives 16-bit-state GDN MTP decode a NEW fused CUDA kernel
+gated at capability(80): our state dtype is bf16, it IS live; needles
++ exact-match guards decide; (3) grown probes at 20k+64k: 7fb48d1567
+(#66234) rework changes resume math toward ONE MORE reusable block
+when n mod B >= 4 - improvement expected, re-anchor not compare;
+(4) window + cold median-of-3 + n7 re-anchored anyway (bit-movers:
+new GDN kernel, #66234 hash lookahead, int64 pointer recompute
+bafe5cc3e8 = same math new binary); (5) pool should read 5,340,298
+again IF the 3232 gate passes - if 4.86M returns, pin lost the round-
+trip to aefea5c8e0, do not cert; (6) W8A8 arms remain off; if ever
+tested, check 3302deb9b5's SM89+batch-invariance gate first.
+
+Packaging: [Do Not Merge] flash-attn pin 1b32c5ca STILL live at tip
+(source builds only); cu135 nightly exists for Rubin images, cu132
+remains our default era; no extensible-KV or Ampere movement, still
+zero sm80 claims upstream; draft-vocab program still unmerged -
+patch 2 stays ours.

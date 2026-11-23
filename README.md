@@ -30,7 +30,7 @@ prefill measured on this box; that setting awaits its cert battery.
   TTFT and 7.7 % of prefill rate, and buys 4.3 % more KV pool that the
   five-resident cell showed does not convert. The old +6 % and +20 % pair mixed
   depth with quantization, at the same depth the 2026-10-12 edge was +2 to +6 %.
-- Base commit: `bc93224f7c03e629c67cb2ac97baf16d9f18f478` (vllm-project/vllm main, 2026-11-19; newest main with a published cu132 wheel, `0.34.0rc1.dev970+gbc93224f7`).
+- Base commit: `ef687f6179b752c028767e610addbda67ed36d03` (vllm-project/vllm main, 2026-11-23; newest main with a published cu132 wheel, `0.34.0rc1.dev1147+gef687f617`).
 - 9 patches, all ours. The ninth is the mamba checkpoint-grid block pin
   (`VLLM_MAMBA_CHECKPOINT_BLOCK_PIN=1`, default via serve): it declines
   #65186's 64-token GDN grid so the scheduler LCM stays 3232 and grown
@@ -40,7 +40,7 @@ prefill measured on this box; that setting awaits its cert battery.
   backend); the mmap row-read speedup can be re-homed onto it if the file
   path is ever revived. After
   applying them, `git rev-parse HEAD^{tree}` must print
-  `0ffcebbfcdaf52892bfe03a2dbe0d3c6820a35d8`. If it does not, you applied
+  `060534be1038c045e437feb18c5cc3a77a87095d`. If it does not, you applied
   something else or onto something else.
 - The base pins `humming-kernels[cu13]` to 0.1.19 (0.1.12 fails the
   `vllm/utils/humming.py` imports). The editable precompiled install
@@ -56,13 +56,13 @@ prefill measured on this box; that setting awaits its cert battery.
 ```bash
 git clone https://github.com/vllm-project/vllm
 cd vllm
-git checkout bc93224f7c03e629c67cb2ac97baf16d9f18f478
+git checkout ef687f6179b752c028767e610addbda67ed36d03
 git am --keep-non-patch /path/to/patchset-qwen38-pp/patches/00*.patch
-git rev-parse 'HEAD^{tree}'   # 0ffcebbfcdaf52892bfe03a2dbe0d3c6820a35d8
+git rev-parse 'HEAD^{tree}'   # 060534be1038c045e437feb18c5cc3a77a87095d
 ```
 
 To redo after editing a patch: `git am --abort` (or `git reset --hard
-bc93224f7c03e629c67cb2ac97baf16d9f18f478`), then re-run the `git am`.
+ef687f6179b752c028767e610addbda67ed36d03`), then re-run the `git am`.
 
 ## Build
 
@@ -72,7 +72,7 @@ Python 3.12, `uv` on PATH ([install](https://docs.astral.sh/uv/)).
 uv venv --python 3.12
 source .venv/bin/activate
 VLLM_USE_PRECOMPILED=1 \
-VLLM_PRECOMPILED_WHEEL_COMMIT=bc93224f7c03e629c67cb2ac97baf16d9f18f478 \
+VLLM_PRECOMPILED_WHEEL_COMMIT=ef687f6179b752c028767e610addbda67ed36d03 \
 VLLM_PRECOMPILED_WHEEL_VARIANT=cu132 \
   uv pip install -e . --torch-backend=auto
 ```
@@ -85,7 +85,7 @@ that commit must satisfy two rules:
    `https://wheels.vllm.ai/<sha>/cu132/vllm/metadata.json` and stops on 404.
    Wheel CI lags main by hours, so walk down from the tip and take the newest
    commit that answers 200. The wheel for this base:
-   `0.34.0rc1.dev970+gbc93224f7`, cp38-abi3, x86_64 and aarch64. Match the
+   `0.34.0rc1.dev1147+gef687f617`, cp38-abi3, x86_64 and aarch64. Match the
    `+g<sha>` tail to your base. Ignore the leading number, which only tracks
    upstream packaging. Commits before 2026-11-10 have only cu130 and later
    ones only cu132, there is no root-variant fallback, and the variant
@@ -131,7 +131,8 @@ The script sets:
   of the table is now an upstream option,
   `--engram-config '{"cpu_offload": true, "disk_offload": true}'` (#59958);
   the series' own gather pair was retired for it on 2026-11-02.
-- Prefix caching with `--mamba-cache-mode align`,
+- Prefix caching with `--enable-prefix-caching` (the old
+  `--mamba-cache-mode align` is dropped, removed upstream 11-23),
   `--prefix-cache-retention-interval 12928` and `--prefix-match-unit 16`
   (re-anchored 11-19 for the 6464 grid; patch 9's pin restores 3232 from
   11-20). The scheduler block is the LCM of the KV-group kernel block

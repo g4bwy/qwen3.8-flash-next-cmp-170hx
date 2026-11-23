@@ -1,7 +1,7 @@
-From 919ee23a979c02c090a4befcc929d2ff8680f631 Mon Sep 17 00:00:00 2001
+From f5cc244c95e2f5108ef600360bd3aa929987a979 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 10:09:31 +0200
-Subject: [PATCH 7/8] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8 on
+Subject: [PATCH 7/9] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8 on
  sm_80
 
 The shipped FP8 checkpoint quantizes only the routed experts: its
@@ -342,7 +342,7 @@ index 0000000000..42ee27b2e5
 +        method.apply(_linear(n=n, k=k), x)
 +        assert calls == [("bf16", 2, 1024)]
 diff --git a/vllm/envs.py b/vllm/envs.py
-index da911c198b..19c69e3a76 100644
+index ed9ec470c4..6d3dcc3626 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -130,6 +130,7 @@ if TYPE_CHECKING:
@@ -353,7 +353,7 @@ index da911c198b..19c69e3a76 100644
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1229,6 +1230,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1201,6 +1202,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_DRAFT_W8A8": lambda: (
          os.getenv("VLLM_QWEN4EXP_DRAFT_W8A8", "0").lower() in ("1", "true")
      ),
@@ -537,7 +537,7 @@ index 0000000000..9f8d8b0d4a
 +        sum(isinstance(c, LinearBase) for c in module.modules()),
 +    )
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index c4ecab937a..e429b3f536 100644
+index 114d36decf..6e0b41f6c6 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
 @@ -83,6 +83,7 @@ from vllm.v1.attention.backends.registry import MambaAttentionBackendEnum

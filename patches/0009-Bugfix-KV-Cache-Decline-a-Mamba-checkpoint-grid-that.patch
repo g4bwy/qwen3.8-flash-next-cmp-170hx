@@ -1,8 +1,8 @@
-From a9b0bf30c600fdec14d5d36ced81e132e91de5fe Mon Sep 17 00:00:00 2001
+From cc5059081c3dd0188cc938f608b414c576b9748a Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 19 Nov 2026 23:44:56 +0100
-Subject: [PATCH] [Bugfix][KV Cache] Decline a Mamba checkpoint grid that grows
- the block
+Subject: [PATCH 9/9] [Bugfix][KV Cache] Decline a Mamba checkpoint grid that
+ grows the block
 
 Serving geometry PP=4 TP=1 sm80, qwen4_exp, fp8 KV, --block-size 1616,
 --mamba-cache-mode align, --prefix-match-unit 16, MTP-4 resolved its KV
@@ -51,25 +51,27 @@ leaves every other configuration untouched, including the upstream tests
 that guard the grid. A platform wanting a different policy overrides the
 method.
 
+The gate that enables internal checkpoints is `cache_config.enable_prefix_caching` (9a4930a797 dropped the `mamba_cache_mode == "align"` check), so the tests set that.
+
 CPU suites (tests/models/qwen4_exp, tests/v1/core KV cache and mamba align,
 tests/v1/attention block size and backend selection, tests/models/step5):
 416 -> 428 passed, 196 skipped, 0 failed. The new
 tests/models/qwen4_exp/test_kv_block_size_pin.py covers the mechanism, the
 veto table, and the group and retention arithmetic.
 ---
- .../qwen4_exp/test_kv_block_size_pin.py       | 367 ++++++++++++++++++
+ .../qwen4_exp/test_kv_block_size_pin.py       | 366 ++++++++++++++++++
  vllm/envs.py                                  |   9 +
  vllm/model_executor/layers/mamba/abstract.py  |  10 +-
  vllm/platforms/interface.py                   |  43 ++
- 4 files changed, 426 insertions(+), 3 deletions(-)
+ 4 files changed, 425 insertions(+), 3 deletions(-)
  create mode 100644 tests/models/qwen4_exp/test_kv_block_size_pin.py
 
 diff --git a/tests/models/qwen4_exp/test_kv_block_size_pin.py b/tests/models/qwen4_exp/test_kv_block_size_pin.py
 new file mode 100644
-index 0000000000..259d5d2b41
+index 0000000000..ad43364350
 --- /dev/null
 +++ b/tests/models/qwen4_exp/test_kv_block_size_pin.py
-@@ -0,0 +1,367 @@
+@@ -0,0 +1,366 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +"""Qwen4Exp keeps its KV block size on the grid the operator pinned.
@@ -238,7 +240,6 @@ index 0000000000..259d5d2b41
 +    cache_config = CacheConfig(
 +        block_size=block_size,
 +        cache_dtype="fp8",
-+        mamba_cache_mode="align",
 +        prefix_match_unit=16,
 +        enable_prefix_caching=True,
 +    )
@@ -398,7 +399,7 @@ index 0000000000..259d5d2b41
 +        dtype=torch.uint8,
 +    )
 +    align_mamba = new_mamba_layer(
-+        mamba_cache_mode="align",
++        enable_prefix_caching=True,
 +        block_size=MAMBA_PAGE_FLOOR,
 +        shapes=((1, 1),),
 +        dtypes=(torch.float32,),
@@ -438,7 +439,7 @@ index 0000000000..259d5d2b41
 +    assert hash_block_size == 16
 +    assert RETENTION_INTERVAL % scheduler_block_size == 0
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 9b813cff09..39ab022562 100644
+index 165a731366..4f5c113484 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -132,6 +132,7 @@ if TYPE_CHECKING:
@@ -449,7 +450,7 @@ index 9b813cff09..39ab022562 100644
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1223,6 +1224,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1195,6 +1196,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_PP_INT8_HOP": lambda: (
          os.getenv("VLLM_QWEN4EXP_PP_INT8_HOP", "0").lower() in ("1", "true")
      ),
@@ -465,7 +466,7 @@ index 9b813cff09..39ab022562 100644
      # weights, dynamic per-token activations) through CUTLASS instead of the
      # bf16 GEMV. Measured 1.39-1.67x on CMP 170HX at every decode batch;
 diff --git a/vllm/model_executor/layers/mamba/abstract.py b/vllm/model_executor/layers/mamba/abstract.py
-index 3d8e3478a1..9ff9d403d4 100644
+index 2fcdf56ee9..e914c341b4 100644
 --- a/vllm/model_executor/layers/mamba/abstract.py
 +++ b/vllm/model_executor/layers/mamba/abstract.py
 @@ -141,8 +141,12 @@ def get_mamba_prefill_checkpoint_alignment(vllm_config: VllmConfig) -> int | Non
@@ -495,7 +496,7 @@ index 3d8e3478a1..9ff9d403d4 100644
  
  def get_mamba_prefill_checkpoint_grid(vllm_config: VllmConfig) -> int:
 diff --git a/vllm/platforms/interface.py b/vllm/platforms/interface.py
-index 3a165f1e4d..b373bb9333 100644
+index a213124035..57723e7d71 100644
 --- a/vllm/platforms/interface.py
 +++ b/vllm/platforms/interface.py
 @@ -965,6 +965,49 @@ class Platform:
