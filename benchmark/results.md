@@ -5647,14 +5647,21 @@ nvidia/qsa.py:778 gate evaluation.
 (5) 7d7d8a9097 eviction prioritization of superseded mamba checkpoints
 (eviction order moves: grown-mean ~700 and the pool line re-measure,
 likely BENEFICIAL).
-6710264625 QSA attend split: verdict pending from a targeted diff
-audit (two survey agents disagreed on sm80 effect); result appended to
-this entry by the parent.
+6710264625 QSA attend split: SETTLED by diff audit - CAN-REANCHOR, not
+inert. The split sits in the UNGATED branch (nvidia/qsa.py:500-523);
+sm80 hits it (FlashInfer is the gated else-branch). Per-row math
+unchanged, but the config table keys on slice row-count
+(ops/qsa.py:634-671): decode rows in MIXED steps move from splits=1
+whole-batch config to splits=4/8/64 decode config, different reduction
+order, bf16 rounding-level shifts. Pure-decode and pure-prefill steps
+unchanged. So on our LPT-lane with frequent mixed steps, treat
+window/match/n7 drift as live on this base, suspect order: fused GDN
+conv first, this split second, rope fp32 third.
 Gates that hold: groups (3232,...) literal, PP transport NCCL literal,
 pool should still read 5,340,298 (eb4106678d renamed the usage line's
 'GPU' only in theory - default still GPU, greps hold). New config
-traps: 249e652909 pp-microbatch-min-tokens default 4090... (4096) is
-ON but self-disables under need_mamba_block_aligned_split (verify True
+traps: 249e652909 pp-microbatch-min-tokens default 4096 is ON but
+self-disables under need_mamba_block_aligned_split (verify True
 in resolved config); use_replayssm must stay False (048e79116b grows
 the mamba page and kills spec blocks if enabled).
 accept_window 'snap missing' root cause converged: NOT counter renames
