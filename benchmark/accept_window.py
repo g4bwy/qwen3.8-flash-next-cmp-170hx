@@ -5,9 +5,10 @@ From base 8407bc0bb6-era onward (and since #62129 landed), the spec-decode
 counters also include drafts emitted during prefill-phase steps, so
 full-window acceptance reads dilute toward the prefill ratio. This tool
 streams a fixed prompt, snapshots the counters after a token threshold
-(inside the decode phase), snapshots again at stream end, and reports
-1 + accepted/drafts for that inner window. Background drafts are checked
-before and after (2 s idle probes).
+(inside the decode phase), snapshots again once the counters have recorded a
+draft step past that mark after stream end, and reports 1 + accepted/drafts
+for that inner window. Background drafts are checked before and after (2 s
+idle probes).
 
 Usage: ./accept_window.py --base-url http://host:8000 [--salt 7770]
                           [--depth 988986] [--tokens 1024] [--trials 3]
@@ -26,6 +27,14 @@ spec.loader.exec_module(bench)
 
 D = "vllm:spec_decode_num_drafts_total"
 A = "vllm:spec_decode_num_accepted_tokens_total"
+
+# Closing snapshot: the draft counter must move at least one step past the
+# opening mark before it counts, otherwise the window is degenerate.
+CLOSING_POLL = 0.5  # same cadence as the historical in-stream samples
+CLOSING_GRACE = 5.0
+# Silent re-runs inside one numbered trial: a renderer fan-out burst can push
+# the mark into the final delta group; a fresh pass usually brackets fine.
+ATTEMPTS_PER_TRIAL = 4
 
 
 def counters(base):
@@ -46,6 +55,68 @@ def idle_drafts(base):
     time.sleep(2)
     b = counters(base)
     return b[D] - a[D]
+
+
+def closing_counters(base, mark_drafts):
+    """Post-window snapshot, taken after the counter lag clears.
+
+    Sampling at stream-end time loses when the renderer fan-out batches SSE
+    deltas: the mark then lands in the last burst and the closing sample shows
+    the same draft count, so the window collapses to zero. Poll until the
+    draft counter has advanced at least one step past the mark. The request is
+    finished, so the extra samples only wait out the lag and add no drafts of
+    their own; the historical ratio is unchanged.
+    """
+    post = counters(base)
+    deadline = time.monotonic() + CLOSING_GRACE
+    while post.get(D, 0.0) <= mark_drafts and time.monotonic() < deadline:
+        time.sleep(CLOSING_POLL)
+        post = counters(base)
+    return post
+
+
+def run_attempt(args, model, prompt):
+    """One streamed pass. Returns (elapsed, drafts, accepted, bg_pre, bg_post)."""
+    bg_pre = idle_drafts(args.base_url)
+    t0 = time.time()
+    tokcount = 0
+    snap = {}
+    body = json.dumps(
+        {
+            "model": model,
+            "prompt": prompt,
+            "max_tokens": args.tokens,
+            "temperature": 0,
+            "stream": True,
+        }
+    ).encode()
+    req = urllib.request.Request(
+        args.base_url + "/v1/completions",
+        data=body,
+        headers={"content-type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=1200) as resp:
+        for raw in resp:
+            if not raw.startswith(b"data:"):
+                continue
+            if b"[DONE]" in raw:
+                break
+            if not snap:
+                try:
+                    ev = json.loads(raw[5:])
+                    tokcount += len(ev["choices"][0].get("text") or "")
+                except Exception:
+                    continue
+                if tokcount > args.mark_chars:
+                    snap = counters(args.base_url)
+    if not snap or D not in snap:
+        return None
+    post = closing_counters(args.base_url, snap[D])
+    bg_post = idle_drafts(args.base_url)
+    elapsed = time.time() - t0
+    if D not in post or post[D] <= snap[D]:
+        return None
+    return elapsed, post[D] - snap[D], post[A] - snap[A], bg_pre, bg_post
 
 
 def main():
@@ -91,49 +162,19 @@ def main():
 
     rows = []
     for trial in range(1, args.trials + 1):
-        bg_pre = idle_drafts(args.base_url)
-        t0 = time.time()
-        tokcount = 0
-        snap = {}
-        body = json.dumps(
-            {
-                "model": model,
-                "prompt": prompt,
-                "max_tokens": args.tokens,
-                "temperature": 0,
-                "stream": True,
-            }
-        ).encode()
-        req = urllib.request.Request(
-            args.base_url + "/v1/completions",
-            data=body,
-            headers={"content-type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=1200) as resp:
-            for raw in resp:
-                if not raw.startswith(b"data:"):
-                    continue
-                if b"[DONE]" in raw:
-                    break
-                if not snap:
-                    try:
-                        ev = json.loads(raw[5:])
-                        tokcount += len(ev["choices"][0].get("text") or "")
-                    except Exception:
-                        continue
-                    if tokcount > args.mark_chars:
-                        snap = counters(args.base_url)
-        post = counters(args.base_url)
-        bg_post = idle_drafts(args.base_url)
-        if not snap or post[D] == snap[D]:
+        res = None
+        for _ in range(ATTEMPTS_PER_TRIAL):
+            res = run_attempt(args, model, prompt)
+            if res is not None:
+                break
+        if res is None:
             print(f"trial{trial}: sampling raced the stream (snap missing); retry")
             continue
-        d = post[D] - snap[D]
-        a = post[A] - snap[A]
+        elapsed, d, a, bg_pre, bg_post = res
         acc = 1 + a / d
         rows.append(acc)
         print(
-            f"trial{trial}: t+{snap and time.time() - t0:.1f}s window drafts {d:.0f} "
+            f"trial{trial}: t+{elapsed:.1f}s window drafts {d:.0f} "
             f"accepted {a:.0f} -> decode-window acceptance {acc:.3f} "
             f"| bg pre/post {bg_pre:.0f}/{bg_post:.0f}"
         )
