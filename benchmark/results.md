@@ -5686,8 +5686,9 @@ Cold median-of-3 (177100/01/02): sust 207.49, acc 4.867, match 100 x3,
 TTFT 67.68 (-0.6 s vs dev1156, fastest this lane), in-rate 13.54-13.58k
 (up). n7 (167101): in-rate 14,687 LANE BEST (was 14,149); sust 815 vs
 880 = single draw, decode-side content, not a regression call; acc
-4.53, match 98. bg 0 everywhere, preempts 0. Telemetry: Gen2 x4,
-peaks 291-339W (cap question still open, reported not gated).
+4.53, match 98. TTFT mean 264.3 / p95 305.4. bg 0 everywhere,
+preempts 0. Telemetry: Gen2 x4, peaks 291-339W (cap question still open,
+reported not gated).
 PROTOCOL CHANGE v2.2: grown-mean DEMOTED to observation, removed from
 cert gates. Evidence: correct-per-everything boots with grown means
 1479 (dev979) -> 697 (dev1156) -> 1817 (dev294), per-depth behavior
