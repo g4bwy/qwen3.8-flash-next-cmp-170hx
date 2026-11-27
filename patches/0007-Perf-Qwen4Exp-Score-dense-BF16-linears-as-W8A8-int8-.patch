@@ -1,4 +1,4 @@
-From f5cc244c95e2f5108ef600360bd3aa929987a979 Mon Sep 17 00:00:00 2001
+From f8e4361a22bf3b885648efc777790330bee07a7b Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 10:09:31 +0200
 Subject: [PATCH 7/9] [Perf][Qwen4Exp] Score dense BF16 linears as W8A8 int8 on
@@ -342,10 +342,10 @@ index 0000000000..42ee27b2e5
 +        method.apply(_linear(n=n, k=k), x)
 +        assert calls == [("bf16", 2, 1024)]
 diff --git a/vllm/envs.py b/vllm/envs.py
-index ed9ec470c4..6d3dcc3626 100644
+index 840718d427..d0e67361bd 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -130,6 +130,7 @@ if TYPE_CHECKING:
+@@ -131,6 +131,7 @@ if TYPE_CHECKING:
      VLLM_SAFETENSORS_DROP_CACHE: bool = False
      VLLM_QWEN4EXP_PP_INT8_HOP: bool = False
      VLLM_QWEN4EXP_DRAFT_W8A8: bool = False
@@ -353,7 +353,7 @@ index ed9ec470c4..6d3dcc3626 100644
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1201,6 +1202,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1186,6 +1187,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_DRAFT_W8A8": lambda: (
          os.getenv("VLLM_QWEN4EXP_DRAFT_W8A8", "0").lower() in ("1", "true")
      ),
@@ -537,10 +537,10 @@ index 0000000000..9f8d8b0d4a
 +        sum(isinstance(c, LinearBase) for c in module.modules()),
 +    )
 diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
-index 114d36decf..6e0b41f6c6 100644
+index 320716d085..fca0f72e63 100644
 --- a/vllm/models/qwen4_exp/nvidia/model.py
 +++ b/vllm/models/qwen4_exp/nvidia/model.py
-@@ -83,6 +83,7 @@ from vllm.v1.attention.backends.registry import MambaAttentionBackendEnum
+@@ -85,6 +85,7 @@ from vllm.v1.attention.backends.registry import MambaAttentionBackendEnum
  from vllm.v1.kv_cache_interface import MambaSpec
  
  from ..common.hyperconnection import is_hc_sequence_parallel_enabled
@@ -548,7 +548,7 @@ index 114d36decf..6e0b41f6c6 100644
  from .hyperconnection import GatedResidual, HyperConnectionConfig
  from .low_latency_gemm import enable_qwen4_exp_low_latency_gemm
  from .mega_moe import Qwen4ExpMegaMoeBlock
-@@ -844,6 +845,7 @@ class Qwen4ExpForCausalLM(
+@@ -864,6 +865,7 @@ class Qwen4ExpForCausalLM(
          )
          self.set_moe_parameters(self.model.layers)
          enable_qwen4_exp_low_latency_gemm(self, self.model_config.dtype)

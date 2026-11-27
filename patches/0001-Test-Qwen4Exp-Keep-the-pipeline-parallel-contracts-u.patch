@@ -1,4 +1,4 @@
-From 131ea9b6c72c7260c648e99749ec1cd2562a87ff Mon Sep 17 00:00:00 2001
+From 9c2ed4f792fc401b332f7e1d9840c1e33bcf0de3 Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Tue, 27 Oct 2026 10:37:50 +0100
 Subject: [PATCH 1/9] [Test][Qwen4Exp] Keep the pipeline-parallel contracts
@@ -17,7 +17,7 @@ plain and the int8-hop build.
  1 file changed, 159 insertions(+)
 
 diff --git a/tests/models/qwen4_exp/test_config.py b/tests/models/qwen4_exp/test_config.py
-index a16399d30a..17f91b7f7f 100644
+index e9468cd631..ba3ad9b1bc 100644
 --- a/tests/models/qwen4_exp/test_config.py
 +++ b/tests/models/qwen4_exp/test_config.py
 @@ -16,8 +16,10 @@ from vllm.model_executor.layers.quantization.compressed_tensors.utils import (

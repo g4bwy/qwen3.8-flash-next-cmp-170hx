@@ -1,4 +1,4 @@
-From 44a3127e9574d9887db722694ca0b930db9a4f9f Mon Sep 17 00:00:00 2001
+From 3cc6af13910ea8efaacf6748b2033457652eb9fd Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 10:24:14 +0200
 Subject: [PATCH 2/9] [Perf][Qwen4Exp] Vocab-truncated MTP draft head

@@ -1,4 +1,4 @@
-From cc5059081c3dd0188cc938f608b414c576b9748a Mon Sep 17 00:00:00 2001
+From 0c4d936b167f2fb0786d9f424d1c5e2fe32d106a Mon Sep 17 00:00:00 2001
 From: Gabriel FORTE <2580288+g4bwy@users.noreply.github.com>
 Date: Thu, 19 Nov 2026 23:44:56 +0100
 Subject: [PATCH 9/9] [Bugfix][KV Cache] Decline a Mamba checkpoint grid that
@@ -439,10 +439,10 @@ index 0000000000..ad43364350
 +    assert hash_block_size == 16
 +    assert RETENTION_INTERVAL % scheduler_block_size == 0
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 165a731366..4f5c113484 100644
+index f69460a0c8..208d9b5a13 100644
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -132,6 +132,7 @@ if TYPE_CHECKING:
+@@ -133,6 +133,7 @@ if TYPE_CHECKING:
      VLLM_QWEN4EXP_DRAFT_W8A8: bool = False
      VLLM_QWEN4EXP_DENSE_W8A8: bool = False
      VLLM_QWEN4EXP_DENSE_W8A8_MIN_M: int = 512
@@ -450,7 +450,7 @@ index 165a731366..4f5c113484 100644
      VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
      VLLM_TRITON_JIT_WARMUP_NUM_THREADS: int = 4
      VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
-@@ -1195,6 +1196,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
+@@ -1180,6 +1181,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_QWEN4EXP_PP_INT8_HOP": lambda: (
          os.getenv("VLLM_QWEN4EXP_PP_INT8_HOP", "0").lower() in ("1", "true")
      ),
@@ -496,7 +496,7 @@ index 2fcdf56ee9..e914c341b4 100644
  
  def get_mamba_prefill_checkpoint_grid(vllm_config: VllmConfig) -> int:
 diff --git a/vllm/platforms/interface.py b/vllm/platforms/interface.py
-index a213124035..57723e7d71 100644
+index 86566606c8..a86f573231 100644
 --- a/vllm/platforms/interface.py
 +++ b/vllm/platforms/interface.py
 @@ -965,6 +965,49 @@ class Platform:

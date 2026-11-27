@@ -5599,3 +5599,65 @@ sust >=200 (obs 207.5), acc >=4.6 (obs 4.85); pool 5,340,298; n7
 anchors 880 sust / 14.1k in-rate; grown: judge by MEAN across the two
 probe depths (~700), the per-depth split swaps under resume-math
 changes and is not a gate.
+
+### Series rebased onto 6beda2a3ab; version line rolled to 0.34.1rc1 (2026-11-27)
+
+Base 6beda2a3ab (11-27, wheel 0.34.1rc1.dev285 cu132), +373 commits
+(5 days, busiest range yet). Branch qwen38-pp-6beda2a3ab tip
+0c4d936b16, tree 48be8c82fb299dd070d5ee9a78509e1b8505d3e9,
+wt-rebase-1127 / wt-pristine-1127. Banner after reinstall: dev294
+(dev counter restarted by the 0.34.1 version-line roll; wheel metadata
+authoritative - this clone's tags are stale, do not trust git describe).
+ONE conflict: test_ple.py import block (upstream 'cast' + our 'patch',
+kept both). Chain delta ZERO (1804 change-lines both sides; patch-ids
+8/9 equal - patch 6 differs by hunk-header drift ONLY, proven by
+header-normalized hash equality; LESSON: patch-id --stable hashes
+hunk headers, context shifts alone move it). CPU: branch 433/0F vs
+pristine 373/0F (pristine run excludes patch-3's test file), delta 60
+all ours, 0 lost names. ruff 0.17.2 clean, docstring hook 0, imports
+13/13, replay 9/9 tree-equal, range-diff 9 '='.
+
+SERVE LINE PARSED AGAINST THE REAL PARSER at this base, all flags
+valid: LPT 2048, retention 12928, match-unit 16, engram cpu_offload,
+extensible OFF, humming, fp8, util 0.9453; mamba-cache-mode correctly
+gone from the script. New parser choices: --gdn-prefill-backend grew
+cutedsl/sycl/hip (unchanged default for us).
+
+PIN: still needed, still working. New fact: BOTH prefill backends now
+carry grid 64 (FLASHINFER_GDN_CHECKPOINT_ALIGNMENT added besides
+FLA_CHUNK_SIZE), so the pin declines two sources now; hook + LCM rule
+byte-stable; 12/12 pin tests pass not skip. New upstream guard cleared
+for us: d99aa11e6b hard-raises on unsupported fine-grained
+prefix_match_unit; our FullAttention+Mamba managers both declare
+support, layout 1616%16==0, so --prefix-match-unit 16 stands; would
+break only if HiSparse were enabled (impossible with PP>1 anyway).
+
+BOOT WATCH dev294 - anchors are hypotheses again, five bit-movers:
+(1) 2d08d35d4e NEW FUSED GDN PREFILL CONV CUDA KERNEL, gate has NO
+arch exclusion (CUDA+bf16+head dims 128+op exists) - it was INVISIBLE
+in the CPU/symlinked verification and TURNS ON with the dev285 wheel.
+Prime suspect for any prefill/acceptance drift; check first.
+(2) 04ffa45884 rope passes fp32 cos_sin cache directly (shared path).
+(3) e0aa7eeb0c HC expand repeat->cat + overlap_ba_proj, ungated, in
+patch-5's file, disjoint region.
+(4) 87ccca3d36 M-RoPE no longer stripped: fused qk-norm-rope gate now
+depends on supports_mrope with our nested YaRN override - if drift
+appears, this is suspect 2; post-hoc debug = check
+nvidia/qsa.py:778 gate evaluation.
+(5) 7d7d8a9097 eviction prioritization of superseded mamba checkpoints
+(eviction order moves: grown-mean ~700 and the pool line re-measure,
+likely BENEFICIAL).
+6710264625 QSA attend split: verdict pending from a targeted diff
+audit (two survey agents disagreed on sm80 effect); result appended to
+this entry by the parent.
+Gates that hold: groups (3232,...) literal, PP transport NCCL literal,
+pool should still read 5,340,298 (eb4106678d renamed the usage line's
+'GPU' only in theory - default still GPU, greps hold). New config
+traps: 249e652909 pp-microbatch-min-tokens default 4090... (4096) is
+ON but self-disables under need_mamba_block_aligned_split (verify True
+in resolved config); use_replayssm must stay False (048e79116b grows
+the mamba page and kills spec blocks if enabled).
+accept_window 'snap missing' root cause converged: NOT counter renames
+(metrics md5-identical); renderer worker fan-out (93bb688f48) shifts
+delta-burst timing; proposed fix is client-side (usage-at-DONE token
+count or require a post-mark draft step), awaiting owner decision.
