@@ -5668,3 +5668,40 @@ accept_window 'snap missing' root cause converged: NOT counter renames
 (metrics md5-identical); renderer worker fan-out (93bb688f48) shifts
 delta-burst timing; proposed fix is client-side (usage-at-DONE token
 count or require a post-mark draft step), awaiting owner decision.
+
+### dev294 certified; grown-mean demoted; window fix triggered (2026-11-27)
+
+Boot dev294+g4fa0e6ac7 (6beda2a3ab + 9). ALL LITERAL GATES PASS:
+'PP transport: NCCL'; groups (3232,3232,3232,3232,8,3232) - pin beat
+its second cross-stage base; pool 5,340,298 (5.34x, five 1M residents)
+UNCHANGED despite dd08385536 block-count rework + 7d7d8a9097 eviction
+changes; hop claim 1/guard 0; vocab 49508; retention 12928; LPT 2048;
+0 errors. (replayssm/aligned_split do not appear in the config dump by
+name; gates noted as not-log-visible.)
+Needles 9/9, no NaN, concurrent round tight (82,951 -> 23 recompute):
+the FUSED GDN PREFILL CONV (2d08d35d4e, prime suspect, live only on
+the real wheel) + rope fp32 passthrough + M-RoPE gate change produce
+correct output on sm80.
+Cold median-of-3 (177100/01/02): sust 207.49, acc 4.867, match 100 x3,
+TTFT 67.68 (-0.6 s vs dev1156, fastest this lane), in-rate 13.54-13.58k
+(up). n7 (167101): in-rate 14,687 LANE BEST (was 14,149); sust 815 vs
+880 = single draw, decode-side content, not a regression call; acc
+4.53, match 98. bg 0 everywhere, preempts 0. Telemetry: Gen2 x4,
+peaks 291-339W (cap question still open, reported not gated).
+PROTOCOL CHANGE v2.2: grown-mean DEMOTED to observation, removed from
+cert gates. Evidence: correct-per-everything boots with grown means
+1479 (dev979) -> 697 (dev1156) -> 1817 (dev294), per-depth behavior
+swaps between 20k/64k across bases as upstream retunes mamba resume
+math each cycle (#66234, now 7d7d8a9097). Upstream owns that number;
+we keep measuring and reporting it, gates stay: needles, window, cold
+median sust>=200 + acc>=4.6, pool expectation, transport+groups
+literals.
+WINDOW: second occurrence of the snap race (3/3 trials, dev294; once
+before on dev1156 with clean retry). Trigger fired per protocol:
+accept_window hardened client-side (closing snapshot waits one draft
+step past stream end; renderer fan-out 93bb688f48 = root cause;
+counters themselves md5-identical upstream). This boot's window value
+= the verification run (see next entry by the fix commit).
+CERT: dev294 PASSES under v2.2 with anchors re-baselined: cold median
+207.5/4.87, TTFT band now 67.7, n7 anchors 14.69k in-rate / 815-880
+sust range, pool 5,340,298, window TBC from fix verification.
